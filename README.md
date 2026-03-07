@@ -281,7 +281,7 @@ Not set up? [GitHub SSH key guide →](https://docs.github.com/en/authentication
 ### 2. Install Stokowski
 
 ```bash
-git clone https://github.com/yourname/stokowski
+git clone https://github.com/Sugar-Coffee/stokowski
 cd stokowski
 
 python3 -m venv .venv
