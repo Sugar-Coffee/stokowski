@@ -117,6 +117,22 @@ Before starting any implementation work:
 9. Update workpad with completion status.
 10. Move issue to `Human Review`.
 
+## Rework flow
+
+When the issue is in `Rework`, a reviewer has requested changes on the PR.
+
+1. Find the open PR for this issue's branch (`gh pr list --head <branch>`).
+2. Read the review comments and requested changes (`gh pr view <number> --comments`).
+3. Address each piece of feedback.
+4. Run tests and validation (same quality bar as initial work).
+5. Push commits to the existing branch.
+6. Post a comment on the GitHub PR summarising the rework:
+   - Which review comments were addressed
+   - What was modified
+   - Any decisions or trade-offs made
+7. Update the Linear workpad comment with the same rework summary.
+8. Move issue back to `Human Review`.
+
 ## Quality bar before Human Review
 
 Before moving to Human Review, verify:
