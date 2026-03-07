@@ -63,6 +63,43 @@ Each agent runs in its own isolated git clone — multiple tickets can be worked
 
 ---
 
+## How is this different from Emdash?
+
+[Emdash](https://www.emdash.sh/) is a great product that solves a similar problem — it integrates with Linear and spins up Claude Code agents for your tickets. If you're evaluating both, here's an honest comparison.
+
+**The core difference: separation of agent context from interactive context.**
+
+When you work interactively with Claude Code in your repo, you rely on `CLAUDE.md` and your project's rule files to guide Claude's behaviour. The problem with putting your autonomous agent instructions in `CLAUDE.md` is that they bleed into your regular Claude Code sessions — your day-to-day interactive work now carries all the "you are running headlessly, never ask a human, follow this state machine" instructions that only make sense for an unattended agent.
+
+Stokowski solves this with `WORKFLOW.md`. Your autonomous agent prompt — how to handle Linear states, what quality gates to run, how to structure PRs, what to do when blocked — lives entirely in `WORKFLOW.md` and is only injected into headless agent sessions. Your `CLAUDE.md` stays clean for interactive use.
+
+```
+Interactive session:    Claude reads CLAUDE.md        ← your normal instructions
+Stokowski agent:        Claude reads CLAUDE.md         ← same conventions
+                              +  WORKFLOW.md prompt    ← agent-only instructions
+```
+
+This separation lets you build a genuinely autonomous pipeline without compromising your day-to-day developer experience.
+
+**Other differences:**
+
+| | Stokowski | Emdash |
+|---|---|---|
+| Agent instructions | Separate `WORKFLOW.md` — doesn't affect interactive sessions | Applied via project rules, shared with interactive context |
+| Prompt template | Full Jinja2 template with complete issue context | Managed by Emdash |
+| Quality gate hooks | `before_run` / `after_run` shell scripts per turn | Not available |
+| MCP servers | Any `.mcp.json` in your repo — Figma, iOS Simulator, Playwright, etc. | Emdash-managed integrations |
+| Per-state concurrency | Configurable per Linear state | Not available |
+| Cost | Your existing Claude subscription | Additional Emdash subscription |
+| Open source | Yes — fork it, modify it, self-host it | Closed source SaaS |
+| Maintenance | You maintain it | Emdash maintains it |
+
+**When to choose Emdash:** You want a polished managed product, don't want to run infrastructure, and your workflow fits their model.
+
+**When to choose Stokowski:** You want full control over the agent prompt and workflow, need the interactive/autonomous context separation, have specialised MCP tooling (Figma, iOS, etc.), or want to run quality gates on every turn.
+
+---
+
 ## What is it?
 
 [Symphony](https://github.com/openai/symphony) is OpenAI's open specification for autonomous coding agent orchestration: poll a tracker for issues, create isolated workspaces, run agents, manage multi-turn sessions, retry failures, and reconcile state. It ships with a Codex/Elixir reference implementation.
