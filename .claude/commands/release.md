@@ -108,6 +108,14 @@ Only include subsections that have entries. Use today's date. Also:
 - Update the `[Unreleased]` link ref at the bottom to point to `vA.B.C...HEAD`
 - Add a new `[A.B.C]` link ref pointing to the new tag: `https://github.com/Sugar-Coffee/stokowski/releases/tag/vA.B.C`
 
+The link refs at the bottom of the file should look like this after the update (note: section headers use `[A.B.C]` without a `v`, but link ref keys and tag URLs use `vA.B.C`):
+
+```
+[Unreleased]: https://github.com/Sugar-Coffee/stokowski/compare/vA.B.C...HEAD
+[A.B.C]: https://github.com/Sugar-Coffee/stokowski/releases/tag/vA.B.C
+[0.1.0]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v0.1.0
+```
+
 ## Step 7: Bump the version in pyproject.toml
 
 Update the `version` field in `pyproject.toml` to the new version string (without the `v` prefix, e.g. `0.2.0`).
@@ -131,6 +139,8 @@ gh pr create \
   --body "<the approved release notes>"
 ```
 
-Tell the user: "Release PR opened: <PR URL>
+Tell the user: "Release PR opened: <PR URL>"
 
-**Important:** Squash-merge this PR (not regular merge). The GitHub Action detects the release by reading the merge commit message, which must be exactly 'Release vX.Y.Z'. Squash merge sets this automatically from the PR title."
+> **⚠️ Important: Squash-merge only**
+>
+> You must squash-merge this PR (not a regular merge). The GitHub Action detects releases by reading the merge commit message, which must be exactly `Release vX.Y.Z`. GitHub sets this automatically from the PR title when squash-merging.
