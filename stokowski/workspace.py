@@ -66,7 +66,7 @@ async def ensure_workspace(
     # Safety: workspace must be under root
     ws_abs = ws_path.resolve()
     root_abs = workspace_root.resolve()
-    if not str(ws_abs).startswith(str(root_abs)):
+    if not ws_abs.is_relative_to(root_abs):
         raise ValueError(f"Workspace path {ws_abs} escapes root {root_abs}")
 
     created_now = not ws_path.exists()

@@ -158,9 +158,9 @@ CLI entry point (`cli()`) and keyboard handler.
 
 **`_make_footer()`** builds the Rich `Text` status line shown at bottom of terminal via `Live`.
 
-**`_force_kill_children()`** uses `pgrep -f "claude.*-p.*--dangerously-skip-permissions"` as a last-resort cleanup on `KeyboardInterrupt`.
+**`_force_kill_children()`** uses `pgrep -f "claude.*-p.*--output-format.*stream-json"` as a last-resort cleanup on `KeyboardInterrupt`.
 
-**`_load_dotenv()`** reads `.env` from cwd on startup — supports `KEY=value` format, ignores comments and blank lines, uses `os.environ.setdefault` (doesn't override existing env vars).
+**`_load_dotenv()`** reads `.env` from cwd on startup — supports `KEY=value` format, ignores comments and blank lines. The project-local `.env` takes precedence over the shell environment (uses direct assignment, overrides existing env vars).
 
 ---
 

@@ -44,6 +44,7 @@ class Orchestrator:
         self._tasks: dict[str, asyncio.Task] = {}
         self._retry_timers: dict[str, asyncio.TimerHandle] = {}
         self._child_pids: set[int] = set()  # Track claude subprocess PIDs
+        self._last_session_ids: dict[str, str] = {}  # issue_id -> last known session_id
         self._jinja = Environment(undefined=StrictUndefined)
         self._running = False
         self._last_issues: dict[str, Issue] = {}
@@ -251,11 +252,13 @@ class Orchestrator:
             attempt=attempt_num,
         )
 
-        # Check for existing session to resume
+        # Check for existing or previously known session to resume
         if issue.id in self.running:
             old = self.running[issue.id]
             if old.session_id:
                 attempt.session_id = old.session_id
+        elif issue.id in self._last_session_ids:
+            attempt.session_id = self._last_session_ids[issue.id]
 
         self.running[issue.id] = attempt
         task = asyncio.create_task(self._run_worker(issue, attempt))
@@ -283,10 +286,11 @@ class Orchestrator:
             for turn in range(max_turns):
                 if turn > 0:
                     # Continuation: check if issue is still active
+                    current_state = issue.state  # fallback to dispatch-time state
                     try:
                         client = self._ensure_linear_client()
                         states = await client.fetch_issue_states_by_ids([issue.id])
-                        current_state = states.get(issue.id, "")
+                        current_state = states.get(issue.id, issue.state)
                         state_lower = current_state.strip().lower()
                         active_lower = [
                             s.strip().lower() for s in self.cfg.tracker.active_states
@@ -303,7 +307,7 @@ class Orchestrator:
                     # Use continuation prompt
                     prompt = (
                         f"Continue working on {issue.identifier}. "
-                        f"The issue is still in '{issue.state}' state. "
+                        f"The issue is still in '{current_state}' state. "
                         f"Check your progress and continue the task."
                     )
 
@@ -392,10 +396,15 @@ class Orchestrator:
             elapsed = (datetime.now(timezone.utc) - attempt.started_at).total_seconds()
             self.total_seconds_running += elapsed
 
-        # Record completion time for last_run_at injection
+        # Preserve session_id for future retries
+        if attempt.session_id:
+            self._last_session_ids[issue.id] = attempt.session_id
+
+        # Record completion time for last_run_at injection (not for canceled)
         completed_at = datetime.now(timezone.utc)
         attempt.completed_at = completed_at
-        self._last_completed_at[issue.id] = completed_at
+        if attempt.status != "canceled":
+            self._last_completed_at[issue.id] = completed_at
 
         # Remove from running
         self.running.pop(issue.id, None)
@@ -442,10 +451,10 @@ class Orchestrator:
         )
         self.retry_attempts[issue.id] = entry
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         handle = loop.call_later(
             delay_ms / 1000,
-            lambda: asyncio.ensure_future(self._handle_retry(issue.id)),
+            lambda: loop.create_task(self._handle_retry(issue.id)),
         )
         self._retry_timers[issue.id] = handle
 

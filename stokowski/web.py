@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -493,6 +494,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 </div>
 
 <script>
+  function esc(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
   function fmt(n) {
     if (n >= 1000000) return (n/1000000).toFixed(1) + 'M';
     if (n >= 1000)    return (n/1000).toFixed(1) + 'K';
@@ -535,13 +544,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     const rows = all.map(r => `
       <div class="agent-card">
         <div>
-          <div class="agent-id">${r.issue_identifier}</div>
+          <div class="agent-id">${esc(r.issue_identifier)}</div>
         </div>
         <div>
           <div class="agent-status-row">
             ${statusPill(r.status)}
           </div>
-          <div class="agent-msg">${r.last_message || '—'}</div>
+          <div class="agent-msg">${esc(r.last_message || '—')}</div>
         </div>
         <div class="agent-meta">
           <div class="agent-tokens">${fmt(r.tokens?.total_tokens || 0)} tok</div>
@@ -631,6 +640,7 @@ def create_app(orchestrator: Orchestrator) -> FastAPI:
 
     @app.post("/api/v1/refresh")
     async def api_refresh():
+        asyncio.create_task(orchestrator._tick())
         return JSONResponse({"ok": True})
 
     return app

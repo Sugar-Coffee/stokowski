@@ -196,7 +196,7 @@ class KeyboardHandler:
             if hasattr(self._orch, '_stop_event'):
                 # Wake the poll loop early
                 self._loop.call_soon_threadsafe(
-                    lambda: asyncio.ensure_future(self._orch._tick(), loop=self._loop)
+                    lambda: self._loop.create_task(self._orch._tick())
                 )
 
     def stop(self):
@@ -236,7 +236,7 @@ def _make_footer(orch: Orchestrator) -> Text:
 
 async def run_orchestrator(workflow_path: str, port: int | None = None):
     orch = Orchestrator(workflow_path)
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     # Start keyboard handler
     kb = KeyboardHandler(orch, loop)
@@ -320,10 +320,6 @@ def cli():
         help="Enable debug logging",
     )
     parser.add_argument(
-        "--logs-root", default="./log",
-        help="Directory for log files (default: ./log)",
-    )
-    parser.add_argument(
         "--dry-run", action="store_true",
         help="Validate config and show candidates without dispatching",
     )
@@ -348,7 +344,7 @@ def _force_kill_children():
     import subprocess
     try:
         result = subprocess.run(
-            ["pgrep", "-f", "claude.*-p.*--dangerously-skip-permissions"],
+            ["pgrep", "-f", "claude.*-p.*--output-format.*stream-json"],
             capture_output=True, text=True,
         )
         for pid_str in result.stdout.strip().split("\n"):

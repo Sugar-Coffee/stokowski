@@ -118,7 +118,8 @@ async def run_agent_turn(
         return attempt
 
     # Stream stdout (NDJSON events)
-    last_activity = asyncio.get_event_loop().time()
+    loop = asyncio.get_running_loop()
+    last_activity = loop.time()
     stall_timeout_s = claude_cfg.stall_timeout_ms / 1000
     turn_timeout_s = claude_cfg.turn_timeout_ms / 1000
 
@@ -128,7 +129,7 @@ async def run_agent_turn(
             line = await proc.stdout.readline()
             if not line:
                 break
-            last_activity = asyncio.get_event_loop().time()
+            last_activity = loop.time()
             attempt.last_event_at = datetime.now(timezone.utc)
 
             line_str = line.decode().strip()
@@ -145,7 +146,7 @@ async def run_agent_turn(
     async def stall_monitor():
         while proc.returncode is None:
             await asyncio.sleep(min(stall_timeout_s / 4, 30))
-            elapsed = asyncio.get_event_loop().time() - last_activity
+            elapsed = loop.time() - last_activity
             if stall_timeout_s > 0 and elapsed > stall_timeout_s:
                 logger.warning(
                     f"Stall detected issue={issue.identifier} "
