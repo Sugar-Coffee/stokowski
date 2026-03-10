@@ -63,6 +63,119 @@ def build_claude_args(
     return args
 
 
+def build_codex_args(
+    model: str | None,
+    prompt: str,
+    workspace_path: Path,
+) -> list[str]:
+    """Build the codex CLI argument list."""
+    args = ["codex", "--quiet"]
+    if model:
+        args.extend(["--model", model])
+    args.extend(["--prompt", prompt])
+    return args
+
+
+async def run_codex_turn(
+    model: str | None,
+    hooks_cfg: HooksConfig,
+    prompt: str,
+    workspace_path: Path,
+    issue: Issue,
+    attempt: RunAttempt,
+    on_pid: PidCallback | None = None,
+) -> RunAttempt:
+    """Run a single Codex turn. Returns updated RunAttempt.
+
+    Codex doesn't support session resumption or stream-json output.
+    We capture stdout/stderr and use exit code for status.
+    """
+    args = build_codex_args(model, prompt, workspace_path)
+
+    logger.info(
+        f"Launching codex issue={issue.identifier} "
+        f"turn={attempt.turn_count + 1}"
+    )
+
+    # Run before_run hook
+    if hooks_cfg.before_run:
+        from .workspace import run_hook
+
+        ok = await run_hook(
+            hooks_cfg.before_run, workspace_path, hooks_cfg.timeout_ms, "before_run"
+        )
+        if not ok:
+            attempt.status = "failed"
+            attempt.error = "before_run hook failed"
+            return attempt
+
+    attempt.status = "streaming"
+    attempt.started_at = attempt.started_at or datetime.now(timezone.utc)
+    attempt.turn_count += 1
+    attempt.last_event_at = datetime.now(timezone.utc)
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            cwd=str(workspace_path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
+        )
+        if on_pid and proc.pid:
+            on_pid(proc.pid, True)
+    except FileNotFoundError:
+        attempt.status = "failed"
+        attempt.error = "Codex command not found: codex"
+        logger.error(attempt.error)
+        return attempt
+
+    try:
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+            proc.communicate(),
+            timeout=3600,
+        )
+        stdout_text = stdout_bytes.decode()[:2000] if stdout_bytes else ""
+        stderr_text = stderr_bytes.decode()[:500] if stderr_bytes else ""
+
+        if stdout_text:
+            attempt.last_message = stdout_text[:200]
+
+        if proc.returncode == 0:
+            attempt.status = "succeeded"
+        else:
+            attempt.status = "failed"
+            attempt.error = f"Codex exit code {proc.returncode}: {stderr_text}"
+
+    except asyncio.TimeoutError:
+        proc.kill()
+        attempt.status = "timed_out"
+        attempt.error = "Codex turn timed out"
+    except Exception as e:
+        proc.kill()
+        attempt.status = "failed"
+        attempt.error = str(e)
+
+    # Run after_run hook
+    if hooks_cfg.after_run:
+        from .workspace import run_hook
+
+        await run_hook(
+            hooks_cfg.after_run, workspace_path, hooks_cfg.timeout_ms, "after_run"
+        )
+
+    # Unregister PID
+    if on_pid and proc.pid:
+        on_pid(proc.pid, False)
+
+    logger.info(
+        f"Codex turn complete issue={issue.identifier} "
+        f"status={attempt.status}"
+    )
+
+    return attempt
+
+
 async def run_agent_turn(
     claude_cfg: ClaudeConfig,
     hooks_cfg: HooksConfig,
@@ -275,3 +388,40 @@ def _process_event(
     # Forward to orchestrator callback
     if on_event:
         on_event(identifier, event_type, event)
+
+
+async def run_turn(
+    runner_type: str,
+    claude_cfg: ClaudeConfig,
+    hooks_cfg: HooksConfig,
+    prompt: str,
+    workspace_path: Path,
+    issue: Issue,
+    attempt: RunAttempt,
+    on_event: EventCallback | None = None,
+    on_pid: PidCallback | None = None,
+) -> RunAttempt:
+    """Route to the correct runner based on runner_type."""
+    if runner_type == "codex":
+        return await run_codex_turn(
+            model=claude_cfg.model,
+            hooks_cfg=hooks_cfg,
+            prompt=prompt,
+            workspace_path=workspace_path,
+            issue=issue,
+            attempt=attempt,
+            on_pid=on_pid,
+        )
+    elif runner_type == "claude":
+        return await run_agent_turn(
+            claude_cfg=claude_cfg,
+            hooks_cfg=hooks_cfg,
+            prompt=prompt,
+            workspace_path=workspace_path,
+            issue=issue,
+            attempt=attempt,
+            on_event=on_event,
+            on_pid=on_pid,
+        )
+    else:
+        raise ValueError(f"Unknown runner type: {runner_type}")
