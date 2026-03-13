@@ -77,11 +77,17 @@ Each agent runs in its own isolated git clone — multiple tickets can be worked
 
 ## How is this different from Emdash?
 
-[Emdash](https://www.emdash.sh/) is a great product that solves a similar problem — it integrates with Linear and spins up Claude Code agents for your tickets. If you're evaluating both, here's an honest comparison.
+[Emdash](https://www.emdash.sh/) is a well-built open-source desktop app for running coding agents. It supports 22+ agent CLIs (Claude Code, Codex, Gemini, Cursor, and more) and integrates with Linear, Jira, and GitHub Issues. If you're evaluating both, here's an honest comparison.
 
-**The core difference: separation of agent context from interactive context.**
+**The core difference: autonomous daemon vs interactive GUI.**
 
-When you work interactively with Claude Code in your repo, you rely on `CLAUDE.md` and your project's rule files to guide Claude's behaviour. The problem with putting your autonomous agent instructions in `CLAUDE.md` is that they bleed into your regular Claude Code sessions — your day-to-day interactive work now carries all the "you are running headlessly, never ask a human, follow this state machine" instructions that only make sense for an unattended agent.
+Emdash is a developer-facing desktop app — you pick an issue, pick an agent, and launch it manually. It's excellent for interactive parallel agent work, especially if you want to switch between providers.
+
+Stokowski is a headless daemon — it runs unattended, polling Linear for issues and autonomously dispatching agents through a configurable state machine. You define the workflow once, and issues flow through it without human intervention (except at review gates where you explicitly want it).
+
+**The second difference: agent context separation.**
+
+When you work interactively with Claude Code in your repo, you rely on `CLAUDE.md` and your project's rule files to guide Claude's behaviour. The problem with putting autonomous agent instructions in `CLAUDE.md` is that they bleed into your regular Claude Code sessions — your day-to-day interactive work now carries all the "you are running headlessly, never ask a human, follow this state machine" instructions that only make sense for an unattended agent.
 
 Stokowski solves this with `workflow.yaml` and a `prompts/` directory. Your autonomous agent prompt — how to handle Linear states, what quality gates to run, how to structure PRs, what to do when blocked — lives entirely in your workflow config and is only injected into headless agent sessions. Your `CLAUDE.md` stays clean for interactive use.
 
@@ -92,25 +98,24 @@ Stokowski agent:        Claude reads CLAUDE.md               ← same convention
                               +  prompts/ stage files        ← agent-only instructions
 ```
 
-This separation lets you build a genuinely autonomous pipeline without compromising your day-to-day developer experience.
-
-**Other differences:**
-
 | | Stokowski | Emdash |
 |---|---|---|
-| Agent runners | Claude Code + Codex — mix providers per state in the same pipeline | Claude Code only |
-| Agent instructions | Separate `workflow.yaml` + `prompts/` — doesn't affect interactive sessions | Applied via project rules, shared with interactive context |
-| Prompt template | Three-layer Jinja2 prompt assembly with full issue context | Managed by Emdash |
-| Quality gate hooks | `before_run` / `after_run` shell scripts per turn | Not available |
-| MCP servers | Any `.mcp.json` in your repo — Figma, iOS Simulator, Playwright, etc. | Emdash-managed integrations |
-| Per-state concurrency | Configurable per Linear state | Not available |
-| Cost | Your existing Claude / OpenAI subscriptions | Additional Emdash subscription |
-| Open source | Yes — fork it, modify it, self-host it | Closed source SaaS |
-| Maintenance | You maintain it | Emdash maintains it |
+| Model | Autonomous daemon — polls Linear, dispatches agents, manages lifecycle | Interactive desktop app — human-initiated agent runs |
+| Agent runners | Claude Code + Codex per state | 22+ agent CLIs (Claude Code, Codex, Gemini, Cursor, etc.) |
+| State machine | Configurable stages, gates, transitions, rework loops | No workflow engine — single-shot agent runs |
+| Human review gates | Built-in gate protocol with approve/rework Linear states | No gate protocol |
+| Prompt assembly | Three-layer Jinja2 (global + stage + auto-injected lifecycle) | No custom prompt templates |
+| Quality gate hooks | `before_run` / `after_run` / `on_stage_enter` shell scripts | Not available |
+| Retry & recovery | Exponential backoff, stall detection, crash recovery from tracking comments | No retry logic |
+| Issue trackers | Linear | Linear, Jira, GitHub Issues |
+| MCP servers | Any `.mcp.json` in the workspace | MCP support |
+| Concurrency control | Global + per-state limits | Parallel agents in worktrees |
+| Cost | Your existing API subscriptions | Free / open source |
+| Open source | Yes | Yes |
 
-**When to choose Emdash:** You want a polished managed product, don't want to run infrastructure, and your workflow fits their model.
+**When to choose Emdash:** You want an interactive GUI, need to switch between many agent providers, or work across multiple issue trackers. Great for hands-on development where you're actively steering agents.
 
-**When to choose Stokowski:** You want full control over the agent prompt and workflow, need the interactive/autonomous context separation, want to mix Claude Code and Codex in the same pipeline, have specialised MCP tooling (Figma, iOS, etc.), or want to run quality gates on every turn.
+**When to choose Stokowski:** You want a fully autonomous pipeline that runs unattended — issues go in, PRs come out. You need state machine workflows, human review gates, quality hooks, or want to keep agent instructions separate from your interactive `CLAUDE.md`.
 
 ---
 
@@ -158,15 +163,52 @@ Linear issue → isolated git clone → agent (Claude or Codex) → PR + Human R
 
 ## What Stokowski adds beyond Symphony
 
-Beyond porting to Claude Code + Python, Stokowski ships several improvements over the reference implementation:
+Symphony's spec defines the core loop: poll a tracker, dispatch agents into isolated workspaces, manage sessions, retry failures, reconcile state. Stokowski implements all of that and adds several layers on top:
+
+<details>
+<summary><strong>State machine workflows</strong></summary>
+
+Symphony uses a flat model — issues are either active or terminal, and agents run until the issue moves to a done state. There's no concept of stages, gates, or transitions.
+
+Stokowski adds a full state machine engine:
+- **Typed states** — `agent` (runs a coding agent), `gate` (pauses for human review), `terminal` (issue complete)
+- **Explicit transitions** — each state declares where to go on success, approval, or rework
+- **Loops and cycles** — rework targets can point to any earlier state, not just the previous one
+- **Gate protocol** — dedicated "Gate Approved" and "Rework" Linear states with `max_rework` limits and automatic escalation
+- **Structured tracking** — state transitions persisted as HTML comments on Linear issues for crash recovery
+
+</details>
+
+<details>
+<summary><strong>Multi-runner, multi-model</strong></summary>
+
+Symphony is tightly coupled to Codex via its `app-server` JSON-RPC protocol. Stokowski supports multiple runners and models, configurable per state:
+- **Claude Code** — `claude -p` with stream-json output and multi-turn `--resume`
+- **Codex** — `codex --quiet` for independent second opinions
+- **Per-state model overrides** — use Opus for investigation, Sonnet for implementation, Codex for adversarial review, all in the same pipeline
+- **Runner-agnostic orchestration** — the state machine, retry logic, and hooks work identically regardless of which runner a state uses
+
+</details>
+
+<details>
+<summary><strong>Three-layer prompt assembly</strong></summary>
+
+Symphony renders a single Jinja2 template from `WORKFLOW.md`. Stokowski builds prompts from three layers:
+- **Global prompt** — shared project context injected into every agent turn
+- **Stage prompt** — per-state instructions (pure Markdown, no config in prompt files)
+- **Lifecycle injection** — auto-generated section with issue metadata, rework context, recent Linear comments, and transition instructions
+
+Prompt authors never need to write "move the issue to Human Review when done" — the lifecycle layer handles that based on the YAML config.
+
+</details>
 
 <details>
 <summary><strong>Terminal experience</strong></summary>
 
 - **Persistent command bar** — a live footer pinned at the bottom of the terminal showing agent count, token usage, and keyboard shortcuts; stays visible as logs scroll above it
 - **Single-key controls** — `q` graceful shutdown · `s` status table · `r` force poll · `h` help. No Ctrl+C wrestling.
-- **Graceful shutdown** — `q` kills all Claude Code subprocesses by process group before exiting, so you don't bleed tokens on orphaned agents
-- **Update check** — on launch, compares your local clone against `origin/main` and shows an update indicator in the footer when new commits are available
+- **Graceful shutdown** — `q` kills all agent subprocesses by process group before exiting, so you don't bleed tokens on orphaned agents
+- **Update check** — on launch, checks for new releases via the GitHub API and shows an indicator in the footer
 
 </details>
 
@@ -174,7 +216,8 @@ Beyond porting to Claude Code + Python, Stokowski ships several improvements ove
 <summary><strong>Web dashboard</strong></summary>
 
 - Live dashboard built with FastAPI + vanilla JS (no page reloads)
-- Agent cards: turn count, token usage, last activity message, blinking live status pill
+- Agent cards: current state, turn count, token usage, last activity message, blinking live status pill
+- Pending gates view showing issues waiting for human review
 - Aggregate metrics: total tokens used, uptime, running/queued counts
 - Auto-refreshes every 3 seconds
 
@@ -183,7 +226,7 @@ Beyond porting to Claude Code + Python, Stokowski ships several improvements ove
 <details>
 <summary><strong>Reliability</strong></summary>
 
-- **Stall detection** — kills agents that produce no output for a configurable period, rather than waiting for the full turn timeout
+- **Stall detection** — kills agents that produce no output for a configurable period (both Claude Code and Codex runners)
 - **Process group tracking** — child PIDs registered on spawn and killed via `os.killpg`, catching grandchild processes too
 - **Interruptible poll sleep** — shutdown wakes the poll loop immediately; doesn't wait for the current interval to expire
 - **Headless system prompt** — agents receive an appended system prompt disabling interactive skills, plan mode, and slash commands
@@ -193,10 +236,12 @@ Beyond porting to Claude Code + Python, Stokowski ships several improvements ove
 <details>
 <summary><strong>Configuration</strong></summary>
 
+- **Pure YAML config** — `workflow.yaml` defines the full state machine, runner defaults, Linear mapping, and hooks in one file
 - **`.env` auto-load** — `LINEAR_API_KEY` loaded from `.env` on startup, no `export` needed
 - **`$VAR` references** — any config value can reference an env var with `$VAR_NAME` syntax
 - **Hot-reload** — `workflow.yaml` is re-parsed on every poll tick; config changes take effect without restart
-- **Per-state concurrency limits** — cap concurrency per Linear state independently of the global limit
+- **Per-state concurrency limits** — cap concurrency per state independently of the global limit
+- **Per-state overrides** — model, max_turns, timeouts, hooks, session mode, and permission mode can all be overridden per state
 
 </details>
 
