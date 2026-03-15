@@ -8,6 +8,21 @@ All notable changes to Stokowski are documented here.
 
 ---
 
+## [0.2.1] - 2026-03-15
+
+### Fixed
+
+- fix: exclude `prompts/` from setuptools package discovery — fresh installs failed with "Multiple top-level packages" error (de001b4)
+- fix: `project.license` deprecation warning — switched to SPDX string format (de001b4)
+
+### Changed
+
+- docs: rewrite Emdash comparison for accuracy — now an open-source desktop app with 22+ agent CLIs (15d15d4)
+- docs: expand "What Stokowski adds beyond Symphony" with state machine, multi-runner, and prompt assembly sections (15d15d4)
+- docs: clarify workflow diagram is a configurable example, not a fixed pipeline (f9879b6)
+
+---
+
 ## [0.2.0] - 2026-03-13
 
 ### Added
@@ -69,6 +84,7 @@ All notable changes to Stokowski are documented here.
 
 ---
 
-[Unreleased]: https://github.com/Sugar-Coffee/stokowski/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Sugar-Coffee/stokowski/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v0.2.1
 [0.2.0]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v0.1.0
