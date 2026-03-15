@@ -8,6 +8,25 @@ All notable changes to Stokowski are documented here.
 
 ---
 
+## [0.3.0] - 2026-03-15
+
+### Added
+
+- feat: add todo state — pick up issues from Todo and move to In Progress automatically (94b9d02)
+
+### Fixed
+
+- fix: single turn per dispatch in state machine mode — agents no longer blow past stage boundaries (ee8f0f6)
+- fix: prevent re-dispatch loop when gate state transition fails — keep issue claimed and retry (60f391f)
+- fix: include lifecycle context in multi-turn continuation prompts (ca82942)
+- fix: increase subprocess stdout buffer to 10MB to handle large NDJSON lines (a346125)
+- fix: check return value of `update_issue_state` at all call sites (6347584)
+- fix: Linear 400 on state update — use `team.states` instead of `workflowStates` filter (77a0bad)
+- fix: make `_SilentUndefined` inherit from `jinja2.Undefined` (1b6ddb3)
+- fix: read `__version__` from package metadata instead of hardcoded string (ae74016)
+
+---
+
 ## [0.2.2] - 2026-03-15
 
 ### Added
@@ -96,7 +115,8 @@ All notable changes to Stokowski are documented here.
 
 ---
 
-[Unreleased]: https://github.com/Sugar-Coffee/stokowski/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/Sugar-Coffee/stokowski/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v0.3.0
 [0.2.2]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v0.2.2
 [0.2.1]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v0.2.1
 [0.2.0]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v0.2.0
