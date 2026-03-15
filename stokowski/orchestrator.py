@@ -739,47 +739,12 @@ class Orchestrator:
 
             prompt = await self._render_prompt_async(issue, attempt.attempt, state_name)
 
-            max_turns = claude_cfg.max_turns
-            for turn in range(max_turns):
-                if turn > 0:
-                    current_state = issue.state
-                    try:
-                        client = self._ensure_linear_client()
-                        states = await client.fetch_issue_states_by_ids([issue.id])
-                        current_state = states.get(issue.id, issue.state)
-                        state_lower = current_state.strip().lower()
-                        active_lower = [
-                            s.strip().lower() for s in self.cfg.active_linear_states()
-                        ]
-                        if state_lower not in active_lower:
-                            logger.info(
-                                f"Issue {issue.identifier} no longer active "
-                                f"(state={current_state}), stopping"
-                            )
-                            break
-                    except Exception as e:
-                        logger.warning(f"State check failed, continuing: {e}")
-
-                    # Build continuation prompt with lifecycle context
-                    # so the agent knows its state boundaries and transitions
-                    lifecycle = ""
-                    if state_name and state_cfg:
-                        lifecycle = "\n\n" + build_lifecycle_section(
-                            issue=issue,
-                            state_name=state_name,
-                            state_cfg=state_cfg,
-                            linear_states=self.cfg.linear_states,
-                            run=self._issue_state_runs.get(issue.id, 1),
-                        )
-                    prompt = (
-                        f"Continue working on {issue.identifier}. "
-                        f"You are in the **{state_name}** stage. "
-                        f"The issue is still in '{current_state}' state. "
-                        f"Check your progress and continue the task. "
-                        f"Do NOT proceed beyond the scope of the {state_name} stage."
-                        f"{lifecycle}"
-                    )
-
+            # State machine mode: single turn per dispatch. The state
+            # machine handles continuation via _transition after each
+            # turn completes — multi-turn loops would bypass gate
+            # transitions and cause the agent to blow past stage
+            # boundaries.
+            if state_name and state_cfg:
                 attempt = await run_turn(
                     runner_type=runner_type,
                     claude_cfg=claude_cfg,
@@ -791,9 +756,49 @@ class Orchestrator:
                     on_event=self._on_agent_event,
                     on_pid=self._on_child_pid,
                 )
+            else:
+                # Legacy mode: multi-turn loop
+                max_turns = claude_cfg.max_turns
+                for turn in range(max_turns):
+                    if turn > 0:
+                        current_state = issue.state
+                        try:
+                            client = self._ensure_linear_client()
+                            states = await client.fetch_issue_states_by_ids([issue.id])
+                            current_state = states.get(issue.id, issue.state)
+                            state_lower = current_state.strip().lower()
+                            active_lower = [
+                                s.strip().lower() for s in self.cfg.active_linear_states()
+                            ]
+                            if state_lower not in active_lower:
+                                logger.info(
+                                    f"Issue {issue.identifier} no longer active "
+                                    f"(state={current_state}), stopping"
+                                )
+                                break
+                        except Exception as e:
+                            logger.warning(f"State check failed, continuing: {e}")
 
-                if attempt.status != "succeeded":
-                    break
+                        prompt = (
+                            f"Continue working on {issue.identifier}. "
+                            f"The issue is still in '{current_state}' state. "
+                            f"Check your progress and continue the task."
+                        )
+
+                    attempt = await run_turn(
+                        runner_type=runner_type,
+                        claude_cfg=claude_cfg,
+                        hooks_cfg=hooks_cfg,
+                        prompt=prompt,
+                        workspace_path=ws.path,
+                        issue=issue,
+                        attempt=attempt,
+                        on_event=self._on_agent_event,
+                        on_pid=self._on_child_pid,
+                    )
+
+                    if attempt.status != "succeeded":
+                        break
 
             self._on_worker_exit(issue, attempt)
 
