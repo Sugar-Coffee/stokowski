@@ -513,6 +513,60 @@ class Orchestrator:
                     f"rework_to={rework_to} run={new_run}"
                 )
 
+    async def _reconcile_pending_gates(self):
+        """Clear pending gates that were manually moved to terminal states."""
+        if not self._pending_gates:
+            return
+
+        pending_ids = list(self._pending_gates.keys())
+        try:
+            client = self._ensure_linear_client()
+            states = await client.fetch_issue_states_by_ids(pending_ids)
+        except Exception as e:
+            logger.warning(f"Pending gate reconciliation failed: {e}")
+            return
+
+        terminal_lower = {
+            s.strip().lower() for s in self.cfg.terminal_linear_states()
+        }
+
+        for issue_id in pending_ids:
+            current_state = states.get(issue_id)
+            if current_state is None:
+                continue
+
+            if current_state.strip().lower() not in terminal_lower:
+                continue
+
+            issue = self._last_issues.get(
+                issue_id,
+                Issue(id=issue_id, identifier=issue_id, title=""),
+            )
+
+            try:
+                ws_root = self.cfg.workspace.resolved_root()
+                await remove_workspace(ws_root, issue.identifier, self.cfg.hooks)
+            except Exception as e:
+                logger.warning(
+                    f"Failed to remove workspace for terminal gate {issue.identifier}: {e}"
+                )
+
+            self._pending_gates.pop(issue_id, None)
+            self._issue_current_state.pop(issue_id, None)
+            self._issue_state_runs.pop(issue_id, None)
+            self._last_session_ids.pop(issue_id, None)
+            self.retry_attempts.pop(issue_id, None)
+            handle = self._retry_timers.pop(issue_id, None)
+            if handle:
+                handle.cancel()
+            self.claimed.discard(issue_id)
+            self.completed.add(issue_id)
+
+            logger.info(
+                f"Pending gate resolved to terminal issue={issue.identifier} "
+                f"state={current_state}"
+            )
+
     async def _tick(self):
         """Single poll tick: reconcile, validate, fetch, dispatch."""
         # Reload workflow (supports hot-reload)
@@ -520,6 +574,7 @@ class Orchestrator:
 
         # Part 1: Reconcile running issues
         await self._reconcile()
+        await self._reconcile_pending_gates()
 
         # Handle gate responses
         await self._handle_gate_responses()
