@@ -4,7 +4,7 @@
 
 **Autonomous coding agents, orchestrated by Linear issues.**
 
-A Python implementation of the [OpenAI Symphony](https://github.com/openai/symphony) workflow specification — adapted for [Claude Code](https://claude.ai/claude-code), [Codex](https://openai.com/index/introducing-codex/), and [Linear](https://linear.app).
+Built on [OpenAI's Symphony](https://github.com/openai/symphony) spec and taken further — with configurable state machines, gate-based human review, multi-runner support, and a live web dashboard. Works with [Claude Code](https://claude.ai/claude-code), [Codex](https://openai.com/index/introducing-codex/), and [Linear](https://linear.app).
 
 [![Python](https://img.shields.io/badge/python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-22c55e)](LICENSE)
