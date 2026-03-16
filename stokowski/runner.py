@@ -414,6 +414,57 @@ def _process_event(
     event_type = event.get("type", "")
     attempt.last_event = event_type
 
+    log_entry: dict | None = None
+    if event_type == "assistant":
+        msg = event.get("message", {})
+        content = msg.get("content", "")
+        text = ""
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text = block.get("text", "")
+                    break
+        if text:
+            log_entry = {"type": "assistant", "text": text[:2000]}
+    elif event_type == "tool_use":
+        tool_name = event.get("name", event.get("tool", ""))
+        tool_input = event.get("input", {})
+        summary = ""
+        if tool_name == "Bash" and isinstance(tool_input, dict):
+            summary = tool_input.get("command", "")[:500]
+        elif tool_name in ("Read", "Write", "Edit") and isinstance(tool_input, dict):
+            summary = tool_input.get("file_path", "")
+        elif tool_name in ("Grep", "Glob") and isinstance(tool_input, dict):
+            summary = tool_input.get("pattern", "")
+        log_entry = {
+            "type": "tool_use",
+            "tool": tool_name,
+            "summary": summary[:500],
+        }
+    elif event_type == "tool_result":
+        content = event.get("content", "")
+        text = ""
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text = block.get("text", "")
+                    break
+        if text:
+            log_entry = {"type": "tool_result", "text": text[:2000]}
+    elif event_type == "result":
+        result_text = event.get("result", "")
+        if isinstance(result_text, str) and result_text:
+            log_entry = {"type": "result", "text": result_text[:2000]}
+
+    if log_entry:
+        if len(attempt.message_log) >= 500:
+            attempt.message_log = attempt.message_log[-400:]
+        attempt.message_log.append(log_entry)
+
     # Extract session_id from result events
     if event_type == "result":
         if "session_id" in event:

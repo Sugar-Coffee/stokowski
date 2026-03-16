@@ -48,6 +48,7 @@ class RunAttempt:
     last_message: str = ""
     completed_at: datetime | None = None
     state_name: str | None = None       # current internal state machine state
+    message_log: list[dict] = field(default_factory=list)  # dashboard event history
 
 
 @dataclass
