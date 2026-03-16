@@ -41,7 +41,7 @@ def load_prompt_file(path: str, workflow_dir: str | Path) -> str:
     p = p.resolve()
     if not p.exists():
         raise FileNotFoundError(f"Prompt file not found: {p}")
-    return p.read_text()
+    return p.read_text(encoding="utf-8-sig")
 
 
 def render_template(template_str: str, context: dict[str, Any]) -> str:

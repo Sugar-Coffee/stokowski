@@ -4,15 +4,24 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import locale
 import logging
 import os
+import platform
 import select
 import signal
 import sys
-import termios
 import threading
-import tty
 from pathlib import Path
+
+if platform.system() == "Windows":
+    import msvcrt
+
+    termios = None
+    tty = None
+else:
+    import termios
+    import tty
 
 
 def _load_dotenv():
@@ -20,7 +29,17 @@ def _load_dotenv():
     env_file = Path(".env")
     if not env_file.exists():
         return
-    for line in env_file.read_text().splitlines():
+    content = None
+    for encoding in ("utf-8-sig", "utf-8", locale.getpreferredencoding(False)):
+        try:
+            content = env_file.read_text(encoding=encoding)
+            break
+        except UnicodeDecodeError:
+            continue
+    if content is None:
+        content = env_file.read_text(encoding="utf-8", errors="replace")
+
+    for line in content.splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
@@ -156,6 +175,17 @@ class KeyboardHandler:
 
     def _run(self):
         if not sys.stdin.isatty():
+            return
+
+        if termios is None:
+            try:
+                while not self._stop.is_set():
+                    if msvcrt.kbhit():
+                        ch = msvcrt.getch().decode("utf-8", errors="ignore").lower()
+                        self._handle(ch)
+                    self._stop.wait(0.1)
+            except Exception:
+                pass
             return
 
         fd = sys.stdin.fileno()
@@ -347,6 +377,30 @@ def cli():
 def _force_kill_children():
     """Kill any lingering claude -p processes."""
     import subprocess
+
+    if platform.system() == "Windows":
+        try:
+            result = subprocess.run(
+                ["tasklist", "/FI", "IMAGENAME eq claude.exe", "/FO", "CSV"],
+                capture_output=True,
+                text=True,
+            )
+            for line in result.stdout.strip().splitlines()[1:]:
+                if not line.strip():
+                    continue
+                try:
+                    pid = line.split(",")[1].strip('"')
+                    subprocess.run(
+                        ["taskkill", "/PID", pid, "/F"],
+                        capture_output=True,
+                        text=True,
+                    )
+                except (IndexError, ValueError):
+                    pass
+        except Exception:
+            pass
+        return
+
     try:
         result = subprocess.run(
             ["pgrep", "-f", "claude.*-p.*--output-format.*stream-json"],
