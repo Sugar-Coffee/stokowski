@@ -8,6 +8,19 @@ All notable changes to Stokowski are documented here.
 
 ---
 
+## [0.4.0] - 2026-03-23
+
+### Added
+
+- feat: pass workflow.yaml Linear credentials (`api_key`, `project_slug`, `endpoint`) to agent subprocesses as env vars — agents now use the same Linear credentials as Stokowski without relying on shell environment (770206c)
+
+### Changed
+
+- docs: workflow.yaml is now the single source of truth for Linear credentials — removed `.env.example` and updated README setup guide (a9ed097)
+- docs: update README intro to position Stokowski as building beyond Symphony (a9ed097)
+
+---
+
 ## [0.3.0] - 2026-03-15
 
 ### Added
@@ -115,7 +128,8 @@ All notable changes to Stokowski are documented here.
 
 ---
 
-[Unreleased]: https://github.com/Sugar-Coffee/stokowski/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Sugar-Coffee/stokowski/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v0.3.0
 [0.2.2]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v0.2.2
 [0.2.1]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v0.2.1

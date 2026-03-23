@@ -29,7 +29,7 @@
 tracker:
   kind: linear
   project_slug: "abc123def456"    # hex slugId from your Linear project URL
-  # api_key: $LINEAR_API_KEY      # or set LINEAR_API_KEY in .env / environment
+  api_key: "lin_api_your_key_here"  # your Linear API key — agents inherit this
 
 # ---------------------------------------------------------------------------
 # Linear state name mapping
