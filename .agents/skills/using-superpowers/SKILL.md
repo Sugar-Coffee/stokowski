@@ -91,6 +91,8 @@ These thoughts mean STOP—you're rationalizing:
 | "I'll just do this one thing first" | Check BEFORE doing anything. |
 | "This feels productive" | Undisciplined action wastes time. Skills prevent this. |
 | "I know what that means" | Knowing the concept ≠ using the skill. Invoke it. |
+| "They asked me to propose something" | "Propose" in natural language means explore, not formal proposal. Use `openspec-explore`. |
+| "This is just for discussion" | Discussions about features require proper exploration phase. |
 
 ## Skill Priority
 
@@ -103,6 +105,17 @@ When multiple skills could apply, use this order:
 "Fix this bug" → debugging first, then domain-specific skills.
 
 ## OpenSpec Workflow Skills
+
+**CRITICAL DISTINCTION**: The word "propose" in natural language (e.g., "Propose something for X", "What do you propose?") triggers **exploration**, not immediate implementation. Use `openspec-explore` first. Only use `openspec-propose` when you're ready to formalize a plan into artifacts.
+
+**GOLDEN RULE**: If a conversation could lead to code changes, architectural decisions, or feature additions → Use the OpenSpec workflow. The user's phrasing doesn't matter. What matters is the destination.
+
+| User Says | Actual Intent | Correct Action |
+|-----------|---------------|----------------|
+| "What do you think about adding X?" | Exploring an idea | `openspec-explore` |
+| "Propose something for X" | Exploring options | `openspec-explore` |
+| "How would you implement X?" | Exploring approach | `openspec-explore` |
+| "Let's add X" / "Fix Y" | Clear implementation | `openspec-propose` (if clear) or `openspec-explore` (if complex) |
 
 For OpenSpec-based projects, use these specific skills for each phase:
 

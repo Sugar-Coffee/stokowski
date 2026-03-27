@@ -265,6 +265,34 @@ Moves the completed change to `openspec/changes/archive/YYYY-MM-DD-add-feature-x
 - **Never implement directly** without going through the propose → apply workflow
 - **Update artifacts** if implementation reveals design issues
 
+## NEVER Bypass OpenSpec Skills
+
+**This is absolute. No exceptions. No rationalizations.**
+
+When an OpenSpec skill (`openspec-explore`, `openspec-propose`, `openspec-apply-change`, `openspec-archive-change`) applies to your task, you MUST use it. The skill's instructions override any default behavior, instinct, or "common sense" shortcut.
+
+### What "Following the Skill" Means
+
+1. **Read the skill completely** using the Skill tool - never assume you remember it
+2. **Execute every step** exactly as the skill specifies
+3. **Never improvise** - if the skill says "run X", you run X. Don't substitute with "similar" commands
+4. **Never split execution** - complete the full workflow, don't partial-apply and "finish manually"
+
+### Forbidden Actions
+
+| Forbidden | Why | Correct Action |
+|-----------|-----|----------------|
+| Editing files directly instead of using `openspec-propose` | Bypasses artifact generation | Use the skill, let it create artifacts |
+| Creating `proposal.md` manually | Skips skill validation & structure | Use `openspec-propose` to generate it |
+| Implementing code before `openspec-apply-change` | Skips task tracking & verification | Wait for the apply phase |
+| "I'll just do this one thing first" | Rationalization that leads to bypass | Stop. Use the skill. |
+
+### The Golden Rule
+
+**When in doubt about whether to use an OpenSpec skill: USE IT.**
+
+Better to over-follow a process than to bypass it. If the skill turns out to be unnecessary, that's a minor inefficiency. If you bypass a necessary skill, that's a process violation that corrupts the workflow state.
+
 # Commit and Pull Request Guidelines
 
 ## Commit Message Format
