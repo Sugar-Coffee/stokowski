@@ -4,7 +4,7 @@
 
 **Autonomous coding agents, orchestrated by Linear issues.**
 
-Built on [OpenAI's Symphony](https://github.com/openai/symphony) spec and taken further — with configurable state machines, gate-based human review, multi-runner support, and a live web dashboard. Works with [Claude Code](https://claude.ai/claude-code), [Codex](https://openai.com/index/introducing-codex/), and [Linear](https://linear.app).
+Built on [OpenAI's Symphony](https://github.com/openai/symphony) spec and taken further — with configurable state machines, gate-based human review, multi-runner support, and a live web dashboard. Works with [Claude Code](https://claude.ai/claude-code), [Codex](https://openai.com/index/introducing-codex/), [Mux](https://mux.coder.com), and [Linear](https://linear.app).
 
 [![Python](https://img.shields.io/badge/python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-22c55e)](LICENSE)
@@ -277,6 +277,24 @@ npm install -g @anthropic-ai/claude-code
 claude --version
 claude  # follow the login prompts if not already authenticated
 ```
+
+</details>
+
+<details>
+<summary><strong>Mux (optional) — alternative runner to Claude Code</strong></summary>
+
+```bash
+# Install via npm
+npm install -g @fission-ai/mux
+
+# Or install via curl
+curl -fsSL https://mux.coder.com/install.sh | sh
+
+# Verify
+mux --version
+```
+
+Documentation: [mux.coder.com](https://mux.coder.com)
 
 </details>
 

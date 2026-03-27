@@ -1,0 +1,371 @@
+# Implementation Tasks: Mux Runner Support
+
+**⚠️ CRITICAL: Strict TDD Applied**
+
+This project currently has **no test infrastructure**. Following strict TDD discipline, we must:
+1. First establish test infrastructure (pytest)
+2. Then write failing tests for Mux runner
+3. Then implement the code
+
+**The Iron Law**: No production code without a failing test first.
+
+---
+
+## Phase 0: Test Infrastructure (REQUIRED FIRST)
+
+### Task 0.1: Add pytest to project dependencies
+
+**File**: `pyproject.toml`
+
+**Description**: Add pytest and pytest-asyncio as dev dependencies.
+
+**TDD Approach**:
+- [x] First, verify no test runner exists (try `python -m pytest --version`)
+- [x] Add pytest to pyproject.toml
+- [x] Verify pytest can be installed
+
+**Acceptance Criteria**:
+- [x] `pytest` and `pytest-asyncio` in `[project.optional-dependencies]` or new `[project.optional-dependencies.test]`
+- [x] `python -m pytest --version` succeeds after `pip install -e ".[test]"`
+
+**Estimated**: 15 minutes
+
+---
+
+### Task 0.2: Create tests directory structure
+
+**Files**: `tests/__init__.py`, `tests/conftest.py`
+
+**Description**: Establish test directory with proper Python package structure.
+
+**Acceptance Criteria**:
+- [x] `tests/` directory exists
+- [x] `tests/__init__.py` exists (empty)
+- [x] `tests/conftest.py` exists with pytest-asyncio configuration
+- [x] `python -m pytest tests/` runs without errors (0 tests collected = OK)
+
+**Estimated**: 10 minutes
+
+---
+
+### Task 0.3: Create runner test file with first failing test
+
+**File**: `tests/test_runner.py`
+
+**Description**: Create the test file for runner module with first failing test.
+
+**First Test - RED Phase**:
+```python
+import pytest
+
+
+def test_run_mux_turn_exists():
+    """Verify run_mux_turn function exists in runner module."""
+    from stokowski.runner import run_mux_turn
+    assert callable(run_mux_turn)
+```
+
+**Acceptance Criteria**:
+- [x] Test file created
+- [x] Running `python -m pytest tests/test_runner.py -v` FAILS with ImportError (run_mux_turn not found)
+- [x] Failure is the *expected* failure (ImportError, not syntax error)
+
+**Estimated**: 15 minutes
+
+---
+
+## Phase 1: Core Runner Implementation (Test-First)
+
+### Task 1.1: Create minimal `run_mux_turn()` (GREEN Phase)
+
+**File**: `stokowski/runner.py`
+
+**Description**: Implement minimal `run_mux_turn()` to pass the first test.
+
+**TDD RULE**: Only add enough code to make the test pass. No more.
+
+**Minimal Implementation**:
+```python
+async def run_mux_turn(
+    model: str | None,
+    hooks_cfg: HooksConfig,
+    prompt: str,
+    workspace_path: Path,
+    issue: Issue,
+    attempt: RunAttempt,
+    on_pid: PidCallback | None = None,
+    turn_timeout_ms: int = 3_600_000,
+    stall_timeout_ms: int = 300_000,
+    env: dict[str, str] | None = None,
+) -> RunAttempt:
+    """Run a single Mux exec turn. Returns updated RunAttempt."""
+    raise NotImplementedError("Mux runner not yet implemented")
+```
+
+**Acceptance Criteria**:
+- [x] `run_mux_turn` exists and is callable
+- [x] `python -m pytest tests/test_runner.py::test_run_mux_turn_exists -v` PASSES
+- [x] No other code added (follow minimalism rule)
+
+**Estimated**: 10 minutes
+
+---
+
+### Task 1.2: Add test for `build_mux_args()` (RED Phase)
+
+**File**: `tests/test_runner.py`
+
+**Description**: Write test for CLI argument building.
+
+**Test**:
+```python
+def test_build_mux_args_basic():
+    """Build mux exec arguments with minimal parameters."""
+    from stokowski.runner import build_mux_args
+    from pathlib import Path
+    
+    args = build_mux_args(
+        model=None,
+        prompt="Test prompt",
+        workspace_path=Path("/tmp/workspace"),
+    )
+    
+    assert "mux" in args[0]
+    assert "exec" in args
+    assert "-p" in args
+    assert "Test prompt" in args
+```
+
+**Acceptance Criteria**:
+[x] Test written
+[x] Running test FAILS with ImportError (build_mux_args not found)
+
+**Estimated**: 15 minutes
+
+---
+
+### Task 1.3: Implement `build_mux_args()` (GREEN Phase)
+
+**File**: `stokowski/runner.py`
+
+**Description**: Implement minimal function to pass the test.
+
+**Minimal Implementation**:
+```python
+def build_mux_args(
+    model: str | None,
+    prompt: str,
+    workspace_path: Path,
+    agent_id: str | None = None,
+    timeout_ms: int = 3_600_000,
+) -> list[str]:
+    """Build the mux exec CLI argument list."""
+    args = ["mux", "exec", "-p", prompt]
+    
+    if model:
+        args.extend(["--model", model])
+    
+    if agent_id:
+        args.extend(["--agent-id", agent_id])
+    
+    if timeout_ms:
+        args.extend(["--timeout", str(timeout_ms // 1000)])
+    
+    return args
+```
+
+**Acceptance Criteria**:
+[x] `build_mux_args` exists
+[x] Test `test_build_mux_args_basic` PASSES
+[x] No extra features added
+
+**Estimated**: 15 minutes
+
+---
+
+### Task 1.4-1.N: Continue TDD cycle for remaining features
+
+**Pattern**: For each feature (hooks, NDJSON parsing, stall detection, etc.):
+1. Write failing test (RED)
+2. Verify failure is expected (Verify RED)
+3. Write minimal code to pass (GREEN)
+4. Verify test passes (Verify GREEN)
+5. Refactor if needed (REFACTOR)
+
+**Features to TDD**:
+[x] `run_mux_turn()` basic execution with mocked subprocess
+[x] Hook execution (before_run, after_run)
+[x] NDJSON event parsing
+[x] Stall detection
+[x] Timeout handling
+[x] Error handling (command not found)
+[x] Token usage extraction
+
+**Estimated**: 2 hours (cumulative across all TDD cycles)
+
+---
+
+### Task 1.N: Update `run_turn()` dispatcher (Test-First)
+
+**File**: `tests/test_runner.py` then `stokowski/runner.py`
+
+**Test First**:
+```python
+@pytest.mark.asyncio
+async def test_run_turn_dispatches_to_mux():
+    """Verify run_turn dispatches to mux runner."""
+    from stokowski.runner import run_turn
+    from unittest.mock import patch
+    
+    with patch("stokowski.runner.run_mux_turn") as mock_mux:
+        mock_mux.return_value = RunAttempt(session_id="test")
+        
+        # This should fail until we add the mux case
+        await run_turn(
+            runner_type="mux",
+            claude_cfg=ClaudeConfig(),
+            hooks_cfg=HooksConfig(),
+            prompt="test",
+            workspace_path=Path("/tmp"),
+            issue=Issue(title="", identifier="TEST-1"),
+            attempt=RunAttempt(),
+        )
+        
+        mock_mux.assert_called_once()
+```
+
+**Then Implementation** in `stokowski/runner.py`:
+```python
+async def run_turn(...):
+    """Route to the correct runner based on runner_type."""
+    if runner_type == "codex":
+        return await run_codex_turn(...)
+    elif runner_type == "mux":
+        return await run_mux_turn(...)
+    elif runner_type == "claude":
+        return await run_agent_turn(...)
+    else:
+        raise ValueError(f"Unknown runner type: {runner_type}")
+```
+
+**Estimated**: 30 minutes
+
+**Code Change**:
+```python
+async def run_turn(
+    runner_type: str,
+    claude_cfg: ClaudeConfig,
+    hooks_cfg: HooksConfig,
+    prompt: str,
+    workspace_path: Path,
+    issue: Issue,
+    attempt: RunAttempt,
+    on_event: EventCallback | None = None,
+    on_pid: PidCallback | None = None,
+    env: dict[str, str] | None = None,
+) -> RunAttempt:
+    """Route to the correct runner based on runner_type."""
+    if runner_type == "codex":
+        return await run_codex_turn(...)
+    elif runner_type == "mux":                    # NEW
+        return await run_mux_turn(...)
+    elif runner_type == "claude":
+        return await run_agent_turn(...)
+    else:
+        raise ValueError(f"Unknown runner type: {runner_type}")
+```
+
+---
+
+## Phase 2: Configuration and Examples
+
+### Task 2.1: Update workflow.example.yaml
+
+**File**: `workflow.example.yaml`
+
+**Description**: Add Mux runner examples to documentation.
+
+**Acceptance Criteria**:
+[x] Add comment documenting `runner: mux` option
+[x] Include example state using mux
+[x] Document that mux uses the same options as claude
+
+**Estimated**: 30 minutes
+
+**Example Addition**:
+```yaml
+  # Example using Mux for investigation
+  investigate:
+    type: agent
+    runner: mux
+    prompt: prompts/investigate.example.md
+    linear_state: active
+    model: claude-4
+    max_turns: 8
+    transitions:
+      complete: research-review
+```
+
+---
+
+### Task 2.2: Update README/documentation
+
+**File**: `README.md` or docs (if exists)
+
+**Description**: Document Mux support for operators.
+
+**Acceptance Criteria**:
+[x] List Mux as supported runner alongside Claude and Codex
+[x] Mention Mux CLI installation requirement
+[x] Link to Mux documentation
+
+**Estimated**: 30 minutes
+
+---
+
+## Phase 3: Validation
+
+### Task 3.1: Validate with dry-run
+
+**Description**: Test configuration validation.
+
+**Acceptance Criteria**:
+[x] Create test workflow.yaml with `runner: mux`
+[x] Run `stokowski --dry-run`
+[x] Verify no validation errors
+
+**Estimated**: 30 minutes
+
+---
+
+### Task 3.2: Integration test
+
+**Description**: Test actual Mux execution.
+
+**Acceptance Criteria**:
+[x] Create test Linear issue
+[x] Configure state with `runner: mux`
+[x] Run Stokowski
+[x] Verify Mux executes and completes
+[x] Verify status is posted to Linear
+
+**Estimated**: 1 hour
+
+---
+
+## Summary
+
+| Phase | Task | Estimated | Cumulative |
+|-------|------|-----------|------------|
+| 1 | 1.1 | 2h | 2h |
+| 1 | 1.2 | 30m | 2h30m |
+| 2 | 2.1 | 30m | 3h |
+| 2 | 2.2 | 30m | 3h30m |
+| 3 | 3.1 | 30m | 4h |
+| 3 | 3.2 | 1h | 5h |
+
+**Total Estimated Time**: 5 hours
+
+## Ready for Implementation
+
+All artifacts are complete. Run `/opsx:apply` or `openspec apply add-mux-runner` to begin implementation.

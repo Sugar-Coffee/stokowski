@@ -15,6 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 web = ["fastapi>=0.115", "uvicorn>=0.32"]
+test = ["pytest>=8.0", "pytest-asyncio>=0.23"]
 
 [project.urls]
 Homepage = "https://github.com/Sugar-Coffee/stokowski"

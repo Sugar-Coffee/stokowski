@@ -78,6 +78,7 @@ hooks:
 # ---------------------------------------------------------------------------
 # Claude defaults (inherited by all agent states unless overridden)
 # States using runner: codex will use the Codex CLI instead.
+# States using runner: mux will use the Mux CLI instead (uses same options as claude).
 # ---------------------------------------------------------------------------
 claude:
   permission_mode: auto
@@ -179,12 +180,23 @@ states:
     type: agent
     prompt: prompts/review.example.md
     linear_state: active
-    runner: claude              # "claude" (default) or "codex"
+    runner: claude              # "claude" (default), "codex", or "mux"
     model: claude-opus-4-6
     max_turns: 10
     session: fresh              # no prior context — adversarial review
     transitions:
       complete: merge-review
+
+  # Example using Mux for investigation (uncomment to use)
+  # investigate-with-mux:
+  #   type: agent
+  #   runner: mux
+  #   prompt: prompts/investigate.example.md
+  #   linear_state: active
+  #   model: claude-4
+  #   max_turns: 8
+  #   transitions:
+  #     complete: research-review
 
   # ── 6. Merge Review (gate) ──────────────────────────────────────────────
   # Human reviews the code review findings and decides to merge or rework.
