@@ -67,14 +67,16 @@ def build_claude_args(
 
 def build_codex_args(
     model: str | None,
-    prompt: str,
     workspace_path: Path,
 ) -> list[str]:
-    """Build the codex CLI argument list."""
+    """Build the codex CLI argument list.
+    
+    Prompt is passed via stdin to avoid argument parsing issues with special chars.
+    """
     args = ["codex", "--quiet"]
     if model:
         args.extend(["--model", model])
-    args.extend(["--prompt", prompt])
+    args.extend(["--prompt", "-"])  # Read from stdin
     return args
 
 
@@ -95,7 +97,7 @@ async def run_codex_turn(
     Codex doesn't support session resumption or stream-json output.
     We capture stdout/stderr and use exit code for status.
     """
-    args = build_codex_args(model, prompt, workspace_path)
+    args = build_codex_args(model, workspace_path)
 
     logger.info(
         f"Launching codex issue={issue.identifier} "
@@ -123,12 +125,20 @@ async def run_codex_turn(
         proc = await asyncio.create_subprocess_exec(
             *args,
             cwd=str(workspace_path),
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
             limit=10 * 1024 * 1024,  # 10MB line buffer (default 64KB)
             env=env,
         )
+        
+        # Write prompt to stdin (avoids argument parsing issues)
+        proc.stdin.write(prompt.encode())
+        await proc.stdin.drain()
+        proc.stdin.close()
+        await proc.stdin.wait_closed()
+        
         if on_pid and proc.pid:
             on_pid(proc.pid, True)
     except FileNotFoundError:
