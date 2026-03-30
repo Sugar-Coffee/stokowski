@@ -239,9 +239,9 @@ Prompt authors never need to write "move the issue to Human Review when done" �
 <details>
 <summary><strong>Configuration</strong></summary>
 
-- **Pure YAML config** — `workflow.yaml` defines the full state machine, runner defaults, Linear mapping, API keys, and hooks in one file
-- **Workflow-driven credentials** — Linear API key lives in `workflow.yaml` and is passed to agents automatically; no `.env` files needed
-- **`$VAR` references** — any config value can reference an env var with `$VAR_NAME` syntax
+- **Pure YAML config** — `workflow.yaml` defines the full state machine, runner defaults, Linear mapping, and hooks in one file
+- **Environment-driven credentials** — API keys (Linear, Anthropic) are loaded from `.env` file automatically; no secrets in `workflow.yaml`
+- **`$VAR` references** — any config value can reference an env var with `$VAR_NAME` syntax (e.g., `api_key: "$LINEAR_API_KEY"`)
 - **Hot-reload** — `workflow.yaml` is re-parsed on every poll tick; config changes take effect without restart
 - **Per-state concurrency limits** — cap concurrency per state independently of the global limit
 - **Per-state overrides** — model, max_turns, timeouts, hooks, session mode, and permission mode can all be overridden per state
@@ -349,12 +349,26 @@ stokowski --help             # verify it's working
 
 ---
 
-### 3. Get your Linear API key
+### 3. Create .env file
 
+Create a `.env` file in the project root with your API keys:
+
+```bash
+# Required: Linear API key
+LINEAR_API_KEY="lin_api_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+# Optional: Anthropic credentials (for Claude Code runner)
+ANTHROPIC_AUTH_TOKEN="sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+ANTHROPIC_BASE_URL="https://api.anthropic.com"  # or your custom endpoint
+```
+
+**To get your Linear API key:**
 1. Open Linear → click your avatar (bottom-left) → **Settings**
 2. Go to **Security & access** → **Personal API keys**
 3. Click **Create key**, name it `stokowski`, and copy the value
-4. Paste it into the `tracker.api_key` field in your `workflow.yaml`
+4. Paste it into your `.env` file
+
+The `.env` file is automatically loaded by Stokowski — no need to export variables manually.
 
 ---
 
@@ -445,7 +459,7 @@ This connects to Linear, validates your config, and lists candidate issues — *
 
 | Error | Fix |
 |-------|-----|
-| `Missing tracker API key` | Set `api_key` in the `tracker` section of `workflow.yaml` |
+| `Missing tracker API key` | Set `LINEAR_API_KEY` in your `.env` file |
 | `Missing tracker.project_slug` | Set `project_slug` in `workflow.yaml` |
 | `Failed to fetch candidates` | Check your API key has access to the project |
 | No issues listed | Check `linear_states` matches your Linear state names exactly |
@@ -484,7 +498,7 @@ Open `http://localhost:4200` for the live dashboard.
 tracker:
   kind: linear                          # only "linear" supported
   project_slug: "abc123def456"          # hex slugId from your Linear project URL
-  api_key: "lin_api_your_key_here"      # your Linear API key — agents inherit this
+  # api_key: omit this — set LINEAR_API_KEY in your .env file instead
 
 # These map Stokowski's internal lifecycle roles to your Linear state names.
 # You can rename values to match your team's Linear setup (e.g. todo: "Ready"),
