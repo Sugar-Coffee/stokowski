@@ -29,7 +29,6 @@ def test_build_claude_args_no_prompt_in_args():
     assert prompt not in args
 
 
-
 def test_build_mux_args_basic():
     """Build mux run arguments with minimal parameters."""
     from stokowski.runner import build_mux_args

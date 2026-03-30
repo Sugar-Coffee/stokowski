@@ -250,11 +250,6 @@ async def run_agent_turn(
     env: dict[str, str] | None = None,
 ) -> RunAttempt:
     """Run a single Claude Code turn. Returns updated RunAttempt."""
-    import os
-    
-    # Inherit environment variables if not explicitly provided
-    # When env is None, subprocess inherits from parent automatically
-    
     args = build_claude_args(
         claude_cfg, workspace_path, attempt.session_id
     )
@@ -298,6 +293,7 @@ async def run_agent_turn(
         proc.stdin.write(prompt.encode())
         await proc.stdin.drain()
         proc.stdin.close()
+        await proc.stdin.wait_closed()
         
         if on_pid and proc.pid:
             on_pid(proc.pid, True)
@@ -550,6 +546,7 @@ async def run_mux_turn(
         proc.stdin.write(prompt.encode())
         await proc.stdin.drain()
         proc.stdin.close()
+        await proc.stdin.wait_closed()
         
         if on_pid and proc.pid:
             on_pid(proc.pid, True)
