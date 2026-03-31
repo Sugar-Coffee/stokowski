@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-from . import __version__
-
 if TYPE_CHECKING:
     from .orchestrator import Orchestrator
 
@@ -44,6 +42,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     --font:      'IBM Plex Mono', monospace;
   }
 
+  /* Light mode */
   .light {
     --bg:        #f5f5f4;
     --surface:   #ffffff;
@@ -70,6 +69,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     -webkit-font-smoothing: antialiased;
   }
 
+  /* Subtle grid background */
   body::before {
     content: '';
     position: fixed;
@@ -91,6 +91,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     padding: 0 24px 60px;
   }
 
+  /* ── Header ── */
   header {
     display: flex;
     align-items: center;
@@ -165,7 +166,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
   @keyframes pulse-green {
     0%, 100% { opacity: 1; box-shadow: 0 0 6px var(--green); }
-    50% { opacity: 0.5; box-shadow: 0 0 12px var(--green); }
+    50%       { opacity: 0.5; box-shadow: 0 0 12px var(--green); }
   }
 
   .timestamp {
@@ -175,6 +176,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     letter-spacing: 0.04em;
   }
 
+  /* ── Metrics row ── */
   .metrics {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
@@ -194,9 +196,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .metric::after {
     content: '';
     position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
+    bottom: 0; left: 0; right: 0;
     height: 2px;
     background: var(--border-hi);
     transition: background 0.3s;
@@ -235,6 +235,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     font-weight: 300;
   }
 
+  /* ── Section headers ── */
   .section-header {
     display: flex;
     align-items: center;
@@ -262,6 +263,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     font-weight: 300;
   }
 
+  /* ── Agent cards ── */
   .agents {
     display: flex;
     flex-direction: column;
@@ -326,14 +328,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
   @keyframes blink {
     0%, 100% { opacity: 1; }
-    50% { opacity: 0; }
+    50%       { opacity: 0; }
   }
 
-  .status-pill.succeeded { background: rgba(76,186,110,.1); color: var(--green); border: 1px solid rgba(76,186,110,.25); }
-  .status-pill.failed { background: rgba(217,95,82,.1); color: var(--red); border: 1px solid rgba(217,95,82,.25); }
-  .status-pill.retrying { background: rgba(91,156,246,.1); color: var(--blue); border: 1px solid rgba(91,156,246,.25); }
-  .status-pill.pending { background: transparent; color: var(--muted); border: 1px solid var(--border-hi); }
-  .status-pill.gate { background: rgba(232, 184, 75, 0.08); color: var(--amber-dim); border: 1px solid var(--amber-dim); }
+  .status-pill.succeeded  { background: rgba(76,186,110,.1); color: var(--green); border: 1px solid rgba(76,186,110,.25); }
+  .status-pill.failed     { background: rgba(217,95,82,.1);  color: var(--red);   border: 1px solid rgba(217,95,82,.25); }
+  .status-pill.retrying   { background: rgba(91,156,246,.1); color: var(--blue);  border: 1px solid rgba(91,156,246,.25); }
+  .status-pill.pending    { background: transparent;          color: var(--muted); border: 1px solid var(--border-hi); }
+  .status-pill.gate       { background: rgba(232, 184, 75, 0.08); color: var(--amber-dim); border: 1px solid var(--amber-dim); }
 
   .agent-msg {
     font-size: 12px;
@@ -369,6 +371,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     margin-top: 4px;
   }
 
+  /* ── Message log ── */
   .agent-log {
     display: none;
     max-height: 600px;
@@ -447,6 +450,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     margin-left: 12px;
   }
 
+  /* ── Empty state ── */
   .empty {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -469,6 +473,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     font-weight: 300;
   }
 
+  /* ── Stats bar ── */
   .stats-bar {
     display: flex;
     align-items: center;
@@ -504,6 +509,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     background: var(--border);
   }
 
+  /* ── Progress bar ── */
   .progress-wrap {
     flex: 1;
     height: 2px;
@@ -520,11 +526,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   @keyframes scan {
-    0% { transform: scaleX(0) translateX(0); }
-    50% { transform: scaleX(1) translateX(0); }
+    0%   { transform: scaleX(0) translateX(0); }
+    50%  { transform: scaleX(1) translateX(0); }
     100% { transform: scaleX(0) translateX(100%); }
   }
 
+  /* ── Completed agent header ── */
   .completed-header .agent-id {
     color: var(--muted);
   }
@@ -535,6 +542,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     font-weight: 300;
   }
 
+  /* ── Footer ── */
   footer {
     display: flex;
     justify-content: space-between;
@@ -544,23 +552,27 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     margin-top: 32px;
   }
 
-  .footer-left,
+  .footer-left {
+    font-size: 11px;
+    color: var(--dim);
+    font-weight: 300;
+  }
+
   .footer-right {
     font-size: 11px;
     color: var(--dim);
     font-weight: 300;
   }
 
+  /* ── Scrollbar ── */
   .agent-log::-webkit-scrollbar,
   .log-entry.log-tool-result::-webkit-scrollbar {
     width: 4px;
   }
-
   .agent-log::-webkit-scrollbar-track,
   .log-entry.log-tool-result::-webkit-scrollbar-track {
     background: transparent;
   }
-
   .agent-log::-webkit-scrollbar-thumb,
   .log-entry.log-tool-result::-webkit-scrollbar-thumb {
     background: var(--border-hi);
@@ -570,13 +582,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 </head>
 <body>
 <div class="shell">
+
   <header>
     <div class="logo">
       <span class="logo-name">STOKOWSKI</span>
       <span class="logo-tag">Claude Code Orchestrator</span>
     </div>
     <div class="header-right">
-      <button id="theme-btn" class="theme-toggle" onclick="toggleTheme('light')">
+      <button id="theme-btn" class="theme-toggle" onclick="toggleTheme(\'light\')">
         <span class="icon">&#9790;</span>
       </button>
       <div id="status-dot" class="status-dot idle"></div>
@@ -644,9 +657,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <span class="footer-left">Refreshes every 3s</span>
     <span class="footer-right" id="footer-gen">&mdash;</span>
   </footer>
+
 </div>
 
 <script>
+  // Theme handling
   function getTheme() {
     return localStorage.getItem('theme') || 'dark';
   }
@@ -657,10 +672,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     var btn = document.getElementById('theme-btn');
     if (theme === 'light') {
       btn.innerHTML = '<span class="icon">&#9788;</span>';
-      btn.setAttribute('onclick', "toggleTheme('dark')");
+      btn.setAttribute('onclick', 'toggleTheme(\\'dark\\')');
     } else {
       btn.innerHTML = '<span class="icon">&#9790;</span>';
-      btn.setAttribute('onclick', "toggleTheme('light')");
+      btn.setAttribute('onclick', 'toggleTheme(\\'light\\')');
     }
   }
 
@@ -668,12 +683,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     setTheme(mode);
   }
 
+  // Apply saved theme on load
   (function() {
     setTheme(getTheme());
   })();
 
+  // Track which logs are expanded
   const expandedLogs = new Set();
-  const logScrollState = new Map();
 
   function esc(s) {
     return String(s)
@@ -684,123 +700,63 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   function fmt(n) {
-    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
-    if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+    if (n >= 1000000) return (n/1000000).toFixed(1) + 'M';
+    if (n >= 1000)    return (n/1000).toFixed(1) + 'K';
     return n.toString();
   }
 
   function fmtSecs(s) {
-    if (s < 60) return Math.round(s) + 's';
-    if (s < 3600) return Math.floor(s / 60) + 'm ' + Math.round(s % 60) + 's';
-    return Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm';
-  }
-
-  function safeId(value) {
-    return String(value || '').replace(/[^a-zA-Z0-9_-]/g, '-');
+    if (s < 60)   return Math.round(s) + 's';
+    if (s < 3600) return Math.floor(s/60) + 'm ' + Math.round(s%60) + 's';
+    return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';
   }
 
   function statusPill(status) {
-    var cls = ['streaming', 'succeeded', 'failed', 'retrying', 'pending', 'gate'].includes(status)
-      ? status
-      : 'pending';
-    var label = status === 'streaming' ? 'live' : status === 'gate' ? 'awaiting gate' : status;
+    const cls = ['streaming','succeeded','failed','retrying','pending','gate'].includes(status) ? status : 'pending';
+    const label = status === 'streaming' ? 'live' : status === 'gate' ? 'awaiting gate' : status;
     return '<span class="status-pill ' + cls + '">' + label + '</span>';
   }
 
   function renderLogEntries(log) {
-    if (!log || log.length === 0) {
-      return '<div class="log-entry" style="color:var(--dim)">No output recorded yet</div>';
-    }
+    if (!log || log.length === 0) return '<div class="log-entry" style="color:var(--dim)">No output recorded yet</div>';
     return log.map(function(entry) {
       if (entry.type === 'assistant') {
         return '<div class="log-entry log-assistant">' + esc(entry.text) + '</div>';
-      }
-      if (entry.type === 'tool_use') {
-        var summary = entry.summary
-          ? '<span class="log-tool-summary">' + esc(entry.summary) + '</span>'
-          : '';
-        return '<div class="log-entry log-tool"><span class="log-tool-name">' +
-          esc(entry.tool) + '</span>' + summary + '</div>';
-      }
-      if (entry.type === 'tool_result') {
+      } else if (entry.type === 'tool_use') {
+        var summary = entry.summary ? '<span class="log-tool-summary">' + esc(entry.summary) + '</span>' : '';
+        return '<div class="log-entry log-tool"><span class="log-tool-name">' + esc(entry.tool) + '</span>' + summary + '</div>';
+      } else if (entry.type === 'tool_result') {
         return '<div class="log-entry log-tool-result">' + esc(entry.text) + '</div>';
-      }
-      if (entry.type === 'result') {
+      } else if (entry.type === 'result') {
         return '<div class="log-entry log-result">' + esc(entry.text) + '</div>';
       }
       return '';
     }).join('');
   }
 
-  function captureLogScrollState() {
-    document.querySelectorAll('.agent-log.open').forEach(function(el) {
-      var cardId = el.getAttribute('data-log-id');
-      if (!cardId) {
-        return;
-      }
-      var maxScrollTop = Math.max(el.scrollHeight - el.clientHeight, 0);
-      var distanceFromBottom = maxScrollTop - el.scrollTop;
-      logScrollState.set(cardId, {
-        scrollTop: el.scrollTop,
-        stickToBottom: distanceFromBottom <= 24,
-      });
-    });
-  }
-
-  function restoreLogScroll(cardId) {
-    var el = document.getElementById('log-' + cardId);
-    if (!el) {
-      return;
-    }
-    var state = logScrollState.get(cardId);
-    if (!state) {
-      if (expandedLogs.has(cardId)) {
-        el.scrollTop = el.scrollHeight;
-      }
-      return;
-    }
-
-    if (state.stickToBottom) {
-      el.scrollTop = el.scrollHeight;
-    } else {
-      var maxScrollTop = Math.max(el.scrollHeight - el.clientHeight, 0);
-      el.scrollTop = Math.min(state.scrollTop, maxScrollTop);
-    }
-  }
-
   function toggleLog(id) {
     var el = document.getElementById('log-' + id);
-    if (!el) {
-      return;
-    }
+    if (!el) return;
     if (el.classList.contains('open')) {
       el.classList.remove('open');
       expandedLogs.delete(id);
-      logScrollState.delete(id);
     } else {
       el.classList.add('open');
       expandedLogs.add(id);
-      logScrollState.set(id, { scrollTop: 0, stickToBottom: true });
       el.scrollTop = el.scrollHeight;
     }
   }
 
   function renderAgentCard(r, cardId, isCompleted) {
-    var stateInfo = r.state_name
-      ? '<span style="color:var(--muted);font-size:11px;margin-left:8px">' + esc(r.state_name) + '</span>'
-      : '';
+    var stateInfo = r.state_name ? '<span style="color:var(--muted);font-size:11px;margin-left:8px">' + esc(r.state_name) + '</span>' : '';
     var isOpen = expandedLogs.has(cardId);
     var logCount = (r.message_log || []).length;
-    var expandLabel = logCount > 0
-      ? (isOpen ? '\u25b4 collapse' : '\u25be ' + logCount + ' events')
-      : '';
+    var expandLabel = logCount > 0 ? (isOpen ? '\\u25b4 collapse' : '\\u25be ' + logCount + ' events') : '';
     var completedClass = isCompleted ? ' completed-header' : '';
     var completedTime = '';
     if (isCompleted && r.completed_at) {
       var d = new Date(r.completed_at);
-      completedTime = '<div class="completed-time">' +
-        d.toLocaleTimeString('en-US', { hour12: false }) +
-        '</div>';
+      completedTime = '<div class="completed-time">' + d.toLocaleTimeString('en-US', { hour12: false }) + '</div>';
     }
     var errorLine = '';
     if (r.error) {
@@ -808,14 +764,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     }
 
     return '<div class="agent-card' + completedClass + '">' +
-      '<div class="agent-header" data-card-id="' + cardId + '" onclick="toggleLog(this.dataset.cardId)">' +
+      '<div class="agent-header" onclick="toggleLog(\\'' + cardId + '\\')">' +
         '<div>' +
           '<div class="agent-id">' + esc(r.issue_identifier) + '</div>' +
           (expandLabel ? '<div class="expand-hint">' + expandLabel + '</div>' : '') +
         '</div>' +
         '<div>' +
           '<div class="agent-status-row">' + statusPill(r.status) + stateInfo + '</div>' +
-          '<div class="agent-msg">' + esc(r.last_message || r.error || '\u2014') + '</div>' +
+          '<div class="agent-msg">' + esc(r.last_message || r.error || '\\u2014') + '</div>' +
         '</div>' +
         '<div class="agent-meta">' +
           '<div class="agent-tokens">' + fmt(r.tokens?.total_tokens || 0) + ' tok</div>' +
@@ -823,8 +779,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           completedTime +
         '</div>' +
       '</div>' +
-      '<div id="log-' + cardId + '" data-log-id="' + cardId + '" class="agent-log' +
-        (isOpen ? ' open' : '') + '">' +
+      '<div id="log-' + cardId + '" class="agent-log' + (isOpen ? ' open' : '') + '">' +
         renderLogEntries(r.message_log) +
         errorLine +
       '</div>' +
@@ -832,33 +787,27 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   function renderAgents(data) {
-    captureLogScrollState();
-
     var all = [].concat(
       (data.running || []),
-      (data.retrying || []).map(function(r) {
-        return {
-          issue_identifier: r.issue_identifier,
-          status: 'retrying',
-          turn_count: r.attempt,
-          tokens: { total_tokens: 0 },
-          last_message: r.error || 'waiting to retry...',
-          message_log: [],
-          session_id: null,
-        };
-      }),
-      (data.gates || []).map(function(g) {
-        return {
-          issue_identifier: g.issue_identifier,
-          status: 'gate',
-          state_name: g.gate_state,
-          turn_count: g.run,
-          tokens: { total_tokens: 0 },
-          last_message: 'Awaiting human review',
-          message_log: [],
-          session_id: null,
-        };
-      })
+      (data.retrying || []).map(function(r) { return {
+        issue_identifier: r.issue_identifier,
+        status: 'retrying',
+        turn_count: r.attempt,
+        tokens: { total_tokens: 0 },
+        last_message: r.error || 'waiting to retry...',
+        message_log: [],
+        session_id: null,
+      }; }),
+      (data.gates || []).map(function(g) { return {
+        issue_identifier: g.issue_identifier,
+        status: 'gate',
+        state_name: g.gate_state,
+        turn_count: g.run,
+        tokens: { total_tokens: 0 },
+        last_message: 'Awaiting human review',
+        message_log: [],
+        session_id: null,
+      }; })
     );
 
     document.getElementById('agent-count').textContent = all.length;
@@ -871,19 +820,23 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         '</div>';
     } else {
       var rows = all.map(function(r) {
-        var cardId = 'active-' + safeId(r.issue_identifier);
+        var cardId = 'active-' + (r.issue_identifier || '').replace(/[^a-zA-Z0-9]/g, '-');
         return renderAgentCard(r, cardId, false);
       }).join('');
-      document.getElementById('agents-container').innerHTML = '<div class="agents">' + rows + '</div>';
+      document.getElementById('agents-container').innerHTML =
+        '<div class="agents">' + rows + '</div>';
 
+      // Auto-scroll open logs to bottom
       all.forEach(function(r) {
-        var cardId = 'active-' + safeId(r.issue_identifier);
+        var cardId = 'active-' + (r.issue_identifier || '').replace(/[^a-zA-Z0-9]/g, '-');
         if (expandedLogs.has(cardId)) {
-          restoreLogScroll(cardId);
+          var el = document.getElementById('log-' + cardId);
+          if (el) el.scrollTop = el.scrollHeight;
         }
       });
     }
 
+    // Completed runs
     var completed = data.completed || [];
     var completedSection = document.getElementById('completed-section');
     var completedContainer = document.getElementById('completed-container');
@@ -894,19 +847,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     } else {
       completedSection.style.display = 'flex';
       document.getElementById('completed-count').textContent = completed.length;
+      // Show newest first
       var reversed = completed.slice().reverse();
       var cRows = reversed.map(function(r, i) {
-        var cardId = 'completed-' + safeId((r.issue_id || r.issue_identifier || i) + '-' + (r.completed_at || i));
+        var cardId = 'completed-' + i + '-' + (r.issue_identifier || '').replace(/[^a-zA-Z0-9]/g, '-');
         return renderAgentCard(r, cardId, true);
       }).join('');
       completedContainer.innerHTML = '<div class="agents">' + cRows + '</div>';
-
-      reversed.forEach(function(r, i) {
-        var cardId = 'completed-' + safeId((r.issue_id || r.issue_identifier || i) + '-' + (r.completed_at || i));
-        if (expandedLogs.has(cardId)) {
-          restoreLogScroll(cardId);
-        }
-      });
     }
   }
 
@@ -915,28 +862,33 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       var res = await fetch('/api/v1/state');
       var data = await res.json();
 
-      var running = data.counts?.running || 0;
+      var running  = data.counts?.running  || 0;
       var retrying = data.counts?.retrying || 0;
-      var active = running > 0;
+      var active   = running > 0;
 
-      document.getElementById('v-running').textContent = running;
+      // Metrics
+      document.getElementById('v-running').textContent  = running;
       var gates = data.counts?.gates || 0;
       document.getElementById('v-retrying').textContent = retrying + gates;
-      document.getElementById('v-tokens').textContent = fmt(data.totals?.total_tokens || 0);
-      document.getElementById('v-runtime').textContent = fmtSecs(data.totals?.seconds_running || 0);
+      document.getElementById('v-tokens').textContent   = fmt(data.totals?.total_tokens || 0);
+      document.getElementById('v-runtime').textContent  = fmtSecs(data.totals?.seconds_running || 0);
 
-      document.getElementById('m-running').className = 'metric' + (active ? ' active' : '');
-      document.getElementById('m-tokens').className = 'metric' + ((data.totals?.total_tokens || 0) > 0 ? ' active' : '');
+      document.getElementById('m-running').className  = 'metric' + (active ? ' active' : '');
+      document.getElementById('m-tokens').className   = 'metric' + (data.totals?.total_tokens > 0 ? ' active' : '');
 
-      document.getElementById('s-in').textContent = fmt(data.totals?.input_tokens || 0);
+      // Stats bar
+      document.getElementById('s-in').textContent  = fmt(data.totals?.input_tokens  || 0);
       document.getElementById('s-out').textContent = fmt(data.totals?.output_tokens || 0);
 
+      // Progress bar
       var pc = document.getElementById('progress-container');
       pc.style.display = active ? 'flex' : 'none';
 
+      // Status dot
       var dot = document.getElementById('status-dot');
       dot.className = 'status-dot' + (active ? '' : ' idle');
 
+      // Timestamp
       var now = new Date();
       document.getElementById('ts').textContent =
         now.toLocaleTimeString('en-US', { hour12: false }) + ' local';
@@ -944,7 +896,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         'last sync ' + now.toLocaleTimeString('en-US', { hour12: false });
 
       renderAgents(data);
-    } catch (e) {
+    } catch(e) {
       document.getElementById('status-dot').className = 'status-dot idle';
     }
   }
@@ -958,7 +910,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
 
 def create_app(orchestrator: Orchestrator) -> FastAPI:
-    app = FastAPI(title="Stokowski", version=__version__)
+    app = FastAPI(title="Stokowski", version="0.2.0")
 
     @app.get("/", response_class=HTMLResponse)
     async def dashboard():
@@ -975,9 +927,6 @@ def create_app(orchestrator: Orchestrator) -> FastAPI:
             if r["issue_identifier"] == issue_identifier:
                 return JSONResponse(r)
         for r in snap["retrying"]:
-            if r["issue_identifier"] == issue_identifier:
-                return JSONResponse(r)
-        for r in snap.get("completed", []):
             if r["issue_identifier"] == issue_identifier:
                 return JSONResponse(r)
         return JSONResponse(
