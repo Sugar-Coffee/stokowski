@@ -792,7 +792,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     var isOpen = expandedLogs.has(cardId);
     var logCount = (r.message_log || []).length;
     var expandLabel = logCount > 0
-      ? (isOpen ? '\\u25b4 collapse' : '\\u25be ' + logCount + ' events')
+      ? (isOpen ? '\u25b4 collapse' : '\u25be ' + logCount + ' events')
       : '';
     var completedClass = isCompleted ? ' completed-header' : '';
     var completedTime = '';
@@ -808,14 +808,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     }
 
     return '<div class="agent-card' + completedClass + '">' +
-      '<div class="agent-header" onclick="toggleLog(\\'' + cardId + '\\')">' +
+      '<div class="agent-header" data-card-id="' + cardId + '" onclick="toggleLog(this.dataset.cardId)">' +
         '<div>' +
           '<div class="agent-id">' + esc(r.issue_identifier) + '</div>' +
           (expandLabel ? '<div class="expand-hint">' + expandLabel + '</div>' : '') +
         '</div>' +
         '<div>' +
           '<div class="agent-status-row">' + statusPill(r.status) + stateInfo + '</div>' +
-          '<div class="agent-msg">' + esc(r.last_message || r.error || '\\u2014') + '</div>' +
+          '<div class="agent-msg">' + esc(r.last_message || r.error || '\u2014') + '</div>' +
         '</div>' +
         '<div class="agent-meta">' +
           '<div class="agent-tokens">' + fmt(r.tokens?.total_tokens || 0) + ' tok</div>' +
