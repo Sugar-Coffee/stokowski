@@ -147,6 +147,7 @@ class StateConfig:
     prompt: str | None = None        # path to prompt .md file
     linear_state: str = "active"     # key into LinearStatesConfig
     runner: str = "claude"
+    fallback_runners: list[str] = field(default_factory=list)  # e.g. ["gemini", "codex"] — tried in order on rate limit errors
     model: str | None = None
     max_turns: int | None = None
     turn_timeout_ms: int | None = None
@@ -348,6 +349,7 @@ def _parse_state_config(name: str, raw: dict[str, Any]) -> StateConfig:
         prompt=raw.get("prompt"),
         linear_state=str(raw.get("linear_state", "active")),
         runner=str(raw.get("runner", "claude")),
+        fallback_runners=_coerce_list(raw.get("fallback_runners")),
         model=raw.get("model"),
         max_turns=raw.get("max_turns"),
         turn_timeout_ms=raw.get("turn_timeout_ms"),

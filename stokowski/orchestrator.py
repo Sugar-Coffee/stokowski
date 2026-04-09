@@ -33,6 +33,23 @@ from .workspace import ensure_workspace, remove_workspace, WorkspaceResult
 
 logger = logging.getLogger("stokowski")
 
+_RATE_LIMIT_PATTERNS = [
+    "rate limit",
+    "rate_limit",
+    "too many requests",
+    "429",
+    "quota exceeded",
+    "token limit",
+    "overloaded",
+    "capacity",
+]
+
+
+def _is_rate_limit_error(error: str) -> bool:
+    """Check if an error message indicates a rate limit or quota issue."""
+    lower = error.lower()
+    return any(p in lower for p in _RATE_LIMIT_PATTERNS)
+
 
 class Orchestrator:
     def __init__(self, workflow_path: str | Path):
@@ -964,6 +981,40 @@ class Orchestrator:
                     on_pid=self._on_child_pid,
                     env=agent_env,
                 )
+
+                # Fallback runner chain on rate limit errors
+                if (
+                    attempt.status == "failed"
+                    and attempt.error
+                    and _is_rate_limit_error(attempt.error)
+                    and state_cfg.fallback_runners
+                ):
+                    tried_runners = {runner_type}
+                    for fb_runner in state_cfg.fallback_runners:
+                        if fb_runner in tried_runners:
+                            continue  # skip runners that already failed
+                        tried_runners.add(fb_runner)
+                        logger.info(
+                            f"Rate limit on {runner_type}, falling back to {fb_runner} "
+                            f"issue={issue.identifier}"
+                        )
+                        attempt.status = "pending"
+                        attempt.error = None
+                        attempt.session_id = None  # can't resume across runners
+                        attempt = await run_turn(
+                            runner_type=fb_runner,
+                            claude_cfg=claude_cfg,
+                            hooks_cfg=hooks_cfg,
+                            prompt=prompt,
+                            workspace_path=ws.path,
+                            issue=issue,
+                            attempt=attempt,
+                            on_event=self._on_agent_event,
+                            on_pid=self._on_child_pid,
+                            env=agent_env,
+                        )
+                        if attempt.status != "failed" or not _is_rate_limit_error(attempt.error or ""):
+                            break  # success or non-rate-limit failure
             else:
                 # Legacy mode: multi-turn loop
                 max_turns = claude_cfg.max_turns
