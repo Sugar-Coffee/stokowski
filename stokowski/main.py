@@ -561,37 +561,53 @@ def _run_init():
 
     console.print()
 
-    # Tracker selection
-    console.print("[bold]Tracker:[/bold]")
-    console.print("  1. Linear")
-    console.print("  2. GitHub Issues")
-    choice = input("\nSelect tracker [1]: ").strip() or "1"
+    # Repo path
+    repo_path = os.getcwd()
+    out_dir = Path(repo_path) / ".stokowski"
 
+    # Check if tracker is already configured
+    import yaml as _yaml
+    tracker_kind = ""
+    tracker_fields = ""
+    states_section = ""
     env_key_name = ""
     env_key_value = ""
 
-    if choice == "2":
-        tracker_kind = "github"
-        owner = input("GitHub owner (org or user): ").strip()
-        repo = input("GitHub repo name: ").strip()
-        tracker_fields = f"  github_owner: {owner}\n  github_repo: {repo}\n  github_token: $GITHUB_TOKEN"
-        states_section = f"github_states:\n  todo: \"Todo\"\n  active: \"In Progress\"\n  blocked: \"Blocked\"\n  terminal:\n    - Done"
-        env_key_name = "GITHUB_TOKEN"
-        env_key_value = input("GitHub token (or press Enter to set later): ").strip()
-    else:
-        tracker_kind = "linear"
-        team_key = input("Linear team key (e.g. DEV): ").strip() or "DEV"
-        tracker_fields = f"  team_key: \"{team_key}\"\n  api_key: $LINEAR_API_KEY"
-        states_section = f"linear_states:\n  todo: \"Todo\"\n  active: \"In Progress\"\n  review: \"Human Review\"\n  gate_approved: \"Gate Approved\"\n  rework: \"Rework\"\n  blocked: \"Blocked\"\n  terminal:\n    - Done\n    - Canceled"
-        env_key_name = "LINEAR_API_KEY"
-        env_key_value = input("Linear API key (or press Enter to set later): ").strip()
+    root_config_path = out_dir / "stokowski.yaml"
+    if root_config_path.exists():
+        try:
+            root_raw = _yaml.safe_load(root_config_path.read_text()) or {}
+            existing_tracker = root_raw.get("tracker", {})
+            if isinstance(existing_tracker, dict) and existing_tracker.get("kind"):
+                tracker_kind = existing_tracker["kind"]
+                env_key_name = "GITHUB_TOKEN" if tracker_kind == "github" else "LINEAR_API_KEY"
+                console.print(f"[dim]Tracker already configured: {tracker_kind}[/dim]")
+        except Exception:
+            pass
 
-    # Repo path
-    repo_path = os.getcwd()
+    if not tracker_kind:
+        console.print("[bold]Tracker:[/bold]")
+        console.print("  1. Linear")
+        console.print("  2. GitHub Issues")
+        choice = input("\nSelect tracker [1]: ").strip() or "1"
+
+        if choice == "2":
+            tracker_kind = "github"
+            owner = input("GitHub owner (org or user): ").strip()
+            repo = input("GitHub repo name: ").strip()
+            tracker_fields = f"  github_owner: {owner}\n  github_repo: {repo}\n  github_token: $GITHUB_TOKEN"
+            states_section = f"github_states:\n  todo: \"Todo\"\n  active: \"In Progress\"\n  blocked: \"Blocked\"\n  terminal:\n    - Done"
+            env_key_name = "GITHUB_TOKEN"
+            env_key_value = input("GitHub token (or press Enter to set later): ").strip()
+        else:
+            tracker_kind = "linear"
+            team_key = input("Linear team key (e.g. DEV): ").strip() or "DEV"
+            tracker_fields = f"  team_key: \"{team_key}\"\n  api_key: $LINEAR_API_KEY"
+            states_section = f"linear_states:\n  todo: \"Todo\"\n  active: \"In Progress\"\n  review: \"Human Review\"\n  gate_approved: \"Gate Approved\"\n  rework: \"Rework\"\n  blocked: \"Blocked\"\n  terminal:\n    - Done\n    - Canceled"
+            env_key_name = "LINEAR_API_KEY"
+            env_key_value = input("Linear API key (or press Enter to set later): ").strip()
+
     console.print(f"\n[dim]Repo path:[/dim] {repo_path}")
-
-    # Output path
-    out_dir = Path(repo_path) / ".stokowski"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Check if workflows already exist
