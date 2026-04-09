@@ -106,14 +106,14 @@ The new section format:
 
 Only include subsections that have entries. Use today's date. Also:
 - Update the `[Unreleased]` link ref at the bottom to point to `vA.B.C...HEAD`
-- Add a new `[A.B.C]` link ref pointing to the new tag: `https://github.com/Sugar-Coffee/stokowski/releases/tag/vA.B.C`
+- Add a new `[A.B.C]` link ref pointing to the new tag: `https://github.com/erikpr1994/stokowski/releases/tag/vA.B.C`
 
 The link refs at the bottom of the file should look like this after the update (note: section headers use `[A.B.C]` without a `v`, but link ref keys and tag URLs use `vA.B.C`):
 
 ```
-[Unreleased]: https://github.com/Sugar-Coffee/stokowski/compare/vA.B.C...HEAD
-[A.B.C]: https://github.com/Sugar-Coffee/stokowski/releases/tag/vA.B.C
-[0.1.0]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v0.1.0
+[Unreleased]: https://github.com/erikpr1994/stokowski/compare/vA.B.C...HEAD
+[A.B.C]: https://github.com/erikpr1994/stokowski/releases/tag/vA.B.C
+[0.1.0]: https://github.com/erikpr1994/stokowski/releases/tag/v0.1.0
 ```
 
 ## Step 7: Bump the version in pyproject.toml

@@ -18,8 +18,8 @@ web = ["fastapi>=0.115", "uvicorn>=0.32"]
 schedule = ["croniter>=2.0"]
 
 [project.urls]
-Homepage = "https://github.com/Sugar-Coffee/stokowski"
-Repository = "https://github.com/Sugar-Coffee/stokowski"
+Homepage = "https://github.com/erikpr1994/stokowski"
+Repository = "https://github.com/erikpr1994/stokowski"
 
 [tool.setuptools.packages.find]
 include = ["stokowski*"]

@@ -335,7 +335,7 @@ brew install pipx && pipx ensurepath
 source ~/.zshrc  # or restart your shell
 
 # Install Stokowski globally
-pipx install "git+https://github.com/Sugar-Coffee/stokowski.git[web,schedule]"
+pipx install "git+https://github.com/erikpr1994/stokowski.git[web,schedule]"
 
 stokowski --help  # works from any directory
 ```
@@ -343,7 +343,7 @@ stokowski --help  # works from any directory
 **Development install** — for contributing to Stokowski:
 
 ```bash
-git clone https://github.com/Sugar-Coffee/stokowski
+git clone https://github.com/erikpr1994/stokowski
 cd stokowski
 
 python3 -m venv .venv

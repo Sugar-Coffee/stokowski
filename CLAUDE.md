@@ -208,7 +208,7 @@ CLI entry point (`cli()`) and keyboard handler.
 
 **`_make_footer()`** builds the Rich `Text` status line shown at bottom of terminal via `Live`.
 
-**`check_for_updates()`** hits the GitHub releases API (`/repos/Sugar-Coffee/stokowski/releases/latest`) via httpx, compares the latest tag against the installed `__version__`, and sets `_update_message` if a newer version exists. Best-effort — all exceptions are silently swallowed.
+**`check_for_updates()`** hits the GitHub releases API (`/repos/erikpr1994/stokowski/releases/latest`) via httpx, compares the latest tag against the installed `__version__`, and sets `_update_message` if a newer version exists. Best-effort — all exceptions are silently swallowed.
 
 **`_force_kill_children()`** uses `pgrep -f "claude.*-p.*--output-format.*stream-json"` as a last-resort cleanup on `KeyboardInterrupt`.
 
