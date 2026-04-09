@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
+import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .orchestrator import Orchestrator
 
 try:
-    from fastapi import FastAPI
+    from fastapi import FastAPI, Request
     from fastapi.responses import HTMLResponse, JSONResponse
 except ImportError:
     raise ImportError("Install web extras: pip install stokowski[web]")
+
+logger = logging.getLogger(__name__)
 
 DASHBOARD_HTML = """<!DOCTYPE html>
 <html lang="en">
@@ -659,5 +664,43 @@ def create_app(orchestrator: Orchestrator) -> FastAPI:
     async def api_refresh():
         asyncio.create_task(orchestrator._tick())
         return JSONResponse({"ok": True})
+
+    @app.post("/api/v1/webhook/linear")
+    async def webhook_linear(request: Request):
+        body = await request.body()
+
+        # Signature verification
+        secret = orchestrator.cfg.webhook.secret
+        if secret:
+            signature = request.headers.get("linear-signature", "")
+            expected = hmac.new(
+                secret.encode(), body, hashlib.sha256
+            ).hexdigest()
+            if not hmac.compare_digest(signature, expected):
+                logger.warning("Webhook signature mismatch")
+                return JSONResponse(
+                    {"error": "invalid signature"}, status_code=401
+                )
+
+        try:
+            payload = request.scope.get("_json") or await request.json()
+        except Exception:
+            return JSONResponse({"error": "invalid json"}, status_code=400)
+
+        # Only react to issue state changes and new issues
+        event_type = payload.get("type")
+        action = payload.get("action")
+        if event_type != "Issue" or action not in ("update", "create"):
+            return JSONResponse({"ok": True, "action": "ignored"})
+
+        if action == "update" and "stateId" not in (
+            payload.get("updatedFrom") or {}
+        ):
+            return JSONResponse({"ok": True, "action": "ignored"})
+
+        identifier = payload.get("data", {}).get("identifier", "?")
+        logger.info(f"Webhook: {action} {identifier}")
+        asyncio.create_task(orchestrator.webhook_tick())
+        return JSONResponse({"ok": True, "action": "tick_scheduled"})
 
     return app

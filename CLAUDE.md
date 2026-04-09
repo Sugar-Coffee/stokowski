@@ -90,6 +90,7 @@ Parses `workflow.yaml` (or legacy `.md` with front matter) into typed dataclasse
 - `ClaudeConfig` — command, permission mode, model, timeouts, system prompt
 - `AgentConfig` — concurrency limits (global, per-state, and per-project per-state)
 - `ServerConfig` — optional web dashboard port
+- `WebhookConfig` — optional webhook listener: `secret` for HMAC-SHA256 signature verification
 - `LinearStatesConfig` — maps logical state names (`todo`, `active`, `review`, `gate_approved`, `rework`, `blocked`, `terminal`) to actual Linear state names. Issues in the `todo` state are picked up and automatically moved to `active` on dispatch. Issues moved to `blocked` are released from the orchestrator.
 - `PromptsConfig` — global prompt file reference
 - `StateConfig` — a single state in the state machine: type, prompt path, linear_state key, runner, session mode, transitions, per-state overrides (model, max_turns, timeouts, hooks), gate-specific fields (rework_to, max_rework)
@@ -184,6 +185,7 @@ Optional FastAPI app returned by `create_app(orch)`. Routes:
 - `GET /api/v1/state` — full JSON snapshot from `orch.get_state_snapshot()`
 - `GET /api/v1/{issue_identifier}` — single issue state
 - `POST /api/v1/refresh` — triggers `orch._tick()` immediately
+- `POST /api/v1/webhook/linear` — Linear webhook endpoint; verifies HMAC-SHA256 signature (if `webhook.secret` configured), filters to issue state changes and creations, triggers a coalesced `webhook_tick()`
 
 Dashboard JS polls `/api/v1/state` every 3s and updates the DOM without page reload.
 

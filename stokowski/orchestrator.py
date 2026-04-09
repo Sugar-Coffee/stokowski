@@ -69,6 +69,9 @@ class Orchestrator:
         # Schedule tracking
         self._last_schedule_fire: datetime | None = None
 
+        # Webhook coalescing
+        self._webhook_tick_pending: bool = False
+
     @property
     def cfg(self) -> ServiceConfig:
         assert self.workflow is not None
@@ -560,6 +563,18 @@ class Orchestrator:
                     f"Rework issue={issue.identifier} gate={gate_state} "
                     f"rework_to={rework_to} run={new_run}"
                 )
+
+    async def webhook_tick(self):
+        """Coalesced tick triggered by webhook. Deduplicates rapid calls."""
+        if self._webhook_tick_pending:
+            return
+        self._webhook_tick_pending = True
+        await asyncio.sleep(0.5)  # coalesce rapid-fire webhooks
+        self._webhook_tick_pending = False
+        try:
+            await self._tick()
+        except Exception as e:
+            logger.error(f"Webhook-triggered tick error: {e}")
 
     async def _check_schedule(self):
         """Check if a scheduled issue should be created via create_command."""

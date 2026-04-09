@@ -84,6 +84,12 @@ class ServerConfig:
 
 
 @dataclass
+class WebhookConfig:
+    """Webhook listener for instant tracker event reactions."""
+    secret: str = ""  # HMAC-SHA256 signing secret for verification
+
+
+@dataclass
 class ScheduleConfig:
     """Auto-create tracker issues on a cron schedule via external command."""
     cron: str = ""                     # cron expression, e.g. "0 9 * * *"
@@ -157,6 +163,7 @@ class ServiceConfig:
     states: dict[str, StateConfig] = field(default_factory=dict)
     routing: list[RoutingRule] = field(default_factory=list)
     schedule: ScheduleConfig | None = None
+    webhook: WebhookConfig = field(default_factory=WebhookConfig)
 
     def resolved_api_key(self) -> str:
         key = self.tracker.api_key
@@ -418,6 +425,12 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
     s = config_raw.get("server", {}) or {}
     server = ServerConfig(port=s.get("port"))
 
+    # Parse webhook
+    wh = config_raw.get("webhook", {}) or {}
+    webhook = WebhookConfig(
+        secret=_resolve_env(str(wh.get("secret", ""))),
+    )
+
     # Parse linear_states
     ls_raw = config_raw.get("linear_states", {}) or {}
     linear_states = LinearStatesConfig(
@@ -475,6 +488,7 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
         states=states,
         routing=routing,
         schedule=schedule,
+        webhook=webhook,
     )
 
     return WorkflowDefinition(config=cfg, prompt_template=prompt_template)
