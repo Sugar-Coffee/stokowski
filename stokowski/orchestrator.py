@@ -678,6 +678,19 @@ class Orchestrator:
         # Reload workflow (supports hot-reload)
         errors = self._load_workflow()
 
+        # Invalidate tracker client if credentials changed
+        if self._tracker is not None:
+            new_key = self.cfg.resolved_api_key()
+            stale = False
+            if hasattr(self._tracker, "api_key") and self._tracker.api_key != new_key:
+                stale = True
+            elif hasattr(self._tracker, "token") and self._tracker.token != new_key:
+                stale = True
+            if stale:
+                logger.info("Tracker credentials changed, reconnecting")
+                await self._tracker.close()
+                self._tracker = None
+
         # Check scheduled issue creation
         try:
             await self._check_schedule()
