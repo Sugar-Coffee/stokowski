@@ -142,9 +142,7 @@ class Orchestrator:
         self._stop_event = asyncio.Event()
 
         # Restore persisted state
-        self._state_path = state_file_path(
-            self.cfg.workspace.resolved_root(), self.workflow_path
-        )
+        self._state_path = state_file_path(self.workflow_path)
         ps = load_state(self._state_path)
         self.total_input_tokens = ps.total_input_tokens
         self.total_output_tokens = ps.total_output_tokens

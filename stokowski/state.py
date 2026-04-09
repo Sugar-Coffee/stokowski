@@ -28,11 +28,9 @@ class PersistedState:
     retry_attempts: dict[str, dict] = field(default_factory=dict)
 
 
-def state_file_path(workspace_root: Path, workflow_path: Path) -> Path:
-    """Derive a unique state file path from the workflow file path."""
-    key = str(workflow_path.resolve())
-    short_hash = hashlib.sha256(key.encode()).hexdigest()[:12]
-    return workspace_root / f".stokowski_state_{short_hash}.json"
+def state_file_path(workflow_path: Path) -> Path:
+    """Derive state file path — stored next to the workflow YAML."""
+    return workflow_path.resolve().parent / f".stokowski_state_{workflow_path.stem}.json"
 
 
 def load_state(path: Path) -> PersistedState:
