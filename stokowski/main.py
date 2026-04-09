@@ -586,47 +586,61 @@ def _run_init():
     # Output path
     out_dir = Path(repo_path) / ".stokowski"
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_file = out_dir / "workflow.yaml"
 
-    if out_file.exists():
-        overwrite = input(f"\n{out_file} already exists. Overwrite? [y/N]: ").strip().lower()
-        if overwrite != "y":
-            console.print("[yellow]Aborted.[/yellow]")
-            return
-
-    # Generate config
-    content = _INIT_TEMPLATE.format(
-        tracker_kind=tracker_kind,
-        tracker_fields=tracker_fields,
-        states_section=states_section,
-        repo_path=repo_path,
+    # Check if workflows already exist
+    existing_workflows = sorted(
+        p for p in out_dir.glob("workflow*.yaml")
+        if p.name != "stokowski.yaml"
     )
 
-    out_file.write_text(content)
-    console.print(f"\n[green]Created {out_file}[/green]")
+    out_file = out_dir / "workflow.yaml"
+    if existing_workflows:
+        console.print(f"\n[dim]Found {len(existing_workflows)} existing workflow(s):[/dim]")
+        for wf in existing_workflows:
+            console.print(f"  [dim]{wf.name}[/dim]")
+        console.print(f"[dim]Skipping workflow.yaml creation (use existing workflows)[/dim]")
+        out_file = existing_workflows[0]  # reference first for validation
+    else:
+        if out_file.exists():
+            overwrite = input(f"\n{out_file} already exists. Overwrite? [y/N]: ").strip().lower()
+            if overwrite != "y":
+                console.print("[yellow]Aborted.[/yellow]")
+                return
 
-    # Create prompts directory
+        # Generate config
+        content = _INIT_TEMPLATE.format(
+            tracker_kind=tracker_kind,
+            tracker_fields=tracker_fields,
+            states_section=states_section,
+            repo_path=repo_path,
+        )
+
+        out_file.write_text(content)
+        console.print(f"\n[green]Created {out_file}[/green]")
+
+    # Create prompts directory (only for new projects without existing workflows)
     prompts_dir = out_dir / "prompts"
-    prompts_dir.mkdir(parents=True, exist_ok=True)
+    if not existing_workflows:
+        prompts_dir.mkdir(parents=True, exist_ok=True)
 
-    global_prompt = prompts_dir / "global.md"
-    if not global_prompt.exists():
-        global_prompt.write_text(
-            "# Global Prompt\n\n"
-            "You are an autonomous coding agent. Work autonomously — do NOT use\n"
-            "AskUserQuestion or pause for input. Read CLAUDE.md for project\n"
-            "conventions before starting.\n"
-        )
-        console.print(f"[green]Created {global_prompt}[/green]")
+        global_prompt = prompts_dir / "global.md"
+        if not global_prompt.exists():
+            global_prompt.write_text(
+                "# Global Prompt\n\n"
+                "You are an autonomous coding agent. Work autonomously — do NOT use\n"
+                "AskUserQuestion or pause for input. Read CLAUDE.md for project\n"
+                "conventions before starting.\n"
+            )
+            console.print(f"[green]Created {global_prompt}[/green]")
 
-    implement_prompt = prompts_dir / "implement.md"
-    if not implement_prompt.exists():
-        implement_prompt.write_text(
-            "# Implement\n\n"
-            "Implement the changes described in the issue. Follow the project's\n"
-            "coding conventions. Write tests if applicable. Create a PR when done.\n"
-        )
-        console.print(f"[green]Created {implement_prompt}[/green]")
+        implement_prompt = prompts_dir / "implement.md"
+        if not implement_prompt.exists():
+            implement_prompt.write_text(
+                "# Implement\n\n"
+                "Implement the changes described in the issue. Follow the project's\n"
+                "coding conventions. Write tests if applicable. Create a PR when done.\n"
+            )
+            console.print(f"[green]Created {implement_prompt}[/green]")
 
     # Create .env with API key
     env_file = out_dir / ".env"
