@@ -150,7 +150,8 @@ Linear issue → isolated git clone → agent (Claude or Codex) → PR + Human R
 ## Features
 
 - **Configurable state machine** — define agent stages, human gates, and transitions in `workflow.yaml`; issues flow through your pipeline automatically
-- **Multi-runner** — Claude Code and Codex in the same pipeline; different states can use different runners and models (e.g. Opus for investigation, Sonnet for implementation, Codex for review)
+- **Multi-runner** — Claude Code, Codex, and Gemini CLI in the same pipeline; different states can use different runners and models (e.g. Opus for investigation, Sonnet for implementation, Gemini for review)
+- **Fallback runner chain** — on rate limit errors, automatically retry with fallback runners (e.g. `fallback_runners: [gemini, codex]`)
 - **Three-layer prompt assembly** — global prompt + per-stage prompt + auto-injected lifecycle context; each layer is a Jinja2 template with full issue variables
 - **Multi-tracker support** — works with Linear and GitHub Issues out of the box (`tracker.kind: linear` or `tracker.kind: github`)
 - **Tracker-driven dispatch** — polls for issues in configured states, dispatches agents with bounded concurrency
@@ -170,6 +171,11 @@ Linear issue → isolated git clone → agent (Claude or Codex) → PR + Human R
 - **Per-project concurrency** — parallelize across projects while limiting agents per project (e.g., 3 implements globally but max 1 per project to avoid merge conflicts)
 - **Webhook support** — instant reactions to Linear and GitHub state changes via `POST /api/v1/webhook/{linear,github}`, with HMAC signature verification
 - **Scheduled issue creation** — cron-based auto-creation via external commands (`create_command`); works with any tracker CLI
+- **PR-driven gate transitions** — GitHub PR reviews (approved/changes_requested/merged) trigger gate transitions via `pr_triggers` config
+- **Persistent state** — token metrics and schedule timestamps survive restarts (JSON file next to workflow YAML)
+- **Multi-workflow daemon** — manage N workflows from a single process via a root `stokowski.yaml` config
+- **Config editor** — web-based YAML editor at `/config` with validation before save
+- **`stokowski init`** — interactive scaffolding command to set up a new workflow
 - **Ready-to-use example workflows** — autonomous implementation pipeline and AI-collaborative feature definition (see `examples/`)
 
 ---
@@ -355,6 +361,16 @@ stokowski --help
 ```
 
 > **Note (zsh users):** Always quote paths with square brackets — zsh interprets `[` as glob patterns. Use `pipx install "path[extras]"` not `pipx install path[extras]`.
+
+**Quick start with init** (recommended for new projects):
+
+```bash
+cd your-project
+stokowski init
+# Follow prompts → creates .stokowski/workflow.yaml + prompt files
+```
+
+Or set up manually:
 
 ---
 
