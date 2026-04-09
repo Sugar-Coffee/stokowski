@@ -17,3 +17,6 @@ workflow.yml
 # Prompt files (operator-local, examples are tracked)
 prompts/*.md
 !prompts/*.example.md
+
+# Persistent state files
+.stokowski_state_*.json
