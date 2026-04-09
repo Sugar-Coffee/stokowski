@@ -327,6 +327,21 @@ Not set up? Run `gh auth login` and follow the prompts.
 
 ### 2. Install Stokowski
 
+**Global install (recommended)** — works from any repo:
+
+```bash
+# Install pipx if you don't have it
+brew install pipx && pipx ensurepath
+source ~/.zshrc  # or restart your shell
+
+# Install Stokowski globally
+pipx install "git+https://github.com/Sugar-Coffee/stokowski.git[web,schedule]"
+
+stokowski --help  # works from any directory
+```
+
+**Development install** — for contributing to Stokowski:
+
 ```bash
 git clone https://github.com/Sugar-Coffee/stokowski
 cd stokowski
@@ -334,10 +349,12 @@ cd stokowski
 python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 
-pip install -e ".[web,schedule]"  # core + web dashboard + cron scheduling
+pip install -e ".[web,schedule]"  # editable install
 
-stokowski --help             # verify it's working
+stokowski --help
 ```
+
+> **Note (zsh users):** Always quote paths with square brackets — zsh interprets `[` as glob patterns. Use `pipx install "path[extras]"` not `pipx install path[extras]`.
 
 ---
 
@@ -887,29 +904,20 @@ Your personal config lives in `workflow.yaml` and `prompts/` — both gitignored
 
 > **Migrating from WORKFLOW.md?** The old `WORKFLOW.md` format (YAML front matter + Jinja2 body) is still parsed for backward compatibility, but `workflow.yaml` is the recommended format. Move your YAML config to `workflow.yaml`, split your prompt template into files under `prompts/`, and define your pipeline in the `states` section. See the [Configuration reference](#configuration-reference) for the full schema.
 
-**If you installed by cloning the repo:**
+**If you installed globally with pipx:**
+
+```bash
+pipx upgrade stokowski
+```
+
+**If you installed by cloning the repo (development):**
 
 ```bash
 cd stokowski
-
-# Upgrade to the latest stable release
 git fetch --tags
 git checkout $(git describe --tags `git rev-list --tags --max-count=1`)
-
-# Re-install to pick up any new dependencies
 source .venv/bin/activate
 pip install -e ".[web,schedule]"
-
-# Verify everything still works
-stokowski --dry-run
-```
-
-> **Note:** `git pull origin main` will work but may include unreleased commits ahead of the latest tag — treat that as nightly if you go that route.
-
-**If you installed via pip** *(PyPI coming soon):*
-
-```bash
-pip install --upgrade git+https://github.com/Sugar-Coffee/stokowski.git#egg=stokowski[web,schedule]
 ```
 
 **After upgrading, check if `workflow.example.yaml` has changed** — new config fields may have been added that you'll want to adopt:
