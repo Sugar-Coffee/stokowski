@@ -66,6 +66,9 @@ class Orchestrator:
         self._issue_state_runs: dict[str, int] = {}       # issue_id -> run number for current state
         self._pending_gates: dict[str, str] = {}           # issue_id -> gate state name
 
+        # Schedule tracking
+        self._last_schedule_fire: datetime | None = None
+
     @property
     def cfg(self) -> ServiceConfig:
         assert self.workflow is not None
@@ -558,10 +561,65 @@ class Orchestrator:
                     f"rework_to={rework_to} run={new_run}"
                 )
 
+    async def _check_schedule(self):
+        """Check if a scheduled issue should be created via create_command."""
+        schedule = self.cfg.schedule
+        if not schedule or not schedule.cron or not schedule.create_command:
+            return
+
+        try:
+            from croniter import croniter
+        except ImportError:
+            logger.warning("Schedule requires 'croniter' package: pip install stokowski[schedule]")
+            return
+
+        now = datetime.now(timezone.utc)
+
+        cron = croniter(schedule.cron, now.replace(tzinfo=None))
+        prev_fire_naive = cron.get_prev(datetime)
+        prev_fire = prev_fire_naive.replace(tzinfo=timezone.utc)
+
+        if self._last_schedule_fire and self._last_schedule_fire >= prev_fire:
+            return
+
+        # Substitute placeholders in create_command
+        fire_date = prev_fire.strftime("%Y-%m-%d")
+        fire_datetime = prev_fire.strftime("%Y-%m-%d %H:%M")
+        command = schedule.create_command.replace("{date}", fire_date).replace("{datetime}", fire_datetime)
+
+        logger.info(f"Schedule fired, running create_command")
+        try:
+            proc = await asyncio.create_subprocess_shell(
+                command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=self.cfg.agent_env(),
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+            if proc.returncode == 0:
+                logger.info(f"Schedule create_command succeeded: {stdout.decode().strip()[:200]}")
+            else:
+                logger.error(
+                    f"Schedule create_command failed (exit {proc.returncode}): "
+                    f"{stderr.decode().strip()[:200]}"
+                )
+        except asyncio.TimeoutError:
+            logger.error("Schedule create_command timed out after 30s")
+        except Exception as e:
+            logger.error(f"Schedule create_command error: {e}")
+
+        self._last_schedule_fire = prev_fire
+
     async def _tick(self):
         """Single poll tick: reconcile, validate, fetch, dispatch."""
         # Reload workflow (supports hot-reload)
         errors = self._load_workflow()
+
+        # Check scheduled issue creation
+        try:
+            await self._check_schedule()
+        except Exception as e:
+            logger.warning(f"Schedule check failed: {e}")
 
         # Part 1: Reconcile running issues
         await self._reconcile()

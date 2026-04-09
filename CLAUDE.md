@@ -94,6 +94,7 @@ Parses `workflow.yaml` (or legacy `.md` with front matter) into typed dataclasse
 - `PromptsConfig` — global prompt file reference
 - `StateConfig` — a single state in the state machine: type, prompt path, linear_state key, runner, session mode, transitions, per-state overrides (model, max_turns, timeouts, hooks), gate-specific fields (rework_to, max_rework)
 - `RoutingRule` — maps Linear labels to entry states for label-based routing
+- `ScheduleConfig` — optional cron-based issue creation via external shell command with `{date}`/`{datetime}` placeholders
 
 `ServiceConfig` provides helper methods: `entry_state` (first agent state), `entry_state_for_issue(labels)` (label-routed entry state), `active_linear_states()`, `gate_linear_states()`, `terminal_linear_states()`.
 
@@ -289,6 +290,20 @@ There are no automated tests beyond `--dry-run`. The system is best verified by 
 2. Add the new tracker kind to `config.py` parsing
 3. Update `orchestrator.py` to instantiate the right client based on `cfg.tracker.kind`
 4. Update `validate_config()` to handle the new kind
+
+### Scheduled issue creation
+Workflows can auto-create tracker issues on a cron schedule via the `schedule` section:
+
+```yaml
+schedule:
+  cron: "0 9 * * *"                     # 9 AM UTC daily
+  create_command: |
+    gh issue create --title "docs: daily sync — {date}" --label docs --body "Auto-created by Stokowski schedule."
+```
+
+Requires `pip install stokowski[schedule]` (adds `croniter`). On each poll tick, the orchestrator checks if the cron has fired since the last check and runs `create_command` as a shell subprocess. `{date}` and `{datetime}` placeholders are replaced with the fire time. The command runs with the same env vars as agent subprocesses (includes tracker credentials).
+
+Config: `ScheduleConfig` in `config.py`. Logic: `_check_schedule()` in `orchestrator.py`.
 
 ### Adding config fields
 1. Add the field to the relevant dataclass in `config.py`
