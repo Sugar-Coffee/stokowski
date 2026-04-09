@@ -758,7 +758,42 @@ def _run_init():
     _SHARED_KEYS = {"tracker", "linear_states", "github_states", "workspace",
                     "hooks", "claude", "agent", "server", "webhook"}
 
-    workflows_to_validate = existing_workflows if existing_workflows else [out_file]
+    # Auto-migrate old schedule format (title/description → create_command)
+    all_wf_files = existing_workflows if existing_workflows else [out_file]
+    for wf_path in all_wf_files:
+        try:
+            wf_raw = _yaml.safe_load(wf_path.read_text()) or {}
+            sched = wf_raw.get("schedule")
+            if isinstance(sched, dict) and "title" in sched and "create_command" not in sched:
+                # Old format: convert title/description/labels to create_command
+                old_title = sched.get("title", "")
+                old_desc = sched.get("description", "").strip()
+                old_labels = sched.get("labels", [])
+                old_priority = sched.get("priority", 3)
+
+                # Build a create_command using the tracker's CLI
+                tracker_raw = wf_raw.get("tracker", shared_raw.get("tracker", {}) if shared_raw else {})
+                kind = tracker_raw.get("kind", "linear") if isinstance(tracker_raw, dict) else "linear"
+
+                if kind == "github":
+                    label_flags = " ".join(f"--label {l}" for l in old_labels) if old_labels else ""
+                    cmd = f'gh issue create --title "{old_title}" {label_flags}'.strip()
+                    if old_desc:
+                        cmd += f' --body "{old_desc[:100]}"'
+                else:
+                    # Linear CLI or generic
+                    cmd = f'# TODO: replace with your tracker CLI command\n# Old title: {old_title}'
+
+                wf_raw["schedule"] = {
+                    "cron": sched.get("cron", ""),
+                    "create_command": cmd,
+                }
+                wf_path.write_text(_yaml.dump(wf_raw, default_flow_style=False, sort_keys=False))
+                console.print(f"  [green]{wf_path.name}: migrated schedule to create_command format[/green]")
+        except Exception as e:
+            console.print(f"  [yellow]{wf_path.name}: schedule migration failed: {e}[/yellow]")
+
+    workflows_to_validate = all_wf_files
     for wf_path in workflows_to_validate:
         try:
             wf = parse_workflow_file(str(wf_path), shared_raw=shared_raw)

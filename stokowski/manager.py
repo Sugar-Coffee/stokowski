@@ -37,13 +37,21 @@ class Manager:
         }
         self._tasks = tasks
         logger.info(f"Starting {len(tasks)} workflows: {', '.join(tasks.keys())}")
-        # Wait until all complete or one raises
-        done, _ = await asyncio.wait(
-            tasks.values(), return_when=asyncio.FIRST_EXCEPTION
+        # Wait for all — don't crash the daemon if one workflow fails
+        done, pending = await asyncio.wait(
+            tasks.values(), return_when=asyncio.FIRST_COMPLETED
         )
         for t in done:
-            if t.exception():
-                raise t.exception()
+            exc = t.exception()
+            if exc:
+                name = t.get_name().replace("workflow:", "")
+                logger.error(f"Workflow '{name}' failed to start: {exc}")
+        # If all workflows failed, re-raise the first error
+        if not pending and all(t.exception() for t in done):
+            raise done.pop().exception()
+        # Otherwise keep running with the healthy workflows
+        if pending:
+            await asyncio.wait(pending)
 
     async def stop(self):
         """Stop all orchestrators."""
