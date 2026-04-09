@@ -71,7 +71,7 @@ async def check_for_updates():
         import httpx
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(
-                "https://api.github.com/repos/Sugar-Coffee/stokowski/releases/latest",
+                "https://api.github.com/repos/erikpr1994/stokowski/releases/latest",
                 headers={"Accept": "application/vnd.github+json"},
             )
             if resp.status_code != 200:

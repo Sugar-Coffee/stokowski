@@ -128,10 +128,10 @@ All notable changes to Stokowski are documented here.
 
 ---
 
-[Unreleased]: https://github.com/Sugar-Coffee/stokowski/compare/v0.4.0...HEAD
-[0.4.0]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v0.4.0
-[0.3.0]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v0.3.0
-[0.2.2]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v0.2.2
-[0.2.1]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v0.2.1
-[0.2.0]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v0.2.0
-[0.1.0]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v0.1.0
+[Unreleased]: https://github.com/erikpr1994/stokowski/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/erikpr1994/stokowski/releases/tag/v0.4.0
+[0.3.0]: https://github.com/erikpr1994/stokowski/releases/tag/v0.3.0
+[0.2.2]: https://github.com/erikpr1994/stokowski/releases/tag/v0.2.2
+[0.2.1]: https://github.com/erikpr1994/stokowski/releases/tag/v0.2.1
+[0.2.0]: https://github.com/erikpr1994/stokowski/releases/tag/v0.2.0
+[0.1.0]: https://github.com/erikpr1994/stokowski/releases/tag/v0.1.0

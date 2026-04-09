@@ -19,8 +19,8 @@ schedule = ["croniter>=2.0"]
 test = ["pytest>=8.0", "pytest-asyncio>=0.23"]
 
 [project.urls]
-Homepage = "https://github.com/Sugar-Coffee/stokowski"
-Repository = "https://github.com/Sugar-Coffee/stokowski"
+Homepage = "https://github.com/erikpr1994/stokowski"
+Repository = "https://github.com/erikpr1994/stokowski"
 
 [tool.setuptools.packages.find]
 include = ["stokowski*"]
