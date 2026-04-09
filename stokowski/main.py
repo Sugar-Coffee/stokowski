@@ -16,17 +16,18 @@ from pathlib import Path
 
 
 def _load_dotenv():
-    """Load .env file from cwd if it exists."""
-    env_file = Path(".env")
-    if not env_file.exists():
-        return
-    for line in env_file.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
+    """Load .env files from cwd and .stokowski/ if they exist."""
+    candidates = [Path(".env"), Path(".stokowski/.env")]
+    for env_file in candidates:
+        if not env_file.exists():
             continue
-        if "=" in line:
-            key, _, value = line.partition("=")
-            os.environ.setdefault(key.strip(), value.strip())
+        for line in env_file.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" in line:
+                key, _, value = line.partition("=")
+                os.environ.setdefault(key.strip(), value.strip())
 
 
 from rich.columns import Columns
@@ -667,19 +668,26 @@ def _run_init():
         gitignore.write_text(entries_text)
         console.print(f"[green]Created {gitignore}[/green]")
 
-    # Validate
+    # Load the .env we just created so validation can find the API key
+    if env_key_value:
+        os.environ.setdefault(env_key_name, env_key_value)
+
+    # Validate all workflows
     console.print("\n[bold]Validating...[/bold]")
     from .config import parse_workflow_file, validate_config
-    try:
-        wf = parse_workflow_file(str(out_file))
-        errors = validate_config(wf.config)
-        if errors:
-            for e in errors:
-                console.print(f"  [yellow]Warning: {e}[/yellow]")
-        else:
-            console.print("  [green]Config valid[/green]")
-    except Exception as e:
-        console.print(f"  [red]Error: {e}[/red]")
+    workflows_to_validate = existing_workflows if existing_workflows else [out_file]
+    for wf_path in workflows_to_validate:
+        try:
+            wf = parse_workflow_file(str(wf_path))
+            errors = validate_config(wf.config)
+            if errors:
+                console.print(f"  [yellow]{wf_path.name}:[/yellow]")
+                for e in errors:
+                    console.print(f"    [yellow]- {e}[/yellow]")
+            else:
+                console.print(f"  [green]{wf_path.name}: valid[/green]")
+        except Exception as e:
+            console.print(f"  [red]{wf_path.name}: {e}[/red]")
 
     # Create or update root config (stokowski.yaml)
     root_config = out_dir / "stokowski.yaml"
