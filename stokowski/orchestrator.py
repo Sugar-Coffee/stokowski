@@ -24,6 +24,7 @@ from .config import (
     validate_config,
 )
 from .models import Issue, RetryEntry, RunAttempt
+from .state import PersistedState, load_state, save_state, state_file_path
 from .tracker import TrackerClient
 from .prompt import assemble_prompt, build_lifecycle_section
 from .runner import run_agent_turn, run_turn
@@ -72,6 +73,9 @@ class Orchestrator:
         # Webhook coalescing
         self._webhook_tick_pending: bool = False
 
+        # Persistent state
+        self._state_path: Path | None = None
+
     @property
     def cfg(self) -> ServiceConfig:
         assert self.workflow is not None
@@ -102,6 +106,23 @@ class Orchestrator:
                 )
         return self._tracker
 
+    def _save_state(self):
+        """Persist current state to disk."""
+        if not self._state_path:
+            return
+        ps = PersistedState(
+            last_schedule_fire_iso=(
+                self._last_schedule_fire.isoformat()
+                if self._last_schedule_fire
+                else None
+            ),
+            total_input_tokens=self.total_input_tokens,
+            total_output_tokens=self.total_output_tokens,
+            total_tokens=self.total_tokens,
+            total_seconds_running=self.total_seconds_running,
+        )
+        save_state(self._state_path, ps)
+
     async def start(self):
         """Start the orchestration loop."""
         errors = self._load_workflow()
@@ -119,6 +140,23 @@ class Orchestrator:
 
         self._running = True
         self._stop_event = asyncio.Event()
+
+        # Restore persisted state
+        self._state_path = state_file_path(
+            self.cfg.workspace.resolved_root(), self.workflow_path
+        )
+        ps = load_state(self._state_path)
+        self.total_input_tokens = ps.total_input_tokens
+        self.total_output_tokens = ps.total_output_tokens
+        self.total_tokens = ps.total_tokens
+        self.total_seconds_running = ps.total_seconds_running
+        if ps.last_schedule_fire_iso:
+            try:
+                self._last_schedule_fire = datetime.fromisoformat(
+                    ps.last_schedule_fire_iso
+                )
+            except (ValueError, TypeError):
+                pass
 
         # Startup terminal cleanup
         await self._startup_cleanup()
@@ -164,6 +202,8 @@ class Orchestrator:
         if self._tasks:
             await asyncio.sleep(0.5)
         self._tasks.clear()
+
+        self._save_state()
 
         if self._tracker:
             await self._tracker.close()
@@ -633,6 +673,7 @@ class Orchestrator:
             logger.error(f"Schedule create_command error: {e}")
 
         self._last_schedule_fire = prev_fire
+        self._save_state()
 
     async def _tick(self):
         """Single poll tick: reconcile, validate, fetch, dispatch."""
@@ -1084,6 +1125,7 @@ class Orchestrator:
         if attempt.started_at:
             elapsed = (datetime.now(timezone.utc) - attempt.started_at).total_seconds()
             self.total_seconds_running += elapsed
+        self._save_state()
 
         if attempt.session_id:
             self._last_session_ids[issue.id] = attempt.session_id

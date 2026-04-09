@@ -576,7 +576,7 @@ def validate_config(cfg: ServiceConfig) -> list[str]:
         return errors
 
     # Valid linear_state keys
-    valid_linear_keys = {"active", "review", "gate_approved", "rework", "terminal"}
+    valid_linear_keys = {"todo", "active", "review", "gate_approved", "rework", "blocked", "terminal"}
 
     has_agent = False
     has_terminal = False
