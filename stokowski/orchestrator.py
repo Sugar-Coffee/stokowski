@@ -628,6 +628,106 @@ class Orchestrator:
                     f"rework_to={rework_to} run={new_run}"
                 )
 
+    async def handle_pr_event(self, action: str, branch: str, pr_number: int, pr_url: str = ""):
+        """Handle a GitHub PR event and trigger gate transitions if configured.
+
+        Maps PR review actions to gate transitions via pr_triggers config:
+        - approved → gate approve transition
+        - changes_requested → gate rework
+        - merged → follows 'merged' trigger or 'complete' transition
+        """
+        # Find the issue linked to this branch
+        issue = None
+        gate_state = None
+        for issue_id, gate_name in self._pending_gates.items():
+            cached = self._last_issues.get(issue_id)
+            if cached and cached.branch_name and cached.branch_name in branch:
+                issue = cached
+                gate_state = gate_name
+                break
+
+        if not issue or not gate_state:
+            logger.debug(f"PR event {action} on branch '{branch}' — no matching gate issue")
+            return
+
+        gate_cfg = self.cfg.states.get(gate_state)
+        if not gate_cfg or not gate_cfg.pr_triggers:
+            logger.debug(f"Gate {gate_state} has no pr_triggers configured")
+            return
+
+        trigger_action = gate_cfg.pr_triggers.get(action)
+        if not trigger_action:
+            logger.debug(f"PR event '{action}' not in pr_triggers for gate {gate_state}")
+            return
+
+        client = self._ensure_tracker_client()
+        run = self._issue_state_runs.get(issue.id, 1)
+
+        if trigger_action == "approve":
+            comment = make_gate_comment(
+                state=gate_state, status="approved", run=run,
+            )
+            await client.post_comment(issue.id, comment)
+            if pr_url:
+                await client.post_comment(issue.id, f"PR approved: {pr_url}")
+
+            self._pending_gates.pop(issue.id, None)
+            self._issue_current_state[issue.id] = gate_state
+            if "approve" in gate_cfg.transitions:
+                self._issue_current_state[issue.id] = gate_cfg.transitions["approve"]
+
+            active_state = self.cfg._states_cfg.active
+            await client.update_issue_state(issue.id, active_state)
+            issue.state = active_state
+            self._last_issues[issue.id] = issue
+            logger.info(f"PR approved → gate approved issue={issue.identifier} gate={gate_state}")
+
+        elif trigger_action == "rework":
+            rework_to = gate_cfg.rework_to
+            if not rework_to:
+                logger.warning(f"Gate {gate_state} has no rework_to target")
+                return
+
+            if gate_cfg.max_rework is not None and run >= gate_cfg.max_rework:
+                comment = make_gate_comment(state=gate_state, status="escalated", run=run)
+                await client.post_comment(issue.id, comment)
+                logger.warning(f"Max rework exceeded issue={issue.identifier}")
+                return
+
+            new_run = run + 1
+            self._issue_state_runs[issue.id] = new_run
+            comment = make_gate_comment(
+                state=gate_state, status="rework", rework_to=rework_to, run=new_run,
+            )
+            await client.post_comment(issue.id, comment)
+
+            self._pending_gates.pop(issue.id, None)
+            self._issue_current_state[issue.id] = rework_to
+
+            active_state = self.cfg._states_cfg.active
+            await client.update_issue_state(issue.id, active_state)
+            issue.state = active_state
+            self._last_issues[issue.id] = issue
+            logger.info(f"PR changes requested → rework issue={issue.identifier} rework_to={rework_to}")
+
+        elif trigger_action in gate_cfg.transitions:
+            # Generic transition (e.g. "merged" → "done")
+            target = gate_cfg.transitions[trigger_action]
+            self._pending_gates.pop(issue.id, None)
+            self._issue_current_state[issue.id] = target
+
+            target_cfg = self.cfg.states.get(target)
+            if target_cfg and target_cfg.type == "terminal":
+                terminal_states = self.cfg.terminal_linear_states()
+                if terminal_states:
+                    await client.update_issue_state(issue.id, terminal_states[0])
+            else:
+                active_state = self.cfg._states_cfg.active
+                await client.update_issue_state(issue.id, active_state)
+
+            self._last_issues[issue.id] = issue
+            logger.info(f"PR {action} → {trigger_action} → {target} issue={issue.identifier}")
+
     async def webhook_tick(self):
         """Coalesced tick triggered by webhook. Deduplicates rapid calls."""
         if self._webhook_tick_pending:

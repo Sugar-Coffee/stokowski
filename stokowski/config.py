@@ -91,6 +91,9 @@ class ServerConfig:
 class WebhookConfig:
     """Webhook listener for instant tracker event reactions."""
     secret: str = ""  # HMAC-SHA256 signing secret for verification
+    # GitHub repo for PR event integration (if tracker is not github)
+    github_owner: str = ""
+    github_repo: str = ""
 
 
 @dataclass
@@ -159,6 +162,9 @@ class StateConfig:
     max_rework: int | None = None    # gate only
     transitions: dict[str, str] = field(default_factory=dict)
     hooks: HooksConfig | None = None
+    # PR-driven transitions for gates — maps GitHub PR events to gate actions
+    # e.g. pr_triggers: {approved: approve, changes_requested: rework, merged: complete}
+    pr_triggers: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -361,6 +367,7 @@ def _parse_state_config(name: str, raw: dict[str, Any]) -> StateConfig:
         max_rework=raw.get("max_rework"),
         transitions=raw.get("transitions") or {},
         hooks=_parse_hooks(hooks_raw) if hooks_raw else None,
+        pr_triggers=raw.get("pr_triggers") or {},
     )
 
 
@@ -476,6 +483,8 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
     wh = config_raw.get("webhook", {}) or {}
     webhook = WebhookConfig(
         secret=_resolve_env(str(wh.get("secret", ""))),
+        github_owner=str(wh.get("github_owner", "")),
+        github_repo=str(wh.get("github_repo", "")),
     )
 
     # Parse linear_states
