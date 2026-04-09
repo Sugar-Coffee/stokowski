@@ -332,7 +332,7 @@ async def run_manager(root_config_path: str, port: int | None = None):
 
     await check_for_updates()
 
-    names = ", ".join(workflow_paths.keys())
+    names = ", ".join(root_cfg.workflow_paths.keys())
     console.print(Panel(
         f"[bold]Stokowski[/bold]  [dim]Claude Code Orchestrator (multi-workflow)[/dim]\n"
         f"[dim]workflows:[/dim] {names}",
