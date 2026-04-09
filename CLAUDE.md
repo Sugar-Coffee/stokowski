@@ -195,7 +195,7 @@ Optional FastAPI app returned by `create_app(orch)`. Routes:
 - `GET /api/v1/{issue_identifier}` — single issue state
 - `POST /api/v1/refresh` — triggers `orch._tick()` immediately
 - `POST /api/v1/webhook/linear` — Linear webhook endpoint; verifies HMAC-SHA256 signature (if `webhook.secret` configured), filters to issue state changes and creations, triggers a coalesced `webhook_tick()`
-- `POST /api/v1/webhook/github` — GitHub webhook endpoint; verifies `X-Hub-Signature-256`, filters to issue label/state changes, triggers a coalesced `webhook_tick()`
+- `POST /api/v1/webhook/github` — GitHub webhook endpoint; verifies `X-Hub-Signature-256`. Handles three event types: `issues` (label/state changes → tick), `pull_request_review` (approved/changes_requested → gate transitions via `pr_triggers`), `pull_request` (merged → gate transitions)
 
 Dashboard JS polls `/api/v1/state` every 3s and updates the DOM without page reload.
 

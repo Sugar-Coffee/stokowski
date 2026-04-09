@@ -721,9 +721,6 @@ def create_app(orchestrator: Orchestrator) -> FastAPI:
                 )
 
         event = request.headers.get("x-github-event", "")
-        if event not in ("issues", "ping"):
-            return JSONResponse({"ok": True, "action": "ignored"})
-
         if event == "ping":
             return JSONResponse({"ok": True, "action": "pong"})
 
@@ -732,14 +729,43 @@ def create_app(orchestrator: Orchestrator) -> FastAPI:
         except Exception:
             return JSONResponse({"error": "invalid json"}, status_code=400)
 
-        action = payload.get("action", "")
-        # React to issue state-relevant actions
-        if action not in ("opened", "labeled", "unlabeled", "closed", "reopened"):
-            return JSONResponse({"ok": True, "action": "ignored"})
+        # PR review events → gate transitions via pr_triggers
+        if event == "pull_request_review":
+            review_state = payload.get("review", {}).get("state", "")
+            pr = payload.get("pull_request", {})
+            branch = pr.get("head", {}).get("ref", "")
+            pr_number = pr.get("number", 0)
+            pr_url = pr.get("html_url", "")
+            if review_state and branch:
+                logger.info(f"GitHub PR review: {review_state} on {branch}")
+                asyncio.create_task(
+                    orchestrator.handle_pr_event(review_state, branch, pr_number, pr_url)
+                )
+            return JSONResponse({"ok": True, "action": "pr_review_handled"})
 
-        number = payload.get("issue", {}).get("number", "?")
-        logger.info(f"GitHub webhook: {action} #{number}")
-        asyncio.create_task(orchestrator.webhook_tick())
-        return JSONResponse({"ok": True, "action": "tick_scheduled"})
+        # PR merged/closed events
+        if event == "pull_request":
+            action = payload.get("action", "")
+            pr = payload.get("pull_request", {})
+            branch = pr.get("head", {}).get("ref", "")
+            pr_number = pr.get("number", 0)
+            pr_url = pr.get("html_url", "")
+            if action == "closed" and pr.get("merged"):
+                logger.info(f"GitHub PR merged: #{pr_number} on {branch}")
+                asyncio.create_task(
+                    orchestrator.handle_pr_event("merged", branch, pr_number, pr_url)
+                )
+                return JSONResponse({"ok": True, "action": "pr_merged_handled"})
+
+        # Issue events → trigger tick
+        if event == "issues":
+            action = payload.get("action", "")
+            if action in ("opened", "labeled", "unlabeled", "closed", "reopened"):
+                number = payload.get("issue", {}).get("number", "?")
+                logger.info(f"GitHub webhook: {action} #{number}")
+                asyncio.create_task(orchestrator.webhook_tick())
+                return JSONResponse({"ok": True, "action": "tick_scheduled"})
+
+        return JSONResponse({"ok": True, "action": "ignored"})
 
     return app
