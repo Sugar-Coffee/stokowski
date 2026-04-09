@@ -215,6 +215,63 @@ query($issueId: String!) {
 }
 """
 
+TEAM_ID_QUERY = """
+query($teamKey: String!) {
+  teams(filter: { key: { eq: $teamKey } }) {
+    nodes { id }
+  }
+}
+"""
+
+ISSUE_CREATE_MUTATION = """
+mutation($teamId: String!, $title: String!, $description: String, $priority: Int, $stateId: String, $labelIds: [String!]) {
+  issueCreate(input: { teamId: $teamId, title: $title, description: $description, priority: $priority, stateId: $stateId, labelIds: $labelIds }) {
+    success
+    issue { id identifier title }
+  }
+}
+"""
+
+SEARCH_ISSUES_BY_TITLE_QUERY_TEAM = """
+query($teamKey: String!, $title: String!, $states: [String!]!) {
+  issues(
+    filter: {
+      team: { key: { eq: $teamKey } }
+      title: { eq: $title }
+      state: { name: { in: $states } }
+    }
+    first: 1
+  ) {
+    nodes { id identifier title }
+  }
+}
+"""
+
+SEARCH_ISSUES_BY_TITLE_QUERY_PROJECT = """
+query($projectSlug: String!, $title: String!, $states: [String!]!) {
+  issues(
+    filter: {
+      project: { slugId: { eq: $projectSlug } }
+      title: { eq: $title }
+      state: { name: { in: $states } }
+    }
+    first: 1
+  ) {
+    nodes { id identifier title }
+  }
+}
+"""
+
+TEAM_LABELS_QUERY = """
+query($teamKey: String!) {
+  teams(filter: { key: { eq: $teamKey } }) {
+    nodes {
+      labels { nodes { id name } }
+    }
+  }
+}
+"""
+
 
 def _parse_datetime(val: str | None) -> datetime | None:
     if not val:
@@ -416,6 +473,142 @@ class LinearClient:
         except Exception as e:
             logger.error(f"Failed to fetch comments for {issue_id}: {e}")
             return []
+
+    async def search_issue_by_title(
+        self,
+        title: str,
+        non_terminal_states: list[str],
+        project_slug: str = "",
+        team_key: str = "",
+    ) -> Issue | None:
+        """Search for an existing issue by exact title in non-terminal states."""
+        try:
+            if team_key:
+                data = await self._graphql(
+                    SEARCH_ISSUES_BY_TITLE_QUERY_TEAM,
+                    {"teamKey": team_key, "title": title, "states": non_terminal_states},
+                )
+            else:
+                data = await self._graphql(
+                    SEARCH_ISSUES_BY_TITLE_QUERY_PROJECT,
+                    {"projectSlug": project_slug, "title": title, "states": non_terminal_states},
+                )
+            nodes = data.get("issues", {}).get("nodes", [])
+            if nodes:
+                node = nodes[0]
+                return Issue(
+                    id=node["id"],
+                    identifier=node.get("identifier", ""),
+                    title=node.get("title", ""),
+                )
+            return None
+        except Exception as e:
+            logger.error(f"Failed to search issues by title: {e}")
+            return None
+
+    async def get_team_id(self, team_key: str) -> str | None:
+        """Get team ID from team key."""
+        try:
+            data = await self._graphql(TEAM_ID_QUERY, {"teamKey": team_key})
+            nodes = data.get("teams", {}).get("nodes", [])
+            return nodes[0]["id"] if nodes else None
+        except Exception as e:
+            logger.error(f"Failed to get team ID for {team_key}: {e}")
+            return None
+
+    async def get_team_label_ids(
+        self, team_key: str, label_names: list[str]
+    ) -> list[str]:
+        """Resolve label names to IDs for a team."""
+        if not label_names:
+            return []
+        try:
+            data = await self._graphql(TEAM_LABELS_QUERY, {"teamKey": team_key})
+            teams = data.get("teams", {}).get("nodes", [])
+            if not teams:
+                return []
+            labels = teams[0].get("labels", {}).get("nodes", [])
+            name_to_id = {l["name"].lower(): l["id"] for l in labels if l.get("name") and l.get("id")}
+            return [name_to_id[n.lower()] for n in label_names if n.lower() in name_to_id]
+        except Exception as e:
+            logger.error(f"Failed to get label IDs: {e}")
+            return []
+
+    async def get_state_id(self, team_key: str, state_name: str) -> str | None:
+        """Get state ID by name for a team. Requires fetching via a team issue."""
+        try:
+            # Fetch team ID first, then get states via team
+            team_id = await self.get_team_id(team_key)
+            if not team_id:
+                return None
+            # Use a different query to get team states
+            data = await self._graphql(
+                """query($teamId: String!) {
+                    team(id: $teamId) {
+                        states { nodes { id name } }
+                    }
+                }""",
+                {"teamId": team_id},
+            )
+            states = data.get("team", {}).get("states", {}).get("nodes", [])
+            for s in states:
+                if s.get("name", "").strip().lower() == state_name.strip().lower():
+                    return s["id"]
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get state ID for '{state_name}': {e}")
+            return None
+
+    async def create_issue(
+        self,
+        team_key: str,
+        title: str,
+        description: str = "",
+        priority: int = 3,
+        state_name: str | None = None,
+        label_names: list[str] | None = None,
+    ) -> Issue | None:
+        """Create a new Linear issue. Returns the created Issue or None."""
+        try:
+            team_id = await self.get_team_id(team_key)
+            if not team_id:
+                logger.error(f"Team '{team_key}' not found")
+                return None
+
+            variables: dict = {
+                "teamId": team_id,
+                "title": title,
+                "description": description or None,
+                "priority": priority,
+            }
+
+            if state_name:
+                state_id = await self.get_state_id(team_key, state_name)
+                if state_id:
+                    variables["stateId"] = state_id
+
+            if label_names:
+                label_ids = await self.get_team_label_ids(team_key, label_names)
+                if label_ids:
+                    variables["labelIds"] = label_ids
+
+            data = await self._graphql(ISSUE_CREATE_MUTATION, variables)
+            result = data.get("issueCreate", {})
+            if not result.get("success"):
+                logger.error(f"Linear rejected issue creation: {data}")
+                return None
+
+            node = result.get("issue", {})
+            issue = Issue(
+                id=node["id"],
+                identifier=node.get("identifier", ""),
+                title=node.get("title", ""),
+            )
+            logger.info(f"Created scheduled issue: {issue.identifier} — {issue.title}")
+            return issue
+        except Exception as e:
+            logger.error(f"Failed to create issue: {e}")
+            return None
 
     async def update_issue_state(self, issue_id: str, state_name: str) -> bool:
         """Move an issue to a new state by name. Returns True on success."""
