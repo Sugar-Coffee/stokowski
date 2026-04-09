@@ -394,13 +394,6 @@ async def dry_run(workflow_path: str):
     console.print(f"  Permission mode: {cfg.claude.permission_mode}")
     console.print(f"  Workspace root: {cfg.workspace.resolved_root()}")
 
-    if cfg.schedule:
-        console.print(f"\n  [bold]Schedule[/bold]:")
-        console.print(f"    Cron: {cfg.schedule.cron}")
-        console.print(f"    Title: {cfg.schedule.title}")
-        if cfg.schedule.labels:
-            console.print(f"    Labels: {', '.join(cfg.schedule.labels)}")
-
     if cfg.states:
         console.print(f"\n  [bold]State machine[/bold] ({len(cfg.states)} states):")
         console.print(f"    Entry state: {cfg.entry_state}")

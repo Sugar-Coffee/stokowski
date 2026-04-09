@@ -1,8 +1,8 @@
-# CLAUDE.md
+# Stokowski
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Claude Code adaptation of [OpenAI's Symphony](https://github.com/openai/symphony). Orchestrates Claude Code agents via Linear issues.
 
-Stokowski is a Claude Code adaptation of [OpenAI's Symphony](https://github.com/openai/symphony). It orchestrates Claude Code agents via Linear issues.
+This file is the single source of truth for contributors. It covers architecture, design decisions, key behaviours, and how to work on the codebase.
 
 ---
 
@@ -94,7 +94,6 @@ Parses `workflow.yaml` (or legacy `.md` with front matter) into typed dataclasse
 - `PromptsConfig` — global prompt file reference
 - `StateConfig` — a single state in the state machine: type, prompt path, linear_state key, runner, session mode, transitions, per-state overrides (model, max_turns, timeouts, hooks), gate-specific fields (rework_to, max_rework)
 - `RoutingRule` — maps Linear labels to entry states for label-based routing
-- `ScheduleConfig` — optional cron-based issue creation: cron expression, title/description templates with `{date}`/`{datetime}` placeholders, labels, priority
 
 `ServiceConfig` provides helper methods: `entry_state` (first agent state), `entry_state_for_issue(labels)` (label-routed entry state), `active_linear_states()`, `gate_linear_states()`, `terminal_linear_states()`.
 
@@ -290,22 +289,6 @@ There are no automated tests beyond `--dry-run`. The system is best verified by 
 2. Add the new tracker kind to `config.py` parsing
 3. Update `orchestrator.py` to instantiate the right client based on `cfg.tracker.kind`
 4. Update `validate_config()` to handle the new kind
-
-### Scheduled issue creation
-Workflows can auto-create Linear issues on a cron schedule via the `schedule` section:
-
-```yaml
-schedule:
-  cron: "0 9 * * *"                     # 9 AM UTC daily
-  title: "docs: daily sync — {date}"    # {date} and {datetime} are replaced
-  description: "Auto-created by Stokowski schedule."
-  labels: ["docs"]
-  priority: 3
-```
-
-Requires `pip install stokowski[schedule]` (adds `croniter`). On each poll tick, the orchestrator checks if the cron has fired since the last check. Deduplication is via exact title match against non-terminal issues — if an issue with the rendered title already exists, creation is skipped.
-
-Config: `ScheduleConfig` in `config.py`. Logic: `_check_schedule()` in `orchestrator.py`. Linear mutations: `create_issue()`, `search_issue_by_title()` in `linear.py`.
 
 ### Adding config fields
 1. Add the field to the relevant dataclass in `config.py`

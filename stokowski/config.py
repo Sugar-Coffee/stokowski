@@ -84,16 +84,6 @@ class ServerConfig:
 
 
 @dataclass
-class ScheduleConfig:
-    """Auto-create Linear issues on a cron schedule."""
-    cron: str = ""                     # cron expression, e.g. "0 9 * * *"
-    title: str = ""                    # supports {date}, {datetime} placeholders
-    description: str = ""              # supports same placeholders
-    labels: list[str] = field(default_factory=list)
-    priority: int = 3                  # 1=urgent, 2=high, 3=medium, 4=low
-
-
-@dataclass
 class LinearStatesConfig:
     """Maps logical state names to actual Linear state names."""
     todo: str = "Todo"
@@ -158,7 +148,6 @@ class ServiceConfig:
     prompts: PromptsConfig = field(default_factory=PromptsConfig)
     states: dict[str, StateConfig] = field(default_factory=dict)
     routing: list[RoutingRule] = field(default_factory=list)
-    schedule: ScheduleConfig | None = None
 
     def resolved_api_key(self) -> str:
         key = self.tracker.api_key
@@ -455,18 +444,6 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
                 entry_state=str(rule_data.get("entry_state", "")),
             ))
 
-    # Parse schedule
-    sched_raw = config_raw.get("schedule")
-    schedule: ScheduleConfig | None = None
-    if sched_raw and isinstance(sched_raw, dict):
-        schedule = ScheduleConfig(
-            cron=str(sched_raw.get("cron", "")),
-            title=str(sched_raw.get("title", "")),
-            description=str(sched_raw.get("description", "")),
-            labels=_coerce_list(sched_raw.get("labels")),
-            priority=_coerce_int(sched_raw.get("priority"), 3),
-        )
-
     cfg = ServiceConfig(
         tracker=tracker,
         polling=polling,
@@ -479,7 +456,6 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
         prompts=prompts,
         states=states,
         routing=routing,
-        schedule=schedule,
     )
 
     return WorkflowDefinition(config=cfg, prompt_template=prompt_template)
@@ -562,23 +538,6 @@ def validate_config(cfg: ServiceConfig) -> list[str]:
             errors.append(f"Routing rule {i} has no labels")
         if rule.entry_state and rule.entry_state not in all_state_names:
             errors.append(f"Routing rule {i} entry_state '{rule.entry_state}' is not a defined state")
-
-    # Validate schedule config
-    if cfg.schedule:
-        if not cfg.schedule.cron:
-            errors.append("Schedule defined but missing 'cron' field")
-        else:
-            try:
-                from croniter import croniter
-                croniter(cfg.schedule.cron)
-            except ImportError:
-                errors.append(
-                    "Schedule requires 'croniter' package: pip install croniter"
-                )
-            except (ValueError, KeyError) as e:
-                errors.append(f"Invalid cron expression '{cfg.schedule.cron}': {e}")
-        if not cfg.schedule.title:
-            errors.append("Schedule defined but missing 'title' field")
 
     # Warn about unreachable states (non-entry states that no transition points to)
     entry = cfg.entry_state

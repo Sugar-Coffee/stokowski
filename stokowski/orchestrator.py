@@ -66,9 +66,6 @@ class Orchestrator:
         self._issue_state_runs: dict[str, int] = {}       # issue_id -> run number for current state
         self._pending_gates: dict[str, str] = {}           # issue_id -> gate state name
 
-        # Schedule tracking
-        self._last_schedule_fire: datetime | None = None
-
     @property
     def cfg(self) -> ServiceConfig:
         assert self.workflow is not None
@@ -561,93 +558,10 @@ class Orchestrator:
                     f"rework_to={rework_to} run={new_run}"
                 )
 
-    async def _check_schedule(self):
-        """Check if a scheduled issue should be created based on cron expression."""
-        schedule = self.cfg.schedule
-        if not schedule or not schedule.cron or not schedule.title:
-            return
-
-        try:
-            from croniter import croniter
-        except ImportError:
-            logger.warning("Schedule requires 'croniter' package: pip install croniter")
-            return
-
-        now = datetime.now(timezone.utc)
-
-        # Determine if cron has fired since last check
-        # croniter needs a naive datetime for UTC-based cron
-        cron = croniter(schedule.cron, now.replace(tzinfo=None))
-        prev_fire_naive = cron.get_prev(datetime)
-        prev_fire = prev_fire_naive.replace(tzinfo=timezone.utc)
-
-        # Skip if we already handled this fire window
-        if self._last_schedule_fire and self._last_schedule_fire >= prev_fire:
-            return
-
-        # Use the fire time for date placeholders (not "now") to ensure
-        # title consistency across retries
-        fire_date_str = prev_fire.strftime("%Y-%m-%d")
-        fire_datetime_str = prev_fire.strftime("%Y-%m-%d %H:%M")
-        title = schedule.title.replace("{date}", fire_date_str).replace("{datetime}", fire_datetime_str)
-        description = schedule.description.replace("{date}", fire_date_str).replace("{datetime}", fire_datetime_str)
-
-        # Check for existing issue with the same title (deduplication)
-        client = self._ensure_linear_client()
-        all_non_terminal = self.cfg.active_linear_states() + [self.cfg.linear_states.todo]
-        # Remove duplicates while preserving order
-        seen: set[str] = set()
-        non_terminal: list[str] = []
-        for s in all_non_terminal:
-            if s not in seen:
-                seen.add(s)
-                non_terminal.append(s)
-
-        existing = await client.search_issue_by_title(
-            title=title,
-            non_terminal_states=non_terminal,
-            project_slug=self.cfg.tracker.project_slug,
-            team_key=self.cfg.tracker.team_key,
-        )
-
-        if existing:
-            logger.debug(
-                f"Schedule: issue already exists for '{title}' — "
-                f"{existing.identifier}, skipping"
-            )
-            self._last_schedule_fire = prev_fire
-            return
-
-        # Create the issue
-        todo_state = self.cfg.linear_states.todo
-        issue = await client.create_issue(
-            team_key=self.cfg.tracker.team_key,
-            title=title,
-            description=description,
-            priority=schedule.priority,
-            state_name=todo_state,
-            label_names=schedule.labels,
-        )
-
-        if issue:
-            logger.info(
-                f"Schedule fired: created {issue.identifier} — {title}"
-            )
-        else:
-            logger.error(f"Schedule: failed to create issue '{title}'")
-
-        self._last_schedule_fire = prev_fire
-
     async def _tick(self):
         """Single poll tick: reconcile, validate, fetch, dispatch."""
         # Reload workflow (supports hot-reload)
         errors = self._load_workflow()
-
-        # Part 0: Check scheduled issue creation
-        try:
-            await self._check_schedule()
-        except Exception as e:
-            logger.warning(f"Schedule check failed: {e}")
 
         # Part 1: Reconcile running issues
         await self._reconcile()
