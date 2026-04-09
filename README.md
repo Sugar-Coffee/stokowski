@@ -307,16 +307,16 @@ gh auth status
 </details>
 
 <details>
-<summary><strong>SSH access to your repository</strong></summary>
+<summary><strong>GitHub CLI (gh) authenticated</strong></summary>
 
-Agents clone your repo over SSH. Verify it's working:
+Agents clone your repo using `gh`. Verify it's working:
 
 ```bash
-ssh -T git@github.com
-# Should print: Hi username! You've successfully authenticated.
+gh auth status
+# Should show: Logged in to github.com
 ```
 
-Not set up? [GitHub SSH key guide →](https://docs.github.com/en/authentication/connecting-to-github-with-ssh)
+Not set up? Run `gh auth login` and follow the prompts.
 
 </details>
 
@@ -410,7 +410,7 @@ https://linear.app/your-team/project/my-project-abc123def456
 ```yaml
 hooks:
   after_create: |
-    git clone --depth 1 git@github.com:your-org/your-repo.git .
+    gh repo clone your-org/your-repo . -- --depth 1
 ```
 
 **`states`** — define your pipeline stages and gates. Each state has a `prompt` file in `prompts/`.
@@ -503,7 +503,7 @@ workspace:
 
 hooks:
   after_create: |                       # runs once when a new workspace is created
-    git clone --depth 1 git@github.com:org/repo.git .
+    gh repo clone org/repo . -- --depth 1
     npm install
   before_run: |                         # runs before each agent turn
     git pull origin main --rebase 2>/dev/null || true

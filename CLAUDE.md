@@ -1,8 +1,8 @@
-# CLAUDE.md
+# Stokowski
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Claude Code adaptation of [OpenAI's Symphony](https://github.com/openai/symphony). Orchestrates Claude Code agents via Linear issues.
 
-Stokowski is a Claude Code adaptation of [OpenAI's Symphony](https://github.com/openai/symphony). It orchestrates Claude Code agents via Linear issues.
+This file is the single source of truth for contributors. It covers architecture, design decisions, key behaviours, and how to work on the codebase.
 
 ---
 
@@ -25,17 +25,19 @@ The agent prompt, runtime config, and workspace setup all live in `workflow.yaml
 
 ```
 stokowski/
-  config.py        workflow.yaml parser + typed config dataclasses
-  linear.py        Linear GraphQL client (httpx async)
-  models.py        Domain models: Issue, RunAttempt, RetryEntry
-  orchestrator.py  Main poll loop, dispatch, reconciliation, retry
-  prompt.py        Three-layer prompt assembly for state machine workflows
-  runner.py        Claude Code CLI integration, stream-json parser
-  tracking.py      State machine tracking via structured Linear comments
-  workspace.py     Per-issue workspace lifecycle and hooks
-  web.py           Optional FastAPI dashboard
-  main.py          CLI entry point, keyboard handler
-  __main__.py      Enables python -m stokowski
+  config.py          workflow.yaml parser + typed config dataclasses
+  tracker.py         TrackerClient protocol (interface for all tracker backends)
+  linear.py          Linear GraphQL client (httpx async)
+  github_issues.py   GitHub Issues REST API client (httpx async)
+  models.py          Domain models: Issue, RunAttempt, RetryEntry
+  orchestrator.py    Main poll loop, dispatch, reconciliation, retry
+  prompt.py          Three-layer prompt assembly for state machine workflows
+  runner.py          Claude Code CLI integration, stream-json parser
+  tracking.py        State machine tracking via structured comments
+  workspace.py       Per-issue workspace lifecycle and hooks
+  web.py             Optional FastAPI dashboard + webhook endpoints
+  main.py            CLI entry point, keyboard handler
+  __main__.py        Enables python -m stokowski
 ```
 
 ---
@@ -83,18 +85,20 @@ Agents run with `cwd` set to the workspace directory. Workspaces persist across 
 
 ### config.py
 Parses `workflow.yaml` (or legacy `.md` with front matter) into typed dataclasses:
-- `TrackerConfig` — Linear endpoint, API key, project slug or team key
+- `TrackerConfig` — tracker kind (`linear` or `github`), connection details (endpoint/API key for Linear; owner/repo/token for GitHub)
 - `PollingConfig` — interval
 - `WorkspaceConfig` — root path (supports `~` and `$VAR` expansion)
 - `HooksConfig` — shell scripts for lifecycle events + timeout (includes `on_stage_enter`)
 - `ClaudeConfig` — command, permission mode, model, timeouts, system prompt
 - `AgentConfig` — concurrency limits (global, per-state, and per-project per-state)
 - `ServerConfig` — optional web dashboard port
+- `WebhookConfig` — optional webhook listener: `secret` for HMAC-SHA256 signature verification
 - `LinearStatesConfig` — maps logical state names (`todo`, `active`, `review`, `gate_approved`, `rework`, `blocked`, `terminal`) to actual Linear state names. Issues in the `todo` state are picked up and automatically moved to `active` on dispatch. Issues moved to `blocked` are released from the orchestrator.
+- `GitHubStatesConfig` — same logical mapping but for GitHub Issues (uses labels as state markers, with optional `close_on_terminal`)
 - `PromptsConfig` — global prompt file reference
 - `StateConfig` — a single state in the state machine: type, prompt path, linear_state key, runner, session mode, transitions, per-state overrides (model, max_turns, timeouts, hooks), gate-specific fields (rework_to, max_rework)
 - `RoutingRule` — maps Linear labels to entry states for label-based routing
-- `ScheduleConfig` — optional cron-based issue creation: cron expression, title/description templates with `{date}`/`{datetime}` placeholders, labels, priority
+- `ScheduleConfig` — optional cron-based issue creation via external shell command with `{date}`/`{datetime}` placeholders
 
 `ServiceConfig` provides helper methods: `entry_state` (first agent state), `entry_state_for_issue(labels)` (label-routed entry state), `active_linear_states()`, `gate_linear_states()`, `terminal_linear_states()`.
 
@@ -109,8 +113,14 @@ Parses `workflow.yaml` (or legacy `.md` with front matter) into typed dataclasse
 2. `$VAR` reference resolved from env
 3. `LINEAR_API_KEY` env var as fallback
 
+### tracker.py
+Defines `TrackerClient` — a `Protocol` class that all tracker backends must implement. Methods: `close()`, `fetch_candidate_issues()`, `fetch_issue_states_by_ids()`, `fetch_issues_by_states()`, `post_comment()`, `fetch_comments()`, `update_issue_state()`. The orchestrator uses duck typing — no explicit subclassing needed.
+
 ### linear.py
-Async GraphQL client over httpx. Supports two filtering modes: **project-scoped** (`project_slug`) and **team-scoped** (`team_key`). Each mode has its own GraphQL query set — team queries use `team: { key: { eq: $teamKey } }` filter.
+Async GraphQL client over httpx implementing `TrackerClient`. Supports two filtering modes: **project-scoped** (`project_slug`) and **team-scoped** (`team_key`). Each mode has its own GraphQL query set — team queries use `team: { key: { eq: $teamKey } }` filter.
+
+### github_issues.py
+GitHub Issues REST API client implementing `TrackerClient`. Uses labels prefixed with `stokowski:` to represent workflow states (GitHub only has open/closed natively). Key design: `update_issue_state()` atomically swaps `stokowski:*` labels while preserving user labels. `fetch_candidate_issues()` queries per state label since GitHub API filters by single label. Auto-creates missing labels on first use.
 
 Key methods:
 - `fetch_candidate_issues(project_slug, states, team_key)` — paginated, fetches all issues in active states with full detail (labels, blockers, branch name). Uses team query when `team_key` is set.
@@ -184,6 +194,8 @@ Optional FastAPI app returned by `create_app(orch)`. Routes:
 - `GET /api/v1/state` — full JSON snapshot from `orch.get_state_snapshot()`
 - `GET /api/v1/{issue_identifier}` — single issue state
 - `POST /api/v1/refresh` — triggers `orch._tick()` immediately
+- `POST /api/v1/webhook/linear` — Linear webhook endpoint; verifies HMAC-SHA256 signature (if `webhook.secret` configured), filters to issue state changes and creations, triggers a coalesced `webhook_tick()`
+- `POST /api/v1/webhook/github` — GitHub webhook endpoint; verifies `X-Hub-Signature-256`, filters to issue label/state changes, triggers a coalesced `webhook_tick()`
 
 Dashboard JS polls `/api/v1/state` every 3s and updates the DOM without page reload.
 
@@ -267,7 +279,7 @@ Exit code 0 = success. Non-zero = failure (stderr captured for error message).
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[web]"
+pip install -e ".[web,schedule]"
 
 # Validate config without dispatching agents
 stokowski --dry-run
@@ -292,20 +304,18 @@ There are no automated tests beyond `--dry-run`. The system is best verified by 
 4. Update `validate_config()` to handle the new kind
 
 ### Scheduled issue creation
-Workflows can auto-create Linear issues on a cron schedule via the `schedule` section:
+Workflows can auto-create tracker issues on a cron schedule via the `schedule` section:
 
 ```yaml
 schedule:
   cron: "0 9 * * *"                     # 9 AM UTC daily
-  title: "docs: daily sync — {date}"    # {date} and {datetime} are replaced
-  description: "Auto-created by Stokowski schedule."
-  labels: ["docs"]
-  priority: 3
+  create_command: |
+    gh issue create --title "docs: daily sync — {date}" --label docs --body "Auto-created by Stokowski schedule."
 ```
 
-Requires `pip install stokowski[schedule]` (adds `croniter`). On each poll tick, the orchestrator checks if the cron has fired since the last check. Deduplication is via exact title match against non-terminal issues — if an issue with the rendered title already exists, creation is skipped.
+Requires `pip install stokowski[schedule]` (adds `croniter`). On each poll tick, the orchestrator checks if the cron has fired since the last check and runs `create_command` as a shell subprocess. `{date}` and `{datetime}` placeholders are replaced with the fire time. The command runs with the same env vars as agent subprocesses (includes tracker credentials).
 
-Config: `ScheduleConfig` in `config.py`. Logic: `_check_schedule()` in `orchestrator.py`. Linear mutations: `create_issue()`, `search_issue_by_title()` in `linear.py`.
+Config: `ScheduleConfig` in `config.py`. Logic: `_check_schedule()` in `orchestrator.py`.
 
 ### Adding config fields
 1. Add the field to the relevant dataclass in `config.py`

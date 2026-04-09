@@ -22,6 +22,10 @@ class TrackerConfig:
     api_key: str = ""
     project_slug: str = ""
     team_key: str = ""  # e.g. "DEV" — filter by team instead of/alongside project
+    # GitHub-specific fields
+    github_owner: str = ""        # repo owner, e.g. "my-org"
+    github_repo: str = ""         # repo name, e.g. "my-project"
+    github_token: str = ""        # PAT or GitHub App token
 
 
 @dataclass
@@ -84,13 +88,17 @@ class ServerConfig:
 
 
 @dataclass
+class WebhookConfig:
+    """Webhook listener for instant tracker event reactions."""
+    secret: str = ""  # HMAC-SHA256 signing secret for verification
+
+
+@dataclass
 class ScheduleConfig:
-    """Auto-create Linear issues on a cron schedule."""
+    """Auto-create tracker issues on a cron schedule via external command."""
     cron: str = ""                     # cron expression, e.g. "0 9 * * *"
-    title: str = ""                    # supports {date}, {datetime} placeholders
-    description: str = ""              # supports same placeholders
-    labels: list[str] = field(default_factory=list)
-    priority: int = 3                  # 1=urgent, 2=high, 3=medium, 4=low
+    create_command: str = ""           # shell command to create the issue
+    # {date} and {datetime} placeholders are replaced in create_command
 
 
 @dataclass
@@ -103,6 +111,19 @@ class LinearStatesConfig:
     rework: str = "Rework"
     blocked: str = "Blocked"  # issues agents can't handle
     terminal: list[str] = field(default_factory=lambda: ["Done", "Closed", "Cancelled"])
+
+
+@dataclass
+class GitHubStatesConfig:
+    """Maps logical state names to GitHub labels used as state markers."""
+    todo: str = "Todo"
+    active: str = "In Progress"
+    review: str = "Human Review"
+    gate_approved: str = "Gate Approved"
+    rework: str = "Rework"
+    blocked: str = "Blocked"
+    terminal: list[str] = field(default_factory=lambda: ["Done"])
+    close_on_terminal: bool = True  # close the issue when it reaches a terminal state
 
 
 @dataclass
@@ -159,8 +180,19 @@ class ServiceConfig:
     states: dict[str, StateConfig] = field(default_factory=dict)
     routing: list[RoutingRule] = field(default_factory=list)
     schedule: ScheduleConfig | None = None
+    webhook: WebhookConfig = field(default_factory=WebhookConfig)
+    github_states: GitHubStatesConfig = field(default_factory=GitHubStatesConfig)
 
     def resolved_api_key(self) -> str:
+        """Resolve tracker API key/token from config or environment."""
+        if self.tracker.kind == "github":
+            key = self.tracker.github_token
+            if not key:
+                return os.environ.get("GITHUB_TOKEN", "")
+            if key.startswith("$"):
+                return os.environ.get(key[1:], "")
+            return key
+        # Linear
         key = self.tracker.api_key
         if not key:
             return os.environ.get("LINEAR_API_KEY", "")
@@ -171,19 +203,28 @@ class ServiceConfig:
     def agent_env(self) -> dict[str, str]:
         """Build env vars to pass to agent subprocesses.
 
-        Includes the parent process env plus Linear config from workflow.yaml,
-        so agents can connect to Linear using the same credentials as Stokowski.
+        Includes the parent process env plus tracker config from workflow.yaml,
+        so agents can connect to the tracker using the same credentials as Stokowski.
         """
         env = dict(os.environ)
-        api_key = self.resolved_api_key()
-        if api_key:
-            env["LINEAR_API_KEY"] = api_key
-        if self.tracker.project_slug:
-            env["LINEAR_PROJECT_SLUG"] = self.tracker.project_slug
-        if self.tracker.team_key:
-            env["LINEAR_TEAM_KEY"] = self.tracker.team_key
-        if self.tracker.endpoint:
-            env["LINEAR_ENDPOINT"] = self.tracker.endpoint
+        if self.tracker.kind == "github":
+            token = self.resolved_api_key()
+            if token:
+                env["GITHUB_TOKEN"] = token
+            if self.tracker.github_owner:
+                env["GITHUB_OWNER"] = self.tracker.github_owner
+            if self.tracker.github_repo:
+                env["GITHUB_REPO"] = self.tracker.github_repo
+        else:
+            api_key = self.resolved_api_key()
+            if api_key:
+                env["LINEAR_API_KEY"] = api_key
+            if self.tracker.project_slug:
+                env["LINEAR_PROJECT_SLUG"] = self.tracker.project_slug
+            if self.tracker.team_key:
+                env["LINEAR_TEAM_KEY"] = self.tracker.team_key
+            if self.tracker.endpoint:
+                env["LINEAR_ENDPOINT"] = self.tracker.endpoint
         return env
 
     @property
@@ -209,46 +250,52 @@ class ServiceConfig:
                         return rule.entry_state
         return self.entry_state
 
+    @property
+    def _states_cfg(self) -> LinearStatesConfig | GitHubStatesConfig:
+        """Return the active states config based on tracker kind."""
+        if self.tracker.kind == "github":
+            return self.github_states
+        return self.linear_states
+
     def active_linear_states(self) -> list[str]:
-        """Return Linear state names that should be polled for candidates.
+        """Return tracker state names that should be polled for candidates.
 
         Includes the todo state (pickup) and all agent state mappings.
         """
-        ls = self.linear_states
+        sc_cfg = self._states_cfg
         seen: list[str] = []
-        # Always include the todo state so new issues get picked up
-        if ls.todo and ls.todo not in seen:
-            seen.append(ls.todo)
+        if sc_cfg.todo and sc_cfg.todo not in seen:
+            seen.append(sc_cfg.todo)
         for sc in self.states.values():
             if sc.type == "agent":
-                linear_name = _resolve_linear_state_name(sc.linear_state, ls)
-                if linear_name and linear_name not in seen:
-                    seen.append(linear_name)
+                state_name = _resolve_state_name(sc.linear_state, sc_cfg)
+                if state_name and state_name not in seen:
+                    seen.append(state_name)
         return seen
 
     def gate_linear_states(self) -> list[str]:
-        """Return Linear state names for all gate states."""
-        ls = self.linear_states
+        """Return tracker state names for all gate states."""
+        sc_cfg = self._states_cfg
         seen: list[str] = []
         for sc in self.states.values():
             if sc.type == "gate":
-                linear_name = _resolve_linear_state_name(sc.linear_state, ls)
-                if linear_name and linear_name not in seen:
-                    seen.append(linear_name)
+                state_name = _resolve_state_name(sc.linear_state, sc_cfg)
+                if state_name and state_name not in seen:
+                    seen.append(state_name)
         return seen
 
     def terminal_linear_states(self) -> list[str]:
-        """Return the terminal Linear state names."""
-        return list(self.linear_states.terminal)
+        """Return the terminal tracker state names."""
+        return list(self._states_cfg.terminal)
 
 
-def _resolve_linear_state_name(key: str, ls: LinearStatesConfig) -> str:
-    """Resolve a logical state key to the actual Linear state name."""
+def _resolve_state_name(key: str, sc: LinearStatesConfig | GitHubStatesConfig) -> str:
+    """Resolve a logical state key to the actual tracker state name."""
     mapping: dict[str, str] = {
-        "active": ls.active,
-        "review": ls.review,
-        "gate_approved": ls.gate_approved,
-        "rework": ls.rework,
+        "active": sc.active,
+        "review": sc.review,
+        "gate_approved": sc.gate_approved,
+        "rework": sc.rework,
     }
     return mapping.get(key, key)
 
@@ -368,6 +415,9 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
         api_key=str(t.get("api_key", "")),
         project_slug=str(t.get("project_slug", "")),
         team_key=str(t.get("team_key", "")),
+        github_owner=str(t.get("github_owner", "")),
+        github_repo=str(t.get("github_repo", "")),
+        github_token=str(t.get("github_token", "")),
     )
 
     # Parse polling
@@ -420,6 +470,12 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
     s = config_raw.get("server", {}) or {}
     server = ServerConfig(port=s.get("port"))
 
+    # Parse webhook
+    wh = config_raw.get("webhook", {}) or {}
+    webhook = WebhookConfig(
+        secret=_resolve_env(str(wh.get("secret", ""))),
+    )
+
     # Parse linear_states
     ls_raw = config_raw.get("linear_states", {}) or {}
     linear_states = LinearStatesConfig(
@@ -430,6 +486,19 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
         rework=str(ls_raw.get("rework", "Rework")),
         blocked=str(ls_raw.get("blocked", "Blocked")),
         terminal=_coerce_list(ls_raw.get("terminal")) or ["Done", "Closed", "Cancelled"],
+    )
+
+    # Parse github_states
+    gs_raw = config_raw.get("github_states", {}) or {}
+    github_states = GitHubStatesConfig(
+        todo=str(gs_raw.get("todo", "Todo")),
+        active=str(gs_raw.get("active", "In Progress")),
+        review=str(gs_raw.get("review", "Human Review")),
+        gate_approved=str(gs_raw.get("gate_approved", "Gate Approved")),
+        rework=str(gs_raw.get("rework", "Rework")),
+        blocked=str(gs_raw.get("blocked", "Blocked")),
+        terminal=_coerce_list(gs_raw.get("terminal")) or ["Done"],
+        close_on_terminal=gs_raw.get("close_on_terminal", True),
     )
 
     # Parse prompts
@@ -461,10 +530,7 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
     if sched_raw and isinstance(sched_raw, dict):
         schedule = ScheduleConfig(
             cron=str(sched_raw.get("cron", "")),
-            title=str(sched_raw.get("title", "")),
-            description=str(sched_raw.get("description", "")),
-            labels=_coerce_list(sched_raw.get("labels")),
-            priority=_coerce_int(sched_raw.get("priority"), 3),
+            create_command=str(sched_raw.get("create_command", "")),
         )
 
     cfg = ServiceConfig(
@@ -480,6 +546,8 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
         states=states,
         routing=routing,
         schedule=schedule,
+        webhook=webhook,
+        github_states=github_states,
     )
 
     return WorkflowDefinition(config=cfg, prompt_template=prompt_template)
@@ -490,11 +558,17 @@ def validate_config(cfg: ServiceConfig) -> list[str]:
     errors: list[str] = []
 
     # Basic tracker checks
-    if cfg.tracker.kind != "linear":
+    if cfg.tracker.kind not in ("linear", "github"):
         errors.append(f"Unsupported tracker kind: {cfg.tracker.kind}")
     if not cfg.resolved_api_key():
-        errors.append("Missing tracker API key (set LINEAR_API_KEY or tracker.api_key)")
-    if not cfg.tracker.project_slug and not cfg.tracker.team_key:
+        if cfg.tracker.kind == "github":
+            errors.append("Missing tracker token (set GITHUB_TOKEN or tracker.github_token)")
+        else:
+            errors.append("Missing tracker API key (set LINEAR_API_KEY or tracker.api_key)")
+    if cfg.tracker.kind == "github":
+        if not cfg.tracker.github_owner or not cfg.tracker.github_repo:
+            errors.append("GitHub tracker requires tracker.github_owner and tracker.github_repo")
+    elif not cfg.tracker.project_slug and not cfg.tracker.team_key:
         errors.append("Missing tracker.project_slug or tracker.team_key (at least one required)")
 
     if not cfg.states:
@@ -573,12 +647,12 @@ def validate_config(cfg: ServiceConfig) -> list[str]:
                 croniter(cfg.schedule.cron)
             except ImportError:
                 errors.append(
-                    "Schedule requires 'croniter' package: pip install croniter"
+                    "Schedule requires 'croniter' package: pip install stokowski[schedule]"
                 )
             except (ValueError, KeyError) as e:
                 errors.append(f"Invalid cron expression '{cfg.schedule.cron}': {e}")
-        if not cfg.schedule.title:
-            errors.append("Schedule defined but missing 'title' field")
+        if not cfg.schedule.create_command:
+            errors.append("Schedule defined but missing 'create_command' field")
 
     # Warn about unreachable states (non-entry states that no transition points to)
     entry = cfg.entry_state

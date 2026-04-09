@@ -105,7 +105,13 @@ prompts:
   global_prompt: prompts/global.md
 
 # ---------------------------------------------------------------------------
-# Server (optional dashboard)
+# Webhook (optional — reacts instantly to Linear state changes)
+# ---------------------------------------------------------------------------
+# webhook:
+#   secret: $LINEAR_WEBHOOK_SECRET        # HMAC-SHA256 secret from Linear
+
+# ---------------------------------------------------------------------------
+# Server (optional dashboard + webhook listener)
 # ---------------------------------------------------------------------------
 server:
   port: 4200
