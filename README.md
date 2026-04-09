@@ -74,7 +74,7 @@ flowchart TD
 
 This is just one example. The state machine is fully configurable — you define the states, transitions, gates, and rework targets. Want a single-stage workflow with no gates? A research loop that cycles until a human is satisfied? Different runners (Claude Code vs Codex) and models at each stage? All configurable in `workflow.yaml`.
 
-Each agent runs in its own isolated git clone — multiple tickets can be worked in parallel without conflicts. Token usage, turn count, and last activity are tracked live in the terminal and web dashboard.
+Each agent runs in its own isolated workspace (git clone or git worktree) — multiple tickets can be worked in parallel without conflicts. Token usage, turn count, and last activity are tracked live in the terminal and web dashboard.
 
 ---
 
@@ -154,13 +154,16 @@ Linear issue → isolated git clone → agent (Claude or Codex) → PR + Human R
 - **Three-layer prompt assembly** — global prompt + per-stage prompt + auto-injected lifecycle context; each layer is a Jinja2 template with full issue variables
 - **Linear-driven dispatch** — polls for issues in configured states, dispatches agents with bounded concurrency
 - **Session continuity** — multi-turn agent sessions via `--resume` (Claude Code); agents pick up where they left off
-- **Isolated workspaces** — per-issue git clones so parallel agents never conflict
+- **Isolated workspaces** — per-issue git clones or **git worktrees** so parallel agents never conflict
 - **Lifecycle hooks** — `after_create`, `before_run`, `after_run`, `before_remove`, `on_stage_enter` shell scripts for setup, quality gates, and cleanup
 - **Retry with backoff** — failed turns retry automatically with exponential backoff
 - **State reconciliation** — running agents are stopped if their Linear issue moves to a terminal state mid-run
 - **Web dashboard** — live view of agent status, token usage, and last activity at `localhost:<port>`
 - **MCP-aware** — agents inherit `.mcp.json` from the workspace (Figma, Linear, iOS Simulator, Playwright, etc.)
 - **Persistent terminal UI** — live status bar, single-key controls (`q` quit · `s` status · `r` refresh · `h` help)
+- **Git worktree mode** — use `workspace.mode: worktree` for lightweight isolation from a single repo instead of full clones
+- **Configurable headless prompt** — enable Claude Code skills and slash commands in agents by setting `headless_prompt: null`
+- **Ready-to-use example workflows** — autonomous implementation pipeline and AI-collaborative feature definition (see `examples/`)
 
 ---
 
@@ -487,6 +490,8 @@ polling:
 
 workspace:
   root: ~/code/stokowski-workspaces     # where per-issue directories are created
+  mode: clone                           # "clone" (default) or "worktree"
+  repo_path: ~/code/my-project          # required for worktree mode — path to the git repo
 
 hooks:
   after_create: |                       # runs once when a new workspace is created
@@ -516,6 +521,7 @@ claude:
   max_turns: 20                         # max turns before giving up
   turn_timeout_ms: 3600000             # per-turn wall-clock timeout (default: 1h)
   stall_timeout_ms: 300000             # kill agent if silent for this long (default: 5m)
+  headless_prompt: null                # null = disabled (skills allowed); set string to override
   append_system_prompt: |              # extra text appended to every agent's system prompt
     Always write tests for new code.
 

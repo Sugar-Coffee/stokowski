@@ -1,15 +1,15 @@
 # =============================================================================
-# peakHealth — Feature Definition Workflow (AI Collaboration)
+# Feature Definition Workflow (AI Collaboration)
 # =============================================================================
 #
 # Multiple AI agents collaborate to define a feature:
-#   PM Agent → Engineer Review → PM Revise (loop) → Architect Plan → Done
+#   PM Agent → Engineer Review → Architect Plan → Done
 #
 # Agents communicate through Linear comments on the issue.
-# Use this for issues labeled "feature" that need definition before implementation.
+# Each agent gets a fresh session for an independent perspective.
 #
 # Usage:
-#   stokowski examples/peakhealth/workflow-feature.yaml
+#   stokowski path/to/workflow.yaml
 # =============================================================================
 
 tracker:
@@ -27,54 +27,49 @@ linear_states:
     - Done
     - Canceled
     - Duplicate
-    - Blocked
 
 polling:
   interval_ms: 20000
 
 workspace:
   mode: worktree
-  repo_path: ~/Documents/Projects/peakHealth
-  root: ~/Documents/Projects/peakHealth/.worktrees
+  repo_path: ~/path/to/your/project     # <-- CHANGE THIS
+  root: ~/path/to/your/project/.worktrees
 
 hooks:
   timeout_ms: 60000
 
 claude:
   permission_mode: auto
-  model: claude-opus-4-6
+  model: claude-opus-4-6                # Opus for reasoning-heavy work
   max_turns: 15
   turn_timeout_ms: 3600000
   stall_timeout_ms: 300000
   append_system_prompt: >
-    You are an autonomous agent collaborating with other AI agents to define a feature
-    for the peakHealth project. Communicate your findings and decisions by posting
-    comments on the Linear issue. Read previous comments to understand what other
-    agents have contributed. Be concise and actionable.
+    You are an autonomous agent collaborating with other AI agents to define
+    a feature. Communicate findings and decisions by posting comments on the
+    Linear issue. Read previous comments to understand what other agents have
+    contributed. Be concise and actionable.
 
 agent:
   max_concurrent_agents: 2
   max_retry_backoff_ms: 300000
-  max_concurrent_agents_by_state:
-    pm-define: 2
-    engineer-evaluate: 1
-    architect-plan: 1
 
 prompts:
-  global_prompt: examples/peakhealth/prompts/global.md
+  global_prompt: prompts/global.md
 
 server:
   port: 4201
 
 # ---------------------------------------------------------------------------
-# State machine — AI collaboration loop
+# State machine — AI collaboration pipeline
 # ---------------------------------------------------------------------------
 states:
 
-  # ── 1. PM Agent defines the feature ────────────────────────────────────
+  # ── 1. PM defines the feature ──────────────────────────────────────────
   pm-define:
     type: agent
-    prompt: examples/peakhealth/prompts/pm-define.md
+    prompt: prompts/pm-define.md
     linear_state: active
     model: claude-opus-4-6
     max_turns: 15
@@ -85,18 +80,18 @@ states:
   # ── 2. Engineer evaluates feasibility ──────────────────────────────────
   engineer-evaluate:
     type: agent
-    prompt: examples/peakhealth/prompts/engineer-evaluate.md
+    prompt: prompts/engineer-evaluate.md
     linear_state: active
     model: claude-opus-4-6
     max_turns: 10
-    session: fresh                          # independent perspective
+    session: fresh                      # independent perspective
     transitions:
-      complete: architect-plan              # approved — move to planning
+      complete: architect-plan
 
   # ── 3. Architect breaks into issues ────────────────────────────────────
   architect-plan:
     type: agent
-    prompt: examples/peakhealth/prompts/architect-plan.md
+    prompt: prompts/architect-plan.md
     linear_state: active
     model: claude-opus-4-6
     max_turns: 20

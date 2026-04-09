@@ -71,10 +71,17 @@ Each workflow defines a set of internal states that map to Linear states. States
 **Structured comment tracking:** State transitions and gate decisions are persisted as HTML comments on Linear issues (`<!-- stokowski:state {...} -->` and `<!-- stokowski:gate {...} -->`). These enable crash recovery and provide context for rework runs.
 
 ### Workspace isolation
-Each issue gets its own directory under `workspace.root`. Agents run with `cwd` set to that directory. Workspaces persist across turns for the same session; they're deleted when the issue reaches a terminal state.
+Each issue gets its own workspace. Two modes are supported:
+- **Clone mode** (`workspace.mode: clone`, default) — each issue gets a fresh `git clone` under `workspace.root`
+- **Worktree mode** (`workspace.mode: worktree`) — each issue gets a git worktree under `{repo_path}/.worktrees/{issue-number}/`, branching from `origin/main`. Requires `workspace.repo_path` to point to the git repo. Lighter weight than cloning — no redundant `.git` history.
+
+Agents run with `cwd` set to the workspace directory. Workspaces persist across turns for the same session; they're deleted (worktree removed + branch deleted) when the issue reaches a terminal state.
 
 ### Headless system prompt
-Every first-turn launch appends a system prompt via `--append-system-prompt` that instructs Claude not to use interactive skills, slash commands, or plan mode. This prevents agents from stalling on interactive workflows.
+The headless system prompt is configurable via `claude.headless_prompt`:
+- **`null` (omitted)** — no headless prompt injected. Agents can use Claude Code skills, slash commands, and the Skill tool. Use this when your prompts invoke project-specific skills.
+- **String value** — injected via `--append-system-prompt` on first turn. The original default was a prompt blocking interactive workflows; set this explicitly if you want that behavior.
+- **`claude.append_system_prompt`** — always appended after the headless prompt (if any). Use for project-specific context.
 
 ---
 
@@ -159,11 +166,13 @@ while running:
 - `tool_use` event → updates last message with tool name
 
 ### workspace.py
-`ensure_workspace()` creates the directory if needed, runs `after_create` hook on first creation.
-`remove_workspace()` runs `before_remove` hook, then deletes the directory.
-`run_hook()` executes shell scripts via `asyncio.create_subprocess_shell` with timeout.
+Two workspace modes:
+- **Clone mode** — `_ensure_clone_workspace()` creates a directory under `workspace.root`, runs `after_create` hook (typically `git clone`). Workspace key is the sanitized identifier.
+- **Worktree mode** — `_ensure_worktree()` runs `git worktree add -b {branch} .worktrees/{issue-number} origin/main` from `workspace.repo_path`. Falls back to attaching existing branch if `-b` fails. `_remove_worktree()` removes the worktree and deletes the branch.
 
-Workspace key is the sanitized issue identifier: only `[A-Za-z0-9._-]` characters.
+`ensure_workspace()` and `remove_workspace()` dispatch to the correct mode based on `workspace_cfg.mode`. Both accept an optional `workspace_cfg` parameter; when `None`, they use clone mode.
+
+`run_hook()` executes shell scripts via `asyncio.create_subprocess_shell` with timeout.
 
 ### web.py
 Optional FastAPI app returned by `create_app(orch)`. Routes:
