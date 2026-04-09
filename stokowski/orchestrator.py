@@ -937,7 +937,11 @@ class Orchestrator:
                     and _is_rate_limit_error(attempt.error)
                     and state_cfg.fallback_runners
                 ):
+                    tried_runners = {runner_type}
                     for fb_runner in state_cfg.fallback_runners:
+                        if fb_runner in tried_runners:
+                            continue  # skip runners that already failed
+                        tried_runners.add(fb_runner)
                         logger.info(
                             f"Rate limit on {runner_type}, falling back to {fb_runner} "
                             f"issue={issue.identifier}"
