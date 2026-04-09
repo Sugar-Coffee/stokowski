@@ -11,7 +11,11 @@ from .models import BlockerRef, Issue
 
 logger = logging.getLogger("stokowski.linear")
 
-CANDIDATE_QUERY = """
+# ---------------------------------------------------------------------------
+# GraphQL queries — project-scoped (original)
+# ---------------------------------------------------------------------------
+
+CANDIDATE_QUERY_PROJECT = """
 query($projectSlug: String!, $states: [String!]!, $after: String) {
   issues(
     filter: {
@@ -53,19 +57,7 @@ query($projectSlug: String!, $states: [String!]!, $after: String) {
 }
 """
 
-ISSUES_BY_IDS_QUERY = """
-query($ids: [ID!]!) {
-  issues(filter: { id: { in: $ids } }) {
-    nodes {
-      id
-      identifier
-      state { name }
-    }
-  }
-}
-"""
-
-ISSUES_BY_STATES_QUERY = """
+ISSUES_BY_STATES_QUERY_PROJECT = """
 query($projectSlug: String!, $states: [String!]!, $after: String) {
   issues(
     filter: {
@@ -79,6 +71,91 @@ query($projectSlug: String!, $states: [String!]!, $after: String) {
       hasNextPage
       endCursor
     }
+    nodes {
+      id
+      identifier
+      state { name }
+    }
+  }
+}
+"""
+
+# ---------------------------------------------------------------------------
+# GraphQL queries — team-scoped (new)
+# ---------------------------------------------------------------------------
+
+CANDIDATE_QUERY_TEAM = """
+query($teamKey: String!, $states: [String!]!, $after: String) {
+  issues(
+    filter: {
+      team: { key: { eq: $teamKey } }
+      state: { name: { in: $states } }
+    }
+    first: 50
+    after: $after
+    orderBy: createdAt
+  ) {
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+    nodes {
+      id
+      identifier
+      title
+      description
+      priority
+      url
+      branchName
+      createdAt
+      updatedAt
+      state { name }
+      labels { nodes { name } }
+      inverseRelations {
+        nodes {
+          type
+          relatedIssue {
+            id
+            identifier
+            state { name }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+ISSUES_BY_STATES_QUERY_TEAM = """
+query($teamKey: String!, $states: [String!]!, $after: String) {
+  issues(
+    filter: {
+      team: { key: { eq: $teamKey } }
+      state: { name: { in: $states } }
+    }
+    first: 50
+    after: $after
+  ) {
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+    nodes {
+      id
+      identifier
+      state { name }
+    }
+  }
+}
+"""
+
+# ---------------------------------------------------------------------------
+# Shared queries (not scoped to project or team)
+# ---------------------------------------------------------------------------
+
+ISSUES_BY_IDS_QUERY = """
+query($ids: [ID!]!) {
+  issues(filter: { id: { in: $ids } }) {
     nodes {
       id
       identifier
@@ -216,21 +293,29 @@ class LinearClient:
         return data.get("data", {})
 
     async def fetch_candidate_issues(
-        self, project_slug: str, active_states: list[str]
+        self,
+        project_slug: str,
+        active_states: list[str],
+        team_key: str = "",
     ) -> list[Issue]:
-        """Fetch all issues in active states for the project."""
+        """Fetch all issues in active states for the project or team."""
         issues: list[Issue] = []
         cursor = None
 
+        # Choose query and variables based on filtering mode
+        if team_key:
+            query = CANDIDATE_QUERY_TEAM
+            base_vars = {"teamKey": team_key, "states": active_states}
+        else:
+            query = CANDIDATE_QUERY_PROJECT
+            base_vars = {"projectSlug": project_slug, "states": active_states}
+
         while True:
-            variables: dict = {
-                "projectSlug": project_slug,
-                "states": active_states,
-            }
+            variables = dict(base_vars)
             if cursor:
                 variables["after"] = cursor
 
-            data = await self._graphql(CANDIDATE_QUERY, variables)
+            data = await self._graphql(query, variables)
             issues_data = data.get("issues", {})
             nodes = issues_data.get("nodes", [])
 
@@ -263,21 +348,28 @@ class LinearClient:
         return result
 
     async def fetch_issues_by_states(
-        self, project_slug: str, states: list[str]
+        self,
+        project_slug: str,
+        states: list[str],
+        team_key: str = "",
     ) -> list[Issue]:
-        """Fetch issues in specific states (for terminal cleanup)."""
+        """Fetch issues in specific states (for terminal cleanup, gate detection)."""
         issues: list[Issue] = []
         cursor = None
 
+        if team_key:
+            query = ISSUES_BY_STATES_QUERY_TEAM
+            base_vars = {"teamKey": team_key, "states": states}
+        else:
+            query = ISSUES_BY_STATES_QUERY_PROJECT
+            base_vars = {"projectSlug": project_slug, "states": states}
+
         while True:
-            variables: dict = {
-                "projectSlug": project_slug,
-                "states": states,
-            }
+            variables = dict(base_vars)
             if cursor:
                 variables["after"] = cursor
 
-            data = await self._graphql(ISSUES_BY_STATES_QUERY, variables)
+            data = await self._graphql(query, variables)
             issues_data = data.get("issues", {})
             for node in issues_data.get("nodes", []):
                 if node and node.get("id"):

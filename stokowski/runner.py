@@ -430,6 +430,9 @@ def _process_event(
         result_text = event.get("result", "")
         if isinstance(result_text, str) and result_text:
             attempt.last_message = result_text[:200]
+            # Detect blocked signal from agent
+            if "<!-- stokowski:blocked" in result_text:
+                attempt.status = "blocked"
 
     elif event_type == "assistant":
         # Assistant message content

@@ -21,6 +21,7 @@ class TrackerConfig:
     endpoint: str = "https://api.linear.app/graphql"
     api_key: str = ""
     project_slug: str = ""
+    team_key: str = ""  # e.g. "DEV" — filter by team instead of/alongside project
 
 
 @dataclass
@@ -90,6 +91,7 @@ class LinearStatesConfig:
     review: str = "Human Review"
     gate_approved: str = "Gate Approved"
     rework: str = "Rework"
+    blocked: str = "Blocked"  # issues agents can't handle
     terminal: list[str] = field(default_factory=lambda: ["Done", "Closed", "Cancelled"])
 
 
@@ -97,6 +99,13 @@ class LinearStatesConfig:
 class PromptsConfig:
     """Prompt file references."""
     global_prompt: str | None = None
+
+
+@dataclass
+class RoutingRule:
+    """Route issues to different entry states based on labels."""
+    labels: list[str] = field(default_factory=list)  # match any of these labels
+    entry_state: str = ""  # override entry state for matching issues
 
 
 @dataclass
@@ -138,6 +147,7 @@ class ServiceConfig:
     linear_states: LinearStatesConfig = field(default_factory=LinearStatesConfig)
     prompts: PromptsConfig = field(default_factory=PromptsConfig)
     states: dict[str, StateConfig] = field(default_factory=dict)
+    routing: list[RoutingRule] = field(default_factory=list)
 
     def resolved_api_key(self) -> str:
         key = self.tracker.api_key
@@ -170,6 +180,21 @@ class ServiceConfig:
             if sc.type == "agent":
                 return name
         return None
+
+    def entry_state_for_issue(self, labels: list[str]) -> str | None:
+        """Resolve entry state based on issue labels and routing rules.
+
+        Returns the entry_state from the first matching routing rule,
+        or the default entry_state if no rules match.
+        """
+        if self.routing:
+            issue_labels = {l.lower() for l in labels}
+            for rule in self.routing:
+                rule_labels = {l.lower() for l in rule.labels}
+                if issue_labels & rule_labels:  # any overlap
+                    if rule.entry_state in self.states:
+                        return rule.entry_state
+        return self.entry_state
 
     def active_linear_states(self) -> list[str]:
         """Return Linear state names that should be polled for candidates.
@@ -329,6 +354,7 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
         endpoint=str(t.get("endpoint", "https://api.linear.app/graphql")),
         api_key=str(t.get("api_key", "")),
         project_slug=str(t.get("project_slug", "")),
+        team_key=str(t.get("team_key", "")),
     )
 
     # Parse polling
@@ -389,6 +415,7 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
         review=str(ls_raw.get("review", "Human Review")),
         gate_approved=str(ls_raw.get("gate_approved", "Gate Approved")),
         rework=str(ls_raw.get("rework", "Rework")),
+        blocked=str(ls_raw.get("blocked", "Blocked")),
         terminal=_coerce_list(ls_raw.get("terminal")) or ["Done", "Closed", "Cancelled"],
     )
 
@@ -405,6 +432,16 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
         sd = state_data or {}
         states[state_name] = _parse_state_config(state_name, sd)
 
+    # Parse routing rules
+    routing_raw = config_raw.get("routing", []) or []
+    routing: list[RoutingRule] = []
+    for rule_data in routing_raw:
+        if isinstance(rule_data, dict):
+            routing.append(RoutingRule(
+                labels=_coerce_list(rule_data.get("labels")),
+                entry_state=str(rule_data.get("entry_state", "")),
+            ))
+
     cfg = ServiceConfig(
         tracker=tracker,
         polling=polling,
@@ -416,6 +453,7 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
         linear_states=linear_states,
         prompts=prompts,
         states=states,
+        routing=routing,
     )
 
     return WorkflowDefinition(config=cfg, prompt_template=prompt_template)
@@ -430,8 +468,8 @@ def validate_config(cfg: ServiceConfig) -> list[str]:
         errors.append(f"Unsupported tracker kind: {cfg.tracker.kind}")
     if not cfg.resolved_api_key():
         errors.append("Missing tracker API key (set LINEAR_API_KEY or tracker.api_key)")
-    if not cfg.tracker.project_slug:
-        errors.append("Missing tracker.project_slug")
+    if not cfg.tracker.project_slug and not cfg.tracker.team_key:
+        errors.append("Missing tracker.project_slug or tracker.team_key (at least one required)")
 
     if not cfg.states:
         errors.append("No states defined")
@@ -491,6 +529,13 @@ def validate_config(cfg: ServiceConfig) -> list[str]:
         errors.append("No agent states defined (need at least one state with type 'agent')")
     if not has_terminal:
         errors.append("No terminal states defined (need at least one state with type 'terminal')")
+
+    # Validate routing rules
+    for i, rule in enumerate(cfg.routing):
+        if not rule.labels:
+            errors.append(f"Routing rule {i} has no labels")
+        if rule.entry_state and rule.entry_state not in all_state_names:
+            errors.append(f"Routing rule {i} entry_state '{rule.entry_state}' is not a defined state")
 
     # Warn about unreachable states (non-entry states that no transition points to)
     entry = cfg.entry_state

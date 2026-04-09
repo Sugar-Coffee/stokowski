@@ -92,6 +92,7 @@ agent:
   max_retry_backoff_ms: 300000
   max_concurrent_agents_by_state:
     implement: 3
+    triage: 4                           # triage is lightweight, allow many
     review-push: 1                      # serialize pushes to avoid conflicts
     fix-reviews: 1                      # serialize merges
 
@@ -111,6 +112,20 @@ server:
 # State machine — fully autonomous, no gates
 # ---------------------------------------------------------------------------
 states:
+
+  # ── 0. Triage ───────────────────────────────────────────────────────────
+  # Fast evaluation: is this issue actionable by AI?
+  # If not → agent includes <!-- stokowski:blocked --> → moved to Blocked.
+  # Uses Haiku for speed and cost — triage is a simple yes/no decision.
+  triage:
+    type: agent
+    prompt: prompts/triage.md
+    linear_state: active
+    model: claude-haiku-4-5
+    max_turns: 3                        # very few turns — just read and decide
+    session: inherit
+    transitions:
+      complete: implement
 
   # ── 1. Implement ────────────────────────────────────────────────────────
   implement:

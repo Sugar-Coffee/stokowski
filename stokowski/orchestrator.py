@@ -160,6 +160,7 @@ class Orchestrator:
             terminal = await client.fetch_issues_by_states(
                 self.cfg.tracker.project_slug,
                 self.cfg.terminal_linear_states(),
+                team_key=self.cfg.tracker.team_key,
             )
             ws_root = self.cfg.workspace.resolved_root()
             for issue in terminal:
@@ -184,11 +185,11 @@ class Orchestrator:
         comments = await client.fetch_comments(issue.id)
         tracking = parse_latest_tracking(comments)
 
-        entry = self.cfg.entry_state
+        entry = self.cfg.entry_state_for_issue(issue.labels)
         if entry is None:
             raise RuntimeError("No entry state defined in config")
 
-        # No tracking → entry state, run 1
+        # No tracking → entry state (may be label-routed), run 1
         if tracking is None:
             self._issue_current_state[issue.id] = entry
             self._issue_state_runs[issue.id] = 1
@@ -299,6 +300,49 @@ class Orchestrator:
             f"run={run}"
         )
 
+    async def _move_to_blocked(self, issue: Issue, attempt: RunAttempt):
+        """Move an issue to Blocked state when the agent signals it can't proceed."""
+        try:
+            client = self._ensure_linear_client()
+            blocked_state = self.cfg.linear_states.blocked
+
+            # Post a comment with the agent's last message (contains the reason)
+            reason = attempt.last_message or "Agent could not complete this issue"
+            comment = (
+                f"**Stokowski: Issue blocked**\n\n"
+                f"{reason}\n\n"
+                f"<!-- stokowski:blocked {{\"state\":\"{attempt.state_name}\","
+                f"\"reason\":\"{reason[:100]}\"}} -->"
+            )
+            await client.post_comment(issue.id, comment)
+
+            # Move to Blocked state
+            moved = await client.update_issue_state(issue.id, blocked_state)
+            if moved:
+                logger.info(f"Moved {issue.identifier} to Blocked: {reason[:100]}")
+            else:
+                logger.warning(f"Failed to move {issue.identifier} to Blocked state")
+
+            # Clean up workspace
+            try:
+                ws_root = self.cfg.workspace.resolved_root()
+                await remove_workspace(
+                    ws_root, issue.identifier, self.cfg.hooks,
+                    workspace_cfg=self.cfg.workspace,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to remove workspace for blocked {issue.identifier}: {e}")
+
+        except Exception as e:
+            logger.error(f"Failed to block {issue.identifier}: {e}")
+
+        # Release tracking
+        self._issue_current_state.pop(issue.id, None)
+        self._issue_state_runs.pop(issue.id, None)
+        self._pending_gates.pop(issue.id, None)
+        self._last_session_ids.pop(issue.id, None)
+        self.claimed.discard(issue.id)
+
     async def _safe_transition(self, issue: Issue, transition_name: str):
         """Wrapper around _transition that logs errors instead of silently swallowing them."""
         try:
@@ -407,6 +451,7 @@ class Orchestrator:
             approved_issues = await client.fetch_issues_by_states(
                 self.cfg.tracker.project_slug,
                 [self.cfg.linear_states.gate_approved],
+                team_key=self.cfg.tracker.team_key,
             )
         except Exception as e:
             logger.warning(f"Failed to fetch gate-approved issues: {e}")
@@ -451,6 +496,7 @@ class Orchestrator:
             rework_issues = await client.fetch_issues_by_states(
                 self.cfg.tracker.project_slug,
                 [self.cfg.linear_states.rework],
+                team_key=self.cfg.tracker.team_key,
             )
         except Exception as e:
             logger.warning(f"Failed to fetch rework issues: {e}")
@@ -534,6 +580,7 @@ class Orchestrator:
             candidates = await client.fetch_candidate_issues(
                 self.cfg.tracker.project_slug,
                 self.cfg.active_linear_states(),
+                team_key=self.cfg.tracker.team_key,
             )
         except Exception as e:
             logger.error(f"Failed to fetch candidates: {e}")
@@ -948,7 +995,10 @@ class Orchestrator:
         self.running.pop(issue.id, None)
         self._tasks.pop(issue.id, None)
 
-        if attempt.status == "succeeded":
+        if attempt.status == "blocked":
+            # Agent signaled it can't handle this issue — move to Blocked
+            asyncio.create_task(self._move_to_blocked(issue, attempt))
+        elif attempt.status == "succeeded":
             if attempt.state_name and attempt.state_name in self.cfg.states:
                 # State machine mode: transition via "complete"
                 asyncio.create_task(self._safe_transition(issue, "complete"))
@@ -1018,6 +1068,7 @@ class Orchestrator:
             candidates = await client.fetch_candidate_issues(
                 self.cfg.tracker.project_slug,
                 self.cfg.active_linear_states(),
+                team_key=self.cfg.tracker.team_key,
             )
         except Exception as e:
             logger.warning(f"Retry candidate fetch failed: {e}")
