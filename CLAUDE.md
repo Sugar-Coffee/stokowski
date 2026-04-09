@@ -269,7 +269,7 @@ Exit code 0 = success. Non-zero = failure (stderr captured for error message).
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[web]"
+pip install -e ".[web,schedule]"
 
 # Validate config without dispatching agents
 stokowski --dry-run

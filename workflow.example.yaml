@@ -68,7 +68,7 @@ workspace:
 # ---------------------------------------------------------------------------
 hooks:
   after_create: |
-    git clone --depth 1 git@github.com:your-org/your-repo.git .
+    gh repo clone your-org/your-repo . -- --depth 1
     npm install
   before_run: |
     git fetch origin main
