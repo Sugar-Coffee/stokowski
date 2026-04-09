@@ -904,18 +904,21 @@ Your personal config lives in `workflow.yaml` and `prompts/` — both gitignored
 
 > **Migrating from WORKFLOW.md?** The old `WORKFLOW.md` format (YAML front matter + Jinja2 body) is still parsed for backward compatibility, but `workflow.yaml` is the recommended format. Move your YAML config to `workflow.yaml`, split your prompt template into files under `prompts/`, and define your pipeline in the `states` section. See the [Configuration reference](#configuration-reference) for the full schema.
 
-**If you installed globally with pipx:**
+**If you installed globally with pipx from a local path:**
 
 ```bash
-pipx upgrade stokowski
+# Pull latest changes, then reinstall
+cd /path/to/stokowski && git pull
+pipx install --force "/path/to/stokowski[web,schedule]"
 ```
+
+> **Note:** `pipx upgrade stokowski` only works for PyPI packages. For local path installs, use `pipx install --force` to reinstall.
 
 **If you installed by cloning the repo (development):**
 
 ```bash
 cd stokowski
-git fetch --tags
-git checkout $(git describe --tags `git rev-list --tags --max-count=1`)
+git pull
 source .venv/bin/activate
 pip install -e ".[web,schedule]"
 ```
