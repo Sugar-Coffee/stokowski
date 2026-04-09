@@ -715,13 +715,12 @@ Each criterion should be independently verifiable — one thing, not compound st
 
 ### Using Claude Code to write your tickets
 
-The best way to write a well-structured ticket is to let Claude Code help you. The `examples/create-ticket.md` file in this repo is a Claude Code slash command that walks you through the process interactively — asking the right questions, researching the codebase, and generating a complete description with acceptance criteria.
+The best way to write a well-structured ticket is to let Claude Code help you. The `examples/create-ticket/` directory is a Claude Code skill that walks you through the process interactively — asking the right questions, researching the codebase, and generating a complete description with acceptance criteria.
 
 **To use it, copy it into your project:**
 
 ```bash
-mkdir -p .claude/commands
-cp /path/to/stokowski/examples/create-ticket.md .claude/commands/create-ticket.md
+cp -r /path/to/stokowski/examples/create-ticket .claude/skills/create-ticket
 ```
 
 Then in Claude Code, run:

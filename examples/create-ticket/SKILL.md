@@ -1,3 +1,9 @@
+---
+name: create-ticket
+description: Guide the user through creating a well-structured Linear ticket with acceptance criteria and implementation context, ready for agent execution.
+argument-hint: [TICKET-ID or blank]
+---
+
 # Create Ticket
 
 Guide the user through creating a well-structured Linear ticket with acceptance criteria and implementation context, ready for agent execution.
