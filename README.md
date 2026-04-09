@@ -163,6 +163,10 @@ Linear issue → isolated git clone → agent (Claude or Codex) → PR + Human R
 - **Persistent terminal UI** — live status bar, single-key controls (`q` quit · `s` status · `r` refresh · `h` help)
 - **Git worktree mode** — use `workspace.mode: worktree` for lightweight isolation from a single repo instead of full clones
 - **Configurable headless prompt** — enable Claude Code skills and slash commands in agents by setting `headless_prompt: null`
+- **Team-based filtering** — use `tracker.team_key` to fetch all issues from a team, regardless of which project they belong to
+- **Triage state** — lightweight pre-check (Haiku, 3 turns) evaluates actionability before burning implementation tokens
+- **Blocked status** — agents signal `<!-- stokowski:blocked -->` to move non-actionable issues to Blocked with a comment
+- **Label-based routing** — route issues to different pipeline entry points based on Linear labels (e.g., `feature` → PM pipeline, `bug` → implementation)
 - **Ready-to-use example workflows** — autonomous implementation pipeline and AI-collaborative feature definition (see `examples/`)
 
 ---
@@ -469,7 +473,10 @@ Open `http://localhost:4200` for the live dashboard.
 tracker:
   kind: linear                          # only "linear" supported
   project_slug: "abc123def456"          # hex slugId from your Linear project URL
+  team_key: "DEV"                       # filter by team key (alternative to project_slug)
   api_key: "lin_api_your_key_here"      # your Linear API key — agents inherit this
+  # At least one of project_slug or team_key is required.
+  # team_key fetches ALL issues from the team regardless of project.
 
 # These map Stokowski's internal lifecycle roles to your Linear state names.
 # You can rename values to match your team's Linear setup (e.g. todo: "Ready"),
@@ -480,6 +487,7 @@ linear_states:
   review: "Human Review"                # agent pauses here at a gate for human review
   gate_approved: "Gate Approved"        # human approved — agent advances to next state
   rework: "Rework"                      # human requested changes — agent re-enters rework target
+  blocked: "Blocked"                    # issues agents can't handle — moved here automatically
   terminal:                             # issues in these states stop any running agent
     - Done
     - Cancelled
@@ -535,6 +543,15 @@ agent:
 
 prompts:
   global_prompt: prompts/global.md     # loaded for every agent turn (optional)
+
+# Route issues to different entry states based on Linear labels.
+# First matching rule wins. Issues with no matching labels use the default
+# entry state (first agent state in the states dict).
+routing:
+  - labels: [feature, enhancement]     # issues with these labels...
+    entry_state: pm-define             # ...start at the PM definition stage
+  - labels: [bug, fix]
+    entry_state: implement             # ...skip triage, go straight to implement
 
 states:                                # the state machine pipeline
   investigate:

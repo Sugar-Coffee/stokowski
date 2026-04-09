@@ -89,18 +89,19 @@ The headless system prompt is configurable via `claude.headless_prompt`:
 
 ### config.py
 Parses `workflow.yaml` (or legacy `.md` with front matter) into typed dataclasses:
-- `TrackerConfig` — Linear endpoint, API key, project slug
+- `TrackerConfig` — Linear endpoint, API key, project slug or team key
 - `PollingConfig` — interval
 - `WorkspaceConfig` — root path (supports `~` and `$VAR` expansion)
 - `HooksConfig` — shell scripts for lifecycle events + timeout (includes `on_stage_enter`)
 - `ClaudeConfig` — command, permission mode, model, timeouts, system prompt
 - `AgentConfig` — concurrency limits (global + per-state)
 - `ServerConfig` — optional web dashboard port
-- `LinearStatesConfig` — maps logical state names (`todo`, `active`, `review`, `gate_approved`, `rework`, `terminal`) to actual Linear state names. Issues in the `todo` state are picked up and automatically moved to `active` on dispatch.
+- `LinearStatesConfig` — maps logical state names (`todo`, `active`, `review`, `gate_approved`, `rework`, `blocked`, `terminal`) to actual Linear state names. Issues in the `todo` state are picked up and automatically moved to `active` on dispatch. Issues moved to `blocked` are released from the orchestrator.
 - `PromptsConfig` — global prompt file reference
 - `StateConfig` — a single state in the state machine: type, prompt path, linear_state key, runner, session mode, transitions, per-state overrides (model, max_turns, timeouts, hooks), gate-specific fields (rework_to, max_rework)
+- `RoutingRule` — maps Linear labels to entry states for label-based routing
 
-`ServiceConfig` provides helper methods: `entry_state` (first agent state), `active_linear_states()`, `gate_linear_states()`, `terminal_linear_states()`.
+`ServiceConfig` provides helper methods: `entry_state` (first agent state), `entry_state_for_issue(labels)` (label-routed entry state), `active_linear_states()`, `gate_linear_states()`, `terminal_linear_states()`.
 
 `merge_state_config(state, root_claude, root_hooks)` merges per-state overrides with root defaults — only specified fields are overridden. Returns `(ClaudeConfig, HooksConfig)`.
 
@@ -114,10 +115,13 @@ Parses `workflow.yaml` (or legacy `.md` with front matter) into typed dataclasse
 3. `LINEAR_API_KEY` env var as fallback
 
 ### linear.py
-Async GraphQL client over httpx. Three queries:
-- `fetch_candidate_issues()` — paginated, fetches all issues in active states with full detail (labels, blockers, branch name)
-- `fetch_issue_states_by_ids()` — lightweight reconciliation query, returns `{id: state_name}`
-- `fetch_issues_by_states()` — used on startup cleanup, returns minimal Issue objects
+Async GraphQL client over httpx. Supports two filtering modes: **project-scoped** (`project_slug`) and **team-scoped** (`team_key`). Each mode has its own GraphQL query set — team queries use `team: { key: { eq: $teamKey } }` filter.
+
+Key methods:
+- `fetch_candidate_issues(project_slug, states, team_key)` — paginated, fetches all issues in active states with full detail (labels, blockers, branch name). Uses team query when `team_key` is set.
+- `fetch_issue_states_by_ids()` — lightweight reconciliation query, returns `{id: state_name}`. Not scoped (uses issue IDs directly).
+- `fetch_issues_by_states(project_slug, states, team_key)` — used on startup cleanup and gate detection. Uses team query when `team_key` is set.
+- `update_issue_state(issue_id, state_name)` — moves an issue to a new state. Used for active, blocked, and terminal transitions.
 
 Note: the reconciliation query uses `issues(filter: { id: { in: $ids } })` — not `nodes(ids:)` which doesn't exist in Linear's API.
 
@@ -144,7 +148,12 @@ while running:
 
 **Reconciliation:** on each tick, fetches current states for all running issue IDs. If an issue moved to terminal state → cancel worker + clean workspace. If moved out of active states → cancel worker, release claim.
 
+**Blocked handling:** When a runner detects `<!-- stokowski:blocked -->` in the agent's result text, `attempt.status` is set to `"blocked"`. On worker exit, `_move_to_blocked()` posts a comment with the reason, moves the issue to the Blocked Linear state, cleans up the workspace, and releases all tracking.
+
+**Label-based routing:** `_resolve_current_state()` calls `cfg.entry_state_for_issue(labels)` for new issues (no tracking comments). If routing rules match the issue's labels, the issue enters the matched state instead of the default entry state.
+
 **Retry logic:**
+- `blocked` → `_move_to_blocked()` — no retry
 - `succeeded` → schedule continuation retry in 1s (checks if more work needed)
 - `failed/timed_out/stalled` → exponential backoff: `min(10000 * 2^(attempt-1), max_retry_backoff_ms)`
 - `canceled` → release claim immediately

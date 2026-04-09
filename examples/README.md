@@ -7,8 +7,10 @@ These are ready-to-use workflow templates. Copy one to your project and customiz
 Fully autonomous implementation pipeline — no human gates:
 
 ```
-implement → review & push → fix PR reviews → merge
+triage → implement → review & push → fix PR reviews → merge
 ```
+
+Includes a **triage** step (Haiku, 3 turns) that evaluates actionability before implementation. Non-actionable issues are moved to Blocked automatically.
 
 Best for: bugs, improvements, tech debt, well-scoped tasks.
 
@@ -31,13 +33,16 @@ Best for: new features that need definition before implementation.
 
 2. Edit `workflow.yaml`:
    - Set `workspace.repo_path` to your project path
+   - Set `tracker.team_key` (e.g., `"DEV"`) or `tracker.project_slug`
    - Adjust `linear_states` to match your Linear workflow
    - Customize `claude.append_system_prompt` for your project
    - Adjust concurrency in `agent.max_concurrent_agents`
+   - Optionally add `routing` rules to route issues by label
 
 3. Set env vars:
    ```bash
    export LINEAR_API_KEY=lin_api_...
+   # Either team_key or project_slug:
    export LINEAR_PROJECT_SLUG=abc123def456
    ```
 
