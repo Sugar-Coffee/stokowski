@@ -770,14 +770,29 @@ def _run_init():
             else:
                 console.print(f"  [green]{wf_path.name}: valid[/green]")
 
-            # Check for shared fields that should be in root config
+            # Auto-migrate shared fields from workflow to root config
             if root_config.exists():
                 wf_raw = _yaml.safe_load(wf_path.read_text()) or {}
                 duplicated = [k for k in _SHARED_KEYS if k in wf_raw and wf_raw[k]]
                 if duplicated:
+                    # Read root config and add missing shared sections
+                    root_raw = _yaml.safe_load(root_config.read_text()) or {}
+                    additions = ""
+                    for key in duplicated:
+                        if key not in root_raw or not root_raw[key]:
+                            # Move to root config
+                            additions += f"\n# Migrated from {wf_path.name}\n"
+                            additions += _yaml.dump({key: wf_raw[key]}, default_flow_style=False)
+                    if additions:
+                        root_config.write_text(root_config.read_text().rstrip() + "\n" + additions)
+
+                    # Remove shared sections from workflow file
+                    wf_content = wf_path.read_text()
+                    cleaned_raw = {k: v for k, v in wf_raw.items() if k not in _SHARED_KEYS}
+                    wf_path.write_text(_yaml.dump(cleaned_raw, default_flow_style=False, sort_keys=False))
                     console.print(
-                        f"  [dim]{wf_path.name}: consider moving "
-                        f"{', '.join(duplicated)} to stokowski.yaml (shared config)[/dim]"
+                        f"  [green]{wf_path.name}: migrated {', '.join(duplicated)} "
+                        f"to stokowski.yaml[/green]"
                     )
         except Exception as e:
             console.print(f"  [red]{wf_path.name}: {e}[/red]")
