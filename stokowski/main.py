@@ -26,7 +26,7 @@ def _load_dotenv():
             continue
         if "=" in line:
             key, _, value = line.partition("=")
-            os.environ[key.strip()] = value.strip()
+            os.environ.setdefault(key.strip(), value.strip())
 
 
 from rich.columns import Columns
