@@ -618,18 +618,37 @@ class Orchestrator:
             if not self._is_eligible(issue):
                 continue
 
-            # Per-state concurrency check
-            state_key = issue.state.strip().lower()
-            state_limit = self.cfg.agent.max_concurrent_agents_by_state.get(state_key)
+            # Per-state concurrency check (global)
+            issue_machine_state = self._issue_current_state.get(issue.id, "")
+            state_key_for_limit = issue_machine_state or issue.state.strip().lower()
+            state_limit = self.cfg.agent.max_concurrent_agents_by_state.get(state_key_for_limit)
             if state_limit is not None:
                 state_count = sum(
                     1
                     for r in self.running.values()
-                    if self._last_issues.get(r.issue_id, Issue(id="", identifier="", title="")).state.strip().lower()
-                    == state_key
+                    if (self._issue_current_state.get(r.issue_id, "") or
+                        self._last_issues.get(r.issue_id, Issue(id="", identifier="", title="")).state.strip().lower())
+                    == state_key_for_limit
                 )
                 if state_count >= state_limit:
                     continue
+
+            # Per-project concurrency check
+            project_limits = self.cfg.agent.max_concurrent_by_project
+            if project_limits and issue.project_slug:
+                proj_limit = project_limits.get(state_key_for_limit)
+                if proj_limit is not None:
+                    proj_count = sum(
+                        1
+                        for r in self.running.values()
+                        if (self._last_issues.get(r.issue_id, Issue(id="", identifier="", title="")).project_slug
+                            == issue.project_slug)
+                        and (self._issue_current_state.get(r.issue_id, "") or
+                             self._last_issues.get(r.issue_id, Issue(id="", identifier="", title="")).state.strip().lower())
+                        == state_key_for_limit
+                    )
+                    if proj_count >= proj_limit:
+                        continue
 
             self._dispatch(issue)
             available_slots -= 1

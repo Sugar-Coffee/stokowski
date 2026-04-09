@@ -76,6 +76,7 @@ class AgentConfig:
     max_concurrent_agents: int = 5
     max_retry_backoff_ms: int = 300_000
     max_concurrent_agents_by_state: dict[str, int] = field(default_factory=dict)
+    max_concurrent_by_project: dict[str, int] = field(default_factory=dict)  # per-project per-state limits
 
 
 @dataclass
@@ -401,6 +402,7 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
         max_concurrent_agents=_coerce_int(a.get("max_concurrent_agents"), 5),
         max_retry_backoff_ms=_coerce_int(a.get("max_retry_backoff_ms"), 300_000),
         max_concurrent_agents_by_state=a.get("max_concurrent_agents_by_state") or {},
+        max_concurrent_by_project=a.get("max_concurrent_by_project") or {},
     )
 
     # Parse server

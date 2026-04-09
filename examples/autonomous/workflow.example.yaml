@@ -95,6 +95,9 @@ agent:
     triage: 4                           # triage is lightweight, allow many
     review-push: 1                      # serialize pushes to avoid conflicts
     fix-reviews: 1                      # serialize merges
+  max_concurrent_by_project:            # per-project limits (prevents merge conflicts)
+    implement: 1                        # 1 implement per project (3 projects = 3 parallel)
+    review-push: 1                      # 1 push per project
 
 # ---------------------------------------------------------------------------
 # Prompts

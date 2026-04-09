@@ -27,6 +27,7 @@ class Issue:
     blocked_by: list[BlockerRef] = field(default_factory=list)
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    project_slug: str | None = None  # project slugId for per-project concurrency
 
 
 @dataclass

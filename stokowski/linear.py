@@ -42,6 +42,7 @@ query($projectSlug: String!, $states: [String!]!, $after: String) {
       updatedAt
       state { name }
       labels { nodes { name } }
+      project { slugId }
       inverseRelations {
         nodes {
           type
@@ -111,6 +112,7 @@ query($teamKey: String!, $states: [String!]!, $after: String) {
       updatedAt
       state { name }
       labels { nodes { name } }
+      project { slugId }
       inverseRelations {
         nodes {
           type
@@ -249,6 +251,8 @@ def _normalize_issue(node: dict) -> Issue:
         except (ValueError, TypeError):
             priority = None
 
+    project_slug = (node.get("project") or {}).get("slugId")
+
     return Issue(
         id=node["id"],
         identifier=node["identifier"],
@@ -262,6 +266,7 @@ def _normalize_issue(node: dict) -> Issue:
         blocked_by=blockers,
         created_at=_parse_datetime(node.get("createdAt")),
         updated_at=_parse_datetime(node.get("updatedAt")),
+        project_slug=project_slug,
     )
 
 

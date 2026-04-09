@@ -167,6 +167,7 @@ Linear issue → isolated git clone → agent (Claude or Codex) → PR + Human R
 - **Triage state** — lightweight pre-check (Haiku, 3 turns) evaluates actionability before burning implementation tokens
 - **Blocked status** — agents signal `<!-- stokowski:blocked -->` to move non-actionable issues to Blocked with a comment
 - **Label-based routing** — route issues to different pipeline entry points based on Linear labels (e.g., `feature` → PM pipeline, `bug` → implementation)
+- **Per-project concurrency** — parallelize across projects while limiting agents per project (e.g., 3 implements globally but max 1 per project to avoid merge conflicts)
 - **Ready-to-use example workflows** — autonomous implementation pipeline and AI-collaborative feature definition (see `examples/`)
 
 ---
@@ -534,12 +535,15 @@ claude:
     Always write tests for new code.
 
 agent:
-  max_concurrent_agents: 3             # global concurrency cap (default: 5)
+  max_concurrent_agents: 6             # global concurrency cap (default: 5)
   max_retry_backoff_ms: 300000         # max retry delay (default: 5m)
-  max_concurrent_agents_by_state:      # optional per-state concurrency limits
+  max_concurrent_agents_by_state:      # optional per-state global concurrency limits
     investigate: 2
-    implement: 2
+    implement: 3
     code-review: 1
+  max_concurrent_by_project:           # per-project per-state limits (prevents merge conflicts)
+    implement: 1                       # only 1 implement agent per project at a time
+    review-push: 1                     # only 1 push per project
 
 prompts:
   global_prompt: prompts/global.md     # loaded for every agent turn (optional)

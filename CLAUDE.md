@@ -94,7 +94,7 @@ Parses `workflow.yaml` (or legacy `.md` with front matter) into typed dataclasse
 - `WorkspaceConfig` — root path (supports `~` and `$VAR` expansion)
 - `HooksConfig` — shell scripts for lifecycle events + timeout (includes `on_stage_enter`)
 - `ClaudeConfig` — command, permission mode, model, timeouts, system prompt
-- `AgentConfig` — concurrency limits (global + per-state)
+- `AgentConfig` — concurrency limits (global, per-state, and per-project per-state)
 - `ServerConfig` — optional web dashboard port
 - `LinearStatesConfig` — maps logical state names (`todo`, `active`, `review`, `gate_approved`, `rework`, `blocked`, `terminal`) to actual Linear state names. Issues in the `todo` state are picked up and automatically moved to `active` on dispatch. Issues moved to `blocked` are released from the orchestrator.
 - `PromptsConfig` — global prompt file reference
@@ -143,7 +143,7 @@ while running:
 **Dispatch logic:**
 1. Issues sorted by priority (lower = higher), then created_at, then identifier
 2. `_is_eligible()` checks: valid fields, active state, not already running/claimed, blockers resolved
-3. Per-state concurrency limits checked against `max_concurrent_agents_by_state`
+3. Per-state concurrency limits checked against `max_concurrent_agents_by_state` (global) and `max_concurrent_by_project` (per-project, uses `issue.project_slug`)
 4. `_dispatch()` creates a `RunAttempt`, adds to `self.running`, spawns `_run_worker` task
 
 **Reconciliation:** on each tick, fetches current states for all running issue IDs. If an issue moved to terminal state → cancel worker + clean workspace. If moved out of active states → cancel worker, release claim.
