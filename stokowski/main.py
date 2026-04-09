@@ -649,9 +649,33 @@ def _run_init():
             )
             console.print(f"[green]Created {implement_prompt}[/green]")
 
-    # Create .env with API key
+    # Create or update .env with API key
     env_file = out_dir / ".env"
-    if not env_file.exists():
+    if env_file.exists():
+        existing_env = env_file.read_text()
+        has_key = False
+        for line in existing_env.splitlines():
+            if line.strip().startswith(env_key_name + "="):
+                val = line.split("=", 1)[1].strip()
+                if val:
+                    has_key = True
+                break
+        if not has_key:
+            if not env_key_value:
+                env_key_value = input(f"{env_key_name} not set in {env_file}. Enter value (or press Enter to skip): ").strip()
+            if env_key_value:
+                updated = False
+                lines = existing_env.splitlines(keepends=True)
+                for i, line in enumerate(lines):
+                    if line.strip().startswith(env_key_name + "="):
+                        lines[i] = f"{env_key_name}={env_key_value}\n"
+                        updated = True
+                        break
+                if not updated:
+                    lines.append(f"{env_key_name}={env_key_value}\n")
+                env_file.write_text("".join(lines))
+                console.print(f"[green]Updated {env_file} with {env_key_name}[/green]")
+    else:
         env_content = f"# Stokowski environment variables\n{env_key_name}={env_key_value}\n"
         env_file.write_text(env_content)
         console.print(f"[green]Created {env_file}[/green]")
