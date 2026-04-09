@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .orchestrator import Orchestrator
@@ -16,12 +16,18 @@ logger = logging.getLogger("stokowski.manager")
 class Manager:
     """Manages multiple Orchestrator instances, one per workflow."""
 
-    def __init__(self, workflow_paths: dict[str, Path]):
+    def __init__(
+        self,
+        workflow_paths: dict[str, Path],
+        shared_raw: dict[str, Any] | None = None,
+    ):
         from .orchestrator import Orchestrator
 
+        self.workflow_paths = workflow_paths
+        self.shared_raw = shared_raw or {}
         self.orchestrators: dict[str, Orchestrator] = {}
         for name, path in workflow_paths.items():
-            self.orchestrators[name] = Orchestrator(path)
+            self.orchestrators[name] = Orchestrator(path, shared_raw=self.shared_raw)
 
     async def start(self):
         """Start all orchestrators concurrently."""

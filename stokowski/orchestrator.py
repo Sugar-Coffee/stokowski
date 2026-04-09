@@ -52,8 +52,9 @@ def _is_rate_limit_error(error: str) -> bool:
 
 
 class Orchestrator:
-    def __init__(self, workflow_path: str | Path):
+    def __init__(self, workflow_path: str | Path, shared_raw: dict | None = None):
         self.workflow_path = Path(workflow_path)
+        self.shared_raw = shared_raw
         self.workflow: WorkflowDefinition | None = None
 
         # Runtime state
@@ -101,7 +102,7 @@ class Orchestrator:
     def _load_workflow(self) -> list[str]:
         """Load/reload workflow file. Returns validation errors."""
         try:
-            self.workflow = parse_workflow_file(self.workflow_path)
+            self.workflow = parse_workflow_file(self.workflow_path, shared_raw=self.shared_raw)
         except Exception as e:
             return [f"Workflow load error: {e}"]
         return validate_config(self.cfg)

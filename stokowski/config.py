@@ -401,10 +401,26 @@ def is_root_config(path: str | Path) -> bool:
         return False
 
 
-def parse_root_config(path: str | Path) -> dict[str, Path]:
+@dataclass
+class RootConfig:
+    """Parsed root config with shared settings and workflow paths."""
+    workflow_paths: dict[str, Path]
+    shared_raw: dict[str, Any]  # shared config sections to merge into workflows
+
+
+# Sections that live in the root config (shared across workflows)
+_SHARED_SECTIONS = {
+    "tracker", "linear_states", "github_states", "workspace", "hooks",
+    "claude", "agent", "server", "webhook",
+}
+
+
+def parse_root_config(path: str | Path) -> RootConfig:
     """Parse a root config with a 'workflows:' key.
 
-    Returns mapping of workflow_name -> resolved path to workflow YAML.
+    Returns RootConfig with workflow paths and shared config sections.
+    Shared sections (tracker, workspace, hooks, etc.) are extracted from
+    the root YAML and merged into each workflow when parsed.
     """
     path = Path(path)
     content = path.read_text()
@@ -413,7 +429,7 @@ def parse_root_config(path: str | Path) -> dict[str, Path]:
         raise ValueError("Not a root config (missing 'workflows:' key)")
 
     base_dir = path.parent
-    result: dict[str, Path] = {}
+    workflow_paths: dict[str, Path] = {}
     for name, entry in raw["workflows"].items():
         if isinstance(entry, str):
             wf_path = entry
@@ -424,12 +440,23 @@ def parse_root_config(path: str | Path) -> dict[str, Path]:
         resolved = (base_dir / wf_path).resolve()
         if not resolved.exists():
             raise FileNotFoundError(f"Workflow '{name}' not found: {resolved}")
-        result[name] = resolved
-    return result
+        workflow_paths[name] = resolved
+
+    # Extract shared sections
+    shared_raw = {k: v for k, v in raw.items() if k in _SHARED_SECTIONS and v}
+
+    return RootConfig(workflow_paths=workflow_paths, shared_raw=shared_raw)
 
 
-def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
-    """Parse a workflow file (.yaml/.yml or .md with front matter) into config."""
+def parse_workflow_file(
+    path: str | Path,
+    shared_raw: dict[str, Any] | None = None,
+) -> WorkflowDefinition:
+    """Parse a workflow file (.yaml/.yml or .md with front matter) into config.
+
+    If shared_raw is provided (from a root config), shared sections are used
+    as defaults — the workflow file can override any shared section.
+    """
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Workflow file not found: {path}")
@@ -449,6 +476,19 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
     else:
         # Try parsing as pure YAML
         config_raw = yaml.safe_load(content) or {}
+
+    # Merge shared config as defaults (workflow overrides shared)
+    if shared_raw:
+        merged = dict(shared_raw)
+        for k, v in config_raw.items():
+            if isinstance(v, dict) and isinstance(merged.get(k), dict):
+                # Deep merge one level: workflow keys override shared keys
+                merged_section = dict(merged[k])
+                merged_section.update(v)
+                merged[k] = merged_section
+            else:
+                merged[k] = v
+        config_raw = merged
 
     if not isinstance(config_raw, dict):
         raise ValueError("Workflow file must contain a YAML mapping")

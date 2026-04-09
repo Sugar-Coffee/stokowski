@@ -294,8 +294,8 @@ async def run_manager(root_config_path: str, port: int | None = None):
     from .config import parse_root_config
     from .manager import Manager
 
-    workflow_paths = parse_root_config(root_config_path)
-    mgr = Manager(workflow_paths)
+    root_cfg = parse_root_config(root_config_path)
+    mgr = Manager(root_cfg.workflow_paths, shared_raw=root_cfg.shared_raw)
     loop = asyncio.get_running_loop()
 
     # Keyboard handler — uses manager
@@ -682,9 +682,9 @@ def _run_init():
         console.print(f"  [red]Error: {e}[/red]")
 
     # Create or update root config (stokowski.yaml)
+    # Create or update root config (stokowski.yaml) with shared settings
     root_config = out_dir / "stokowski.yaml"
     if not root_config.exists():
-        # Scan for all workflow YAML files in .stokowski/
         workflow_files = sorted(
             p for p in out_dir.glob("workflow*.yaml")
             if p.name != "stokowski.yaml"
@@ -698,12 +698,43 @@ def _run_init():
             workflows_block += f"  {name}:\n    path: ./{wf_file.name}\n"
 
         root_content = (
-            f"# Stokowski root config — manages multiple workflows\n"
-            f"# Run: stokowski {root_config}\n\n"
+            f"# Stokowski root config — shared settings + workflow list\n"
+            f"# Run: stokowski {root_config}\n"
+            f"#\n"
+            f"# Shared settings below apply to ALL workflows.\n"
+            f"# Individual workflows can override any section.\n\n"
+            f"# ── Shared config (all workflows inherit these) ──\n\n"
+            f"tracker:\n"
+            f"  kind: {tracker_kind}\n"
+            f"{tracker_fields}\n\n"
+            f"{states_section}\n\n"
+            f"workspace:\n"
+            f"  mode: worktree\n"
+            f"  repo_path: {repo_path}\n"
+            f"  root: {repo_path}/.worktrees\n\n"
+            f"hooks:\n"
+            f"  after_create: |\n"
+            f"    # Install dependencies after creating a new worktree\n"
+            f"    # npm install || pnpm install --frozen-lockfile || true\n"
+            f"  before_run: |\n"
+            f"    git fetch origin main 2>/dev/null\n"
+            f"    git rebase origin/main 2>/dev/null || git rebase --abort 2>/dev/null || true\n"
+            f"  timeout_ms: 120000\n\n"
+            f"claude:\n"
+            f"  permission_mode: auto\n"
+            f"  max_turns: 20\n"
+            f"  turn_timeout_ms: 3600000\n"
+            f"  stall_timeout_ms: 300000\n\n"
+            f"agent:\n"
+            f"  max_concurrent_agents: 3\n"
+            f"  max_retry_backoff_ms: 300000\n\n"
+            f"server:\n"
+            f"  port: 4200\n\n"
+            f"# ── Workflows ──\n\n"
             f"{workflows_block}"
         )
         root_config.write_text(root_content)
-        console.print(f"[green]Created {root_config} ({len(workflow_files)} workflow(s) found)[/green]")
+        console.print(f"[green]Created {root_config} ({len(workflow_files)} workflow(s))[/green]")
     else:
         existing_root = root_config.read_text()
         if out_file.name not in existing_root:
