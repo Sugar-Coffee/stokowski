@@ -769,3 +769,87 @@ def create_app(orchestrator: Orchestrator) -> FastAPI:
         return JSONResponse({"ok": True, "action": "ignored"})
 
     return app
+
+
+def create_app_multi(manager) -> FastAPI:
+    """Create FastAPI app for multi-workflow mode."""
+    app = FastAPI(title="Stokowski", version="0.1.0")
+
+    @app.get("/", response_class=HTMLResponse)
+    async def dashboard():
+        return HTMLResponse(DASHBOARD_HTML)
+
+    @app.get("/api/v1/state")
+    async def api_state():
+        return JSONResponse(manager.get_aggregate_snapshot())
+
+    @app.get("/api/v1/workflows")
+    async def api_workflows():
+        return JSONResponse({"workflows": list(manager.orchestrators.keys())})
+
+    @app.get("/api/v1/workflows/{name}/state")
+    async def api_workflow_state(name: str):
+        orch = manager.orchestrators.get(name)
+        if not orch:
+            return JSONResponse({"error": "workflow not found"}, status_code=404)
+        return JSONResponse(orch.get_state_snapshot())
+
+    @app.post("/api/v1/refresh")
+    async def api_refresh():
+        for orch in manager.orchestrators.values():
+            asyncio.create_task(orch._tick())
+        return JSONResponse({"ok": True})
+
+    @app.post("/api/v1/workflows/{name}/refresh")
+    async def api_workflow_refresh(name: str):
+        orch = manager.orchestrators.get(name)
+        if not orch:
+            return JSONResponse({"error": "workflow not found"}, status_code=404)
+        asyncio.create_task(orch._tick())
+        return JSONResponse({"ok": True})
+
+    @app.post("/api/v1/webhook/linear")
+    async def webhook_linear(request: Request):
+        body = await request.body()
+        try:
+            payload = await request.json()
+        except Exception:
+            return JSONResponse({"error": "invalid json"}, status_code=400)
+
+        # Route by project slug from payload
+        project_slug = (
+            payload.get("data", {}).get("project", {}).get("slugId", "")
+        )
+        target = manager.find_orchestrator_for_webhook(project_slug=project_slug)
+        if target:
+            asyncio.create_task(target.webhook_tick())
+        else:
+            # Broadcast to all
+            for orch in manager.orchestrators.values():
+                asyncio.create_task(orch.webhook_tick())
+        return JSONResponse({"ok": True, "action": "tick_scheduled"})
+
+    @app.post("/api/v1/webhook/github")
+    async def webhook_github(request: Request):
+        body = await request.body()
+        try:
+            payload = await request.json()
+        except Exception:
+            return JSONResponse({"error": "invalid json"}, status_code=400)
+
+        event = request.headers.get("x-github-event", "")
+        if event == "ping":
+            return JSONResponse({"ok": True, "action": "pong"})
+
+        # Route by repo full name
+        repo_full = payload.get("repository", {}).get("full_name", "")
+        target = manager.find_orchestrator_for_webhook(github_repo=repo_full)
+
+        if target:
+            asyncio.create_task(target.webhook_tick())
+        else:
+            for orch in manager.orchestrators.values():
+                asyncio.create_task(orch.webhook_tick())
+        return JSONResponse({"ok": True, "action": "tick_scheduled"})
+
+    return app

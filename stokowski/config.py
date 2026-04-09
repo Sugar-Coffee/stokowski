@@ -389,6 +389,45 @@ def merge_state_config(
     return claude, hooks
 
 
+def is_root_config(path: str | Path) -> bool:
+    """Check if a YAML file is a root config (has 'workflows:' key)."""
+    path = Path(path)
+    if not path.exists():
+        return False
+    try:
+        raw = yaml.safe_load(path.read_text())
+        return isinstance(raw, dict) and "workflows" in raw
+    except Exception:
+        return False
+
+
+def parse_root_config(path: str | Path) -> dict[str, Path]:
+    """Parse a root config with a 'workflows:' key.
+
+    Returns mapping of workflow_name -> resolved path to workflow YAML.
+    """
+    path = Path(path)
+    content = path.read_text()
+    raw = yaml.safe_load(content)
+    if not isinstance(raw, dict) or "workflows" not in raw:
+        raise ValueError("Not a root config (missing 'workflows:' key)")
+
+    base_dir = path.parent
+    result: dict[str, Path] = {}
+    for name, entry in raw["workflows"].items():
+        if isinstance(entry, str):
+            wf_path = entry
+        elif isinstance(entry, dict):
+            wf_path = str(entry.get("path", ""))
+        else:
+            raise ValueError(f"Invalid workflow entry '{name}'")
+        resolved = (base_dir / wf_path).resolve()
+        if not resolved.exists():
+            raise FileNotFoundError(f"Workflow '{name}' not found: {resolved}")
+        result[name] = resolved
+    return result
+
+
 def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
     """Parse a workflow file (.yaml/.yml or .md with front matter) into config."""
     path = Path(path)
