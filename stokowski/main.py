@@ -402,7 +402,8 @@ async def dry_run(workflow_path: str):
     if cfg.states:
         console.print(f"\n  [bold]State machine[/bold] ({len(cfg.states)} states):")
         console.print(f"    Entry state: {cfg.entry_state}")
-        console.print(f"    Linear states: active={cfg.linear_states.active}, review={cfg.linear_states.review}")
+        sc = cfg._states_cfg
+        console.print(f"    States: active={sc.active}, review={sc.review}")
         for name, state in cfg.states.items():
             transitions = ", ".join(f"{k}->{v}" for k, v in state.transitions.items())
             console.print(f"    {name} ({state.type}) -> {transitions or 'terminal'}")
@@ -411,12 +412,19 @@ async def dry_run(workflow_path: str):
 
     console.print()
 
-    from .linear import LinearClient
-
-    client = LinearClient(
-        endpoint=cfg.tracker.endpoint,
-        api_key=cfg.resolved_api_key(),
-    )
+    if cfg.tracker.kind == "github":
+        from .github_issues import GitHubIssuesClient
+        client = GitHubIssuesClient(
+            owner=cfg.tracker.github_owner,
+            repo=cfg.tracker.github_repo,
+            token=cfg.resolved_api_key(),
+        )
+    else:
+        from .linear import LinearClient
+        client = LinearClient(
+            endpoint=cfg.tracker.endpoint,
+            api_key=cfg.resolved_api_key(),
+        )
 
     try:
         candidates = await client.fetch_candidate_issues(

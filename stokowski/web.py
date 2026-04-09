@@ -703,4 +703,43 @@ def create_app(orchestrator: Orchestrator) -> FastAPI:
         asyncio.create_task(orchestrator.webhook_tick())
         return JSONResponse({"ok": True, "action": "tick_scheduled"})
 
+    @app.post("/api/v1/webhook/github")
+    async def webhook_github(request: Request):
+        body = await request.body()
+
+        # Signature verification (X-Hub-Signature-256)
+        secret = orchestrator.cfg.webhook.secret
+        if secret:
+            signature = request.headers.get("x-hub-signature-256", "")
+            expected = "sha256=" + hmac.new(
+                secret.encode(), body, hashlib.sha256
+            ).hexdigest()
+            if not hmac.compare_digest(signature, expected):
+                logger.warning("GitHub webhook signature mismatch")
+                return JSONResponse(
+                    {"error": "invalid signature"}, status_code=401
+                )
+
+        event = request.headers.get("x-github-event", "")
+        if event not in ("issues", "ping"):
+            return JSONResponse({"ok": True, "action": "ignored"})
+
+        if event == "ping":
+            return JSONResponse({"ok": True, "action": "pong"})
+
+        try:
+            payload = await request.json()
+        except Exception:
+            return JSONResponse({"error": "invalid json"}, status_code=400)
+
+        action = payload.get("action", "")
+        # React to issue state-relevant actions
+        if action not in ("opened", "labeled", "unlabeled", "closed", "reopened"):
+            return JSONResponse({"ok": True, "action": "ignored"})
+
+        number = payload.get("issue", {}).get("number", "?")
+        logger.info(f"GitHub webhook: {action} #{number}")
+        asyncio.create_task(orchestrator.webhook_tick())
+        return JSONResponse({"ok": True, "action": "tick_scheduled"})
+
     return app
