@@ -374,6 +374,54 @@ GitHub Issues uses labels (prefixed with `stokowski:`) to represent workflow sta
 
 ---
 
+### Prerequisites per runner
+
+Agents need tools beyond the base CLI. What's required depends on your runner:
+
+<details>
+<summary><strong>Claude Code</strong></summary>
+
+**Required:**
+- `gh` CLI (authenticated) — agents use it for `gh pr create`, `gh issue comment`, branch management
+- Git — workspace operations (clone, worktree, rebase, push)
+
+**Recommended MCP servers:**
+- **Linear MCP** — lets agents read/update Linear issues directly (useful for posting comments, updating status)
+- **GitHub MCP** — alternative to `gh` CLI for PR operations
+- **Figma MCP** — if agents need to reference designs
+- **Playwright/Browser MCP** — if agents need to verify UI changes
+
+**Permission mode:**
+- `auto` — agents can use all tools without approval (recommended for autonomous workflows)
+- `allowedTools` — restrict to a specific tool list (safer for sensitive repos)
+
+</details>
+
+<details>
+<summary><strong>Codex</strong></summary>
+
+**Required:**
+- `gh` CLI (authenticated) — same as Claude Code
+- Git — workspace operations
+
+**Notes:**
+- Codex runs in a sandboxed environment by default
+- Network access is disabled in sandbox mode — configure `--full-auto` if agents need to fetch dependencies
+- Codex uses its own tool system; MCP servers are not supported
+
+</details>
+
+<details>
+<summary><strong>All runners</strong></summary>
+
+- **Package managers** (`npm`, `pnpm`, `pip`, etc.) — agents install dependencies via `after_create` hooks
+- **Build tools** (`tsc`, `cargo`, `go`, etc.) — agents run builds and tests
+- **Linters/formatters** — agents fix lint errors if `after_run` hooks enforce them
+
+</details>
+
+---
+
 ### 4. Set up workflow states
 
 Stokowski uses a fixed set of lifecycle roles — `todo`, `active`, `review`, `gate_approved`, `rework`, and `terminal` — that drive the dispatch and gate protocol. Each role maps to a Linear state name via the `linear_states` section in your config.
