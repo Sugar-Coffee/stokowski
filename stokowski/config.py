@@ -170,6 +170,8 @@ class ServiceConfig:
             env["LINEAR_API_KEY"] = api_key
         if self.tracker.project_slug:
             env["LINEAR_PROJECT_SLUG"] = self.tracker.project_slug
+        if self.tracker.team_key:
+            env["LINEAR_TEAM_KEY"] = self.tracker.team_key
         if self.tracker.endpoint:
             env["LINEAR_ENDPOINT"] = self.tracker.endpoint
         return env
