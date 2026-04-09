@@ -649,7 +649,10 @@ def _run_init():
             )
             console.print(f"[green]Created {implement_prompt}[/green]")
 
-    # Create or update .env with API key
+    # ── Repair pass: ensure all files exist and have correct values ──
+    console.print("\n[bold]Checking project files...[/bold]")
+
+    # .env — ensure key exists and has a value
     env_file = out_dir / ".env"
     if env_file.exists():
         existing_env = env_file.read_text()
@@ -662,7 +665,9 @@ def _run_init():
                 break
         if not has_key:
             if not env_key_value:
-                env_key_value = input(f"{env_key_name} not set in {env_file}. Enter value (or press Enter to skip): ").strip()
+                env_key_value = input(
+                    f"  {env_key_name} not set in {env_file}. Enter value (or Enter to skip): "
+                ).strip()
             if env_key_value:
                 updated = False
                 lines = existing_env.splitlines(keepends=True)
@@ -674,41 +679,89 @@ def _run_init():
                 if not updated:
                     lines.append(f"{env_key_name}={env_key_value}\n")
                 env_file.write_text("".join(lines))
-                console.print(f"[green]Updated {env_file} with {env_key_name}[/green]")
+                console.print(f"  [green]Updated {env_file} with {env_key_name}[/green]")
+            else:
+                console.print(f"  [yellow]{env_key_name} empty in {env_file}[/yellow]")
+        else:
+            console.print(f"  [green]{env_file}: {env_key_name} set[/green]")
     else:
         env_content = f"# Stokowski environment variables\n{env_key_name}={env_key_value}\n"
         env_file.write_text(env_content)
-        console.print(f"[green]Created {env_file}[/green]")
+        console.print(f"  [green]Created {env_file}[/green]")
 
-    # Add .stokowski entries to .gitignore
+    # .gitignore — ensure required entries exist
     gitignore = Path(repo_path) / ".gitignore"
-    stokowski_entries = [
-        "\n# Stokowski",
-        ".stokowski/.env",
-        ".stokowski/.stokowski_state_*.json",
-        ".worktrees/",
-    ]
-    entries_text = "\n".join(stokowski_entries) + "\n"
+    required_ignores = [".stokowski/.env", ".stokowski/.stokowski_state_*.json", ".worktrees/"]
     if gitignore.exists():
-        existing = gitignore.read_text()
-        if ".stokowski/.env" not in existing:
-            gitignore.write_text(existing.rstrip() + "\n" + entries_text)
-            console.print(f"[green]Updated {gitignore}[/green]")
+        existing_gi = gitignore.read_text()
+        missing = [e for e in required_ignores if e not in existing_gi]
+        if missing:
+            gitignore.write_text(
+                existing_gi.rstrip() + "\n\n# Stokowski\n" + "\n".join(missing) + "\n"
+            )
+            console.print(f"  [green]Updated .gitignore (+{len(missing)} entries)[/green]")
+        else:
+            console.print(f"  [green].gitignore: all entries present[/green]")
     else:
-        gitignore.write_text(entries_text)
-        console.print(f"[green]Created {gitignore}[/green]")
+        gitignore.write_text("# Stokowski\n" + "\n".join(required_ignores) + "\n")
+        console.print(f"  [green]Created .gitignore[/green]")
 
-    # Load the .env we just created so validation can find the API key
+    # stokowski.yaml — ensure shared sections exist
+    import yaml as _yaml
+    root_config = out_dir / "stokowski.yaml"
+    if root_config.exists():
+        root_raw = _yaml.safe_load(root_config.read_text()) or {}
+        missing_sections = []
+        defaults = {
+            "tracker": {"kind": tracker_kind},
+            "workspace": {"mode": "worktree", "repo_path": repo_path, "root": f"{repo_path}/.worktrees"},
+            "claude": {"permission_mode": "auto", "max_turns": 20},
+            "agent": {"max_concurrent_agents": 3},
+            "server": {"port": 4200},
+        }
+        for section, default_val in defaults.items():
+            if section not in root_raw or not root_raw[section]:
+                missing_sections.append(section)
+                root_raw[section] = default_val
+        if missing_sections:
+            # Re-write with added sections (append to preserve comments)
+            additions = "\n# Added by stokowski init\n"
+            for section in missing_sections:
+                additions += f"{section}:\n"
+                for k, v in defaults[section].items():
+                    additions += f"  {k}: {v}\n"
+                additions += "\n"
+            root_config.write_text(root_config.read_text().rstrip() + "\n" + additions)
+            console.print(f"  [green]Updated stokowski.yaml (+{', '.join(missing_sections)})[/green]")
+        else:
+            console.print(f"  [green]stokowski.yaml: all shared sections present[/green]")
+
+    # Load env so validation works
     if env_key_value:
         os.environ.setdefault(env_key_name, env_key_value)
 
-    # Validate all workflows
-    console.print("\n[bold]Validating...[/bold]")
+    # Validate all workflows (with shared config merged in)
+    console.print("\n[bold]Validating workflows...[/bold]")
     from .config import parse_workflow_file, validate_config
+    shared_raw = None
+    if root_config.exists():
+        try:
+            shared_raw = {
+                k: v for k, v in (_yaml.safe_load(root_config.read_text()) or {}).items()
+                if k in {"tracker", "linear_states", "github_states", "workspace",
+                         "hooks", "claude", "agent", "server", "webhook"} and v
+            }
+        except Exception:
+            pass
+
+    # Deprecated fields that should live in root config, not per-workflow
+    _SHARED_KEYS = {"tracker", "linear_states", "github_states", "workspace",
+                    "hooks", "claude", "agent", "server", "webhook"}
+
     workflows_to_validate = existing_workflows if existing_workflows else [out_file]
     for wf_path in workflows_to_validate:
         try:
-            wf = parse_workflow_file(str(wf_path))
+            wf = parse_workflow_file(str(wf_path), shared_raw=shared_raw)
             errors = validate_config(wf.config)
             if errors:
                 console.print(f"  [yellow]{wf_path.name}:[/yellow]")
@@ -716,6 +769,16 @@ def _run_init():
                     console.print(f"    [yellow]- {e}[/yellow]")
             else:
                 console.print(f"  [green]{wf_path.name}: valid[/green]")
+
+            # Check for shared fields that should be in root config
+            if root_config.exists():
+                wf_raw = _yaml.safe_load(wf_path.read_text()) or {}
+                duplicated = [k for k in _SHARED_KEYS if k in wf_raw and wf_raw[k]]
+                if duplicated:
+                    console.print(
+                        f"  [dim]{wf_path.name}: consider moving "
+                        f"{', '.join(duplicated)} to stokowski.yaml (shared config)[/dim]"
+                    )
         except Exception as e:
             console.print(f"  [red]{wf_path.name}: {e}[/red]")
 
