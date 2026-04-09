@@ -299,6 +299,12 @@ async def run_manager(root_config_path: str, port: int | None = None):
     mgr = Manager(root_cfg.workflow_paths, shared_raw=root_cfg.shared_raw)
     loop = asyncio.get_running_loop()
 
+    # Read port from root config if not specified on CLI
+    if port is None:
+        server_raw = root_cfg.shared_raw.get("server", {})
+        if isinstance(server_raw, dict) and server_raw.get("port"):
+            port = int(server_raw["port"])
+
     # Keyboard handler — uses manager
     kb = _ManagerKeyboardHandler(mgr, loop)
     kb.start()
@@ -756,9 +762,8 @@ def _run_init():
         console.print(f"  {step}. Set your API key in {env_file}")
         step += 1
     console.print(f"  {step}. Edit prompts in {prompts_dir}/")
-    console.print(f"  {step + 1}. Run single workflow: stokowski {out_file}")
-    console.print(f"  {step + 2}. Run all workflows:    stokowski {root_config}")
-    console.print(f"  {step + 3}. Or dry-run:           stokowski --dry-run {out_file}")
+    console.print(f"  {step + 1}. Run:     stokowski          [dim](auto-detects .stokowski/stokowski.yaml)[/dim]")
+    console.print(f"  {step + 2}. Dry-run: stokowski --dry-run {out_file}")
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
@@ -795,7 +800,12 @@ def cli():
         return
 
     if args.workflow is None:
-        if Path("workflow.yaml").exists():
+        # Auto-detect: root config first, then single workflow
+        if Path(".stokowski/stokowski.yaml").exists():
+            args.workflow = ".stokowski/stokowski.yaml"
+        elif Path(".stokowski/stokowski.yml").exists():
+            args.workflow = ".stokowski/stokowski.yml"
+        elif Path("workflow.yaml").exists():
             args.workflow = "./workflow.yaml"
         elif Path("workflow.yml").exists():
             args.workflow = "./workflow.yml"
@@ -803,7 +813,7 @@ def cli():
             args.workflow = "./WORKFLOW.md"
         else:
             console.print(
-                "[red]No workflow file found. Create workflow.yaml or WORKFLOW.md, "
+                "[red]No config found. Run 'stokowski init' to set up, "
                 "or specify a path: stokowski <path>[/red]"
             )
             sys.exit(1)

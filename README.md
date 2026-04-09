@@ -366,8 +366,8 @@ stokowski --help
 
 ```bash
 cd your-project
-stokowski init
-# Follow prompts → creates .stokowski/workflow.yaml + prompt files
+stokowski init       # creates .stokowski/ with config, prompts, .env
+stokowski            # auto-detects .stokowski/stokowski.yaml and starts
 ```
 
 Or set up manually:
@@ -552,14 +552,16 @@ This connects to Linear, validates your config, and lists candidate issues — *
 ### 7. Run
 
 ```bash
-# Terminal only
+cd your-project
+
+# Auto-detects .stokowski/stokowski.yaml (port from config)
 stokowski
 
-# With web dashboard
-stokowski --port 4200
+# Or specify a single workflow
+stokowski .stokowski/workflow-feature.yaml --port 4200
 ```
 
-Open `http://localhost:4200` for the live dashboard.
+If `.stokowski/stokowski.yaml` exists, Stokowski auto-detects it and reads the dashboard port from `server.port`. No flags needed.
 
 **Keyboard shortcuts:**
 

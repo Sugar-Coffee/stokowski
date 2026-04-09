@@ -218,7 +218,9 @@ CLI entry point (`cli()`) and keyboard handler.
 
 **`_force_kill_children()`** uses `pgrep -f "claude.*-p.*--output-format.*stream-json"` as a last-resort cleanup on `KeyboardInterrupt`.
 
-**`_load_dotenv()`** reads `.env` from cwd on startup — supports `KEY=value` format, ignores comments and blank lines. The project-local `.env` takes precedence over the shell environment (uses direct assignment, overrides existing env vars).
+**`_load_dotenv()`** reads `.env` and `.stokowski/.env` from cwd on startup — supports `KEY=value` format, ignores comments and blank lines. Uses `setdefault` so existing env vars are not overridden.
+
+**Auto-detection:** When no workflow path is specified, `cli()` checks `.stokowski/stokowski.yaml` first (root config), then falls back to `workflow.yaml`/`workflow.yml`/`WORKFLOW.md`. The port is read from `server.port` in the root config when `--port` is not specified. Running `stokowski` with no arguments in a project with `.stokowski/stokowski.yaml` starts the multi-workflow daemon with the dashboard.
 
 ### prompt.py
 Three-layer prompt assembly for state machine workflows. Main entry point is `assemble_prompt()`.
