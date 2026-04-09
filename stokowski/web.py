@@ -428,6 +428,62 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     color: var(--dim);
     font-weight: 300;
   }
+
+  /* ── Workflow tabs ── */
+  .workflow-tabs {
+    display: flex;
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    margin-bottom: 24px;
+    display: none;  /* hidden in single-workflow mode */
+  }
+
+  .workflow-tabs.visible {
+    display: flex;
+  }
+
+  .wf-tab {
+    background: var(--surface);
+    padding: 10px 20px;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    cursor: pointer;
+    transition: all 0.15s;
+    border: none;
+    font-family: var(--font);
+  }
+
+  .wf-tab:hover {
+    background: #141414;
+    color: var(--text);
+  }
+
+  .wf-tab.active {
+    color: var(--amber);
+    background: #141414;
+    box-shadow: inset 0 -2px 0 var(--amber);
+  }
+
+  .wf-tab .wf-tab-count {
+    font-size: 10px;
+    color: var(--dim);
+    margin-left: 6px;
+  }
+
+  .wf-tab.active .wf-tab-count {
+    color: var(--amber-dim);
+  }
+
+  .agent-workflow {
+    font-size: 10px;
+    color: var(--dim);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-top: 2px;
+  }
 </style>
 </head>
 <body>
@@ -443,6 +499,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <span id="ts" class="timestamp">—</span>
     </div>
   </header>
+
+  <div id="workflow-tabs" class="workflow-tabs"></div>
 
   <div class="metrics">
     <div class="metric" id="m-running">
@@ -583,10 +641,55 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       `<div class="agents">${rows}</div>`;
   }
 
+  // ── Multi-workflow support ──
+  let currentWorkflow = null;  // null = aggregate (all)
+  let knownWorkflows = [];
+
+  function renderTabs(data) {
+    const workflows = data.workflows ? Object.keys(data.workflows) : [];
+    if (workflows.length <= 1 && !currentWorkflow) {
+      document.getElementById('workflow-tabs').classList.remove('visible');
+      knownWorkflows = workflows;
+      return;
+    }
+
+    knownWorkflows = workflows;
+    const tabs = document.getElementById('workflow-tabs');
+    tabs.classList.add('visible');
+
+    const allCount = (data.counts?.running || 0) + (data.counts?.retrying || 0) + (data.counts?.gates || 0);
+    let html = `<button class="wf-tab ${currentWorkflow === null ? 'active' : ''}" onclick="switchWorkflow(null)">All<span class="wf-tab-count">${allCount}</span></button>`;
+
+    for (const name of workflows) {
+      const wf = data.workflows[name];
+      const c = (wf.counts?.running || 0) + (wf.counts?.retrying || 0) + (wf.counts?.gates || 0);
+      const active = currentWorkflow === name ? 'active' : '';
+      html += `<button class="wf-tab ${active}" onclick="switchWorkflow('${esc(name)}')">${esc(name)}<span class="wf-tab-count">${c}</span></button>`;
+    }
+    tabs.innerHTML = html;
+  }
+
+  function switchWorkflow(name) {
+    currentWorkflow = name;
+    refresh();
+  }
+
+  function getViewData(fullData) {
+    if (!currentWorkflow || !fullData.workflows) return fullData;
+    const wf = fullData.workflows[currentWorkflow];
+    return wf || fullData;
+  }
+
+  let _lastFullData = null;
+
   async function refresh() {
     try {
       const res = await fetch('/api/v1/state');
-      const data = await res.json();
+      const fullData = await res.json();
+      _lastFullData = fullData;
+
+      renderTabs(fullData);
+      const data = getViewData(fullData);
 
       const running  = data.counts?.running  || 0;
       const retrying = data.counts?.retrying || 0;
