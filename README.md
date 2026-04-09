@@ -2,9 +2,9 @@
 
 # Stokowski
 
-**Autonomous coding agents, orchestrated by Linear issues.**
+**Autonomous coding agents, orchestrated by issue trackers.**
 
-Built on [OpenAI's Symphony](https://github.com/openai/symphony) spec and taken further — with configurable state machines, gate-based human review, multi-runner support, and a live web dashboard. Works with [Claude Code](https://claude.ai/claude-code), [Codex](https://openai.com/index/introducing-codex/), and [Linear](https://linear.app).
+Built on [OpenAI's Symphony](https://github.com/openai/symphony) spec and taken further — with configurable state machines, gate-based human review, multi-runner support, and a live web dashboard. Works with [Claude Code](https://claude.ai/claude-code), [Codex](https://openai.com/index/introducing-codex/), [Linear](https://linear.app), and [GitHub Issues](https://github.com/features/issues).
 
 [![Python](https://img.shields.io/badge/python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-22c55e)](LICENSE)
@@ -152,7 +152,8 @@ Linear issue → isolated git clone → agent (Claude or Codex) → PR + Human R
 - **Configurable state machine** — define agent stages, human gates, and transitions in `workflow.yaml`; issues flow through your pipeline automatically
 - **Multi-runner** — Claude Code and Codex in the same pipeline; different states can use different runners and models (e.g. Opus for investigation, Sonnet for implementation, Codex for review)
 - **Three-layer prompt assembly** — global prompt + per-stage prompt + auto-injected lifecycle context; each layer is a Jinja2 template with full issue variables
-- **Linear-driven dispatch** — polls for issues in configured states, dispatches agents with bounded concurrency
+- **Multi-tracker support** — works with Linear and GitHub Issues out of the box (`tracker.kind: linear` or `tracker.kind: github`)
+- **Tracker-driven dispatch** — polls for issues in configured states, dispatches agents with bounded concurrency
 - **Session continuity** — multi-turn agent sessions via `--resume` (Claude Code); agents pick up where they left off
 - **Isolated workspaces** — per-issue git clones or **git worktrees** so parallel agents never conflict
 - **Lifecycle hooks** — `after_create`, `before_run`, `after_run`, `before_remove`, `on_stage_enter` shell scripts for setup, quality gates, and cleanup
@@ -167,6 +168,8 @@ Linear issue → isolated git clone → agent (Claude or Codex) → PR + Human R
 - **Blocked status** — agents signal `<!-- stokowski:blocked -->` to move non-actionable issues to Blocked with a comment
 - **Label-based routing** — route issues to different pipeline entry points based on Linear labels (e.g., `feature` → PM pipeline, `bug` → implementation)
 - **Per-project concurrency** — parallelize across projects while limiting agents per project (e.g., 3 implements globally but max 1 per project to avoid merge conflicts)
+- **Webhook support** — instant reactions to Linear and GitHub state changes via `POST /api/v1/webhook/{linear,github}`, with HMAC signature verification
+- **Scheduled issue creation** — cron-based auto-creation via external commands (`create_command`); works with any tracker CLI
 - **Ready-to-use example workflows** — autonomous implementation pipeline and AI-collaborative feature definition (see `examples/`)
 
 ---
@@ -331,23 +334,47 @@ cd stokowski
 python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 
-pip install -e ".[web]"     # installs core + web dashboard
+pip install -e ".[web,schedule]"  # core + web dashboard + cron scheduling
 
 stokowski --help             # verify it's working
 ```
 
 ---
 
-### 3. Get your Linear API key
+### 3. Get your tracker credentials
+
+<details>
+<summary><strong>Linear</strong></summary>
 
 1. Open Linear → click your avatar (bottom-left) → **Settings**
 2. Go to **Security & access** → **Personal API keys**
 3. Click **Create key**, name it `stokowski`, and copy the value
-4. Paste it into the `tracker.api_key` field in your `workflow.yaml`
+4. Set `tracker.kind: linear` and `tracker.api_key` in your `workflow.yaml`
+
+</details>
+
+<details>
+<summary><strong>GitHub Issues</strong></summary>
+
+1. Go to [github.com/settings/tokens](https://github.com/settings/tokens)
+2. Create a **Fine-grained token** with `Issues: Read and write` and `Contents: Read` permissions on your repo
+3. Set in your `workflow.yaml`:
+
+```yaml
+tracker:
+  kind: github
+  github_owner: your-org
+  github_repo: your-repo
+  github_token: $GITHUB_TOKEN   # or paste the token directly
+```
+
+GitHub Issues uses labels (prefixed with `stokowski:`) to represent workflow states. Stokowski auto-creates missing labels on first use.
+
+</details>
 
 ---
 
-### 4. Set up Linear workflow states
+### 4. Set up workflow states
 
 Stokowski uses a fixed set of lifecycle roles — `todo`, `active`, `review`, `gate_approved`, `rework`, and `terminal` — that drive the dispatch and gate protocol. Each role maps to a Linear state name via the `linear_states` section in your config.
 
@@ -471,12 +498,18 @@ Open `http://localhost:4200` for the live dashboard.
 
 ```yaml
 tracker:
-  kind: linear                          # only "linear" supported
+  kind: linear                          # "linear" or "github"
+
+  # Linear-specific fields
   project_slug: "abc123def456"          # hex slugId from your Linear project URL
   team_key: "DEV"                       # filter by team key (alternative to project_slug)
   api_key: "lin_api_your_key_here"      # your Linear API key — agents inherit this
-  # At least one of project_slug or team_key is required.
-  # team_key fetches ALL issues from the team regardless of project.
+  # At least one of project_slug or team_key is required for Linear.
+
+  # GitHub-specific fields (used when kind: github)
+  # github_owner: "your-org"
+  # github_repo: "your-repo"
+  # github_token: $GITHUB_TOKEN         # PAT with Issues read/write permission
 
 # These map Stokowski's internal lifecycle roles to your Linear state names.
 # You can rename values to match your team's Linear setup (e.g. todo: "Ready"),
@@ -554,6 +587,31 @@ routing:
     entry_state: pm-define             # ...start at the PM definition stage
   - labels: [bug, fix]
     entry_state: implement             # ...skip triage, go straight to implement
+
+# GitHub Issues state mapping (used when tracker.kind: github).
+# GitHub only has open/closed, so Stokowski uses labels to represent states.
+# github_states:
+#   todo: "Todo"
+#   active: "In Progress"
+#   review: "Human Review"
+#   gate_approved: "Gate Approved"
+#   rework: "Rework"
+#   blocked: "Blocked"
+#   terminal: [Done]
+#   close_on_terminal: true            # close the issue when it reaches a terminal state
+
+# Scheduled issue creation via external command.
+# Stokowski handles the cron timing; the command handles tracker-specific creation.
+# Requires: pip install stokowski[schedule]
+# schedule:
+#   cron: "0 9 * * *"                  # cron expression (UTC)
+#   create_command: |                  # shell command — {date} and {datetime} are replaced
+#     gh issue create --title "docs: daily sync — {date}" --label docs
+
+# Webhook listener for instant reactions to tracker events.
+# Reduces latency vs polling alone. Requires the web server (server.port).
+# webhook:
+#   secret: $WEBHOOK_SECRET            # HMAC-SHA256 signing secret (Linear or GitHub)
 
 states:                                # the state machine pipeline
   investigate:
@@ -809,14 +867,16 @@ prompts/       →  Jinja2 stage prompt files
 | File | Purpose |
 |------|---------|
 | `stokowski/config.py` | `workflow.yaml` parser, typed config dataclasses, state machine validation |
-| `stokowski/prompt.py` | Three-layer prompt assembly (global + stage + lifecycle) |
-| `stokowski/tracking.py` | State machine tracking via structured Linear comments |
+| `stokowski/tracker.py` | `TrackerClient` protocol (interface for all tracker backends) |
 | `stokowski/linear.py` | Linear GraphQL client (httpx async) |
+| `stokowski/github_issues.py` | GitHub Issues REST API client (httpx async) |
+| `stokowski/prompt.py` | Three-layer prompt assembly (global + stage + lifecycle) |
+| `stokowski/tracking.py` | State machine tracking via structured comments |
 | `stokowski/models.py` | Domain models: `Issue`, `RunAttempt`, `RetryEntry` |
 | `stokowski/orchestrator.py` | Poll loop, state machine dispatch, reconciliation, retry |
 | `stokowski/runner.py` | Multi-runner CLI integration (Claude Code + Codex), stream-json parser |
 | `stokowski/workspace.py` | Per-issue workspace lifecycle and hooks |
-| `stokowski/web.py` | Optional FastAPI dashboard |
+| `stokowski/web.py` | Optional FastAPI dashboard + webhook endpoints |
 | `stokowski/main.py` | CLI entry point, keyboard handler |
 
 ---
@@ -838,7 +898,7 @@ git checkout $(git describe --tags `git rev-list --tags --max-count=1`)
 
 # Re-install to pick up any new dependencies
 source .venv/bin/activate
-pip install -e ".[web]"
+pip install -e ".[web,schedule]"
 
 # Verify everything still works
 stokowski --dry-run
@@ -849,7 +909,7 @@ stokowski --dry-run
 **If you installed via pip** *(PyPI coming soon):*
 
 ```bash
-pip install --upgrade git+https://github.com/Sugar-Coffee/stokowski.git#egg=stokowski[web]
+pip install --upgrade git+https://github.com/Sugar-Coffee/stokowski.git#egg=stokowski[web,schedule]
 ```
 
 **After upgrading, check if `workflow.example.yaml` has changed** — new config fields may have been added that you'll want to adopt:
