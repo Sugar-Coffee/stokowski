@@ -618,28 +618,29 @@ def _run_init():
         out_file.write_text(content)
         console.print(f"\n[green]Created {out_file}[/green]")
 
-    # Create prompts directory
+    # Create prompts directory (only for new projects without existing workflows)
     prompts_dir = out_dir / "prompts"
-    prompts_dir.mkdir(parents=True, exist_ok=True)
+    if not existing_workflows:
+        prompts_dir.mkdir(parents=True, exist_ok=True)
 
-    global_prompt = prompts_dir / "global.md"
-    if not global_prompt.exists():
-        global_prompt.write_text(
-            "# Global Prompt\n\n"
-            "You are an autonomous coding agent. Work autonomously — do NOT use\n"
-            "AskUserQuestion or pause for input. Read CLAUDE.md for project\n"
-            "conventions before starting.\n"
-        )
-        console.print(f"[green]Created {global_prompt}[/green]")
+        global_prompt = prompts_dir / "global.md"
+        if not global_prompt.exists():
+            global_prompt.write_text(
+                "# Global Prompt\n\n"
+                "You are an autonomous coding agent. Work autonomously — do NOT use\n"
+                "AskUserQuestion or pause for input. Read CLAUDE.md for project\n"
+                "conventions before starting.\n"
+            )
+            console.print(f"[green]Created {global_prompt}[/green]")
 
-    implement_prompt = prompts_dir / "implement.md"
-    if not implement_prompt.exists():
-        implement_prompt.write_text(
-            "# Implement\n\n"
-            "Implement the changes described in the issue. Follow the project's\n"
-            "coding conventions. Write tests if applicable. Create a PR when done.\n"
-        )
-        console.print(f"[green]Created {implement_prompt}[/green]")
+        implement_prompt = prompts_dir / "implement.md"
+        if not implement_prompt.exists():
+            implement_prompt.write_text(
+                "# Implement\n\n"
+                "Implement the changes described in the issue. Follow the project's\n"
+                "coding conventions. Write tests if applicable. Create a PR when done.\n"
+            )
+            console.print(f"[green]Created {implement_prompt}[/green]")
 
     # Create .env with API key
     env_file = out_dir / ".env"
