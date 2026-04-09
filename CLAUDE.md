@@ -174,10 +174,15 @@ while running:
 
 **Turn timeout:** `asyncio.wait()` with `turn_timeout_ms` as overall deadline.
 
-**Event processing** (`_process_event`):
+**Event processing** (`_process_event` for Claude, `_process_gemini_event` for Gemini):
 - `result` event → extracts `session_id`, token usage, result text
-- `assistant` event → extracts last message for display
+- `assistant`/`message` event → extracts last message for display
 - `tool_use` event → updates last message with tool name
+
+**Three runners supported:**
+- `claude` (default) — Claude Code CLI with `--output-format stream-json --verbose`
+- `codex` — OpenAI Codex CLI with `--quiet`, no session resumption
+- `gemini` — Gemini CLI with `--output-format stream-json`, session resumption via `--resume`. Session ID comes from `init` event (not `result`). Token stats in `stats` field (not `usage`).
 
 ### workspace.py
 Two workspace modes:
