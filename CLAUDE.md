@@ -77,12 +77,6 @@ Each issue gets its own workspace. Two modes are supported:
 
 Agents run with `cwd` set to the workspace directory. Workspaces persist across turns for the same session; they're deleted (worktree removed + branch deleted) when the issue reaches a terminal state.
 
-### Headless system prompt
-The headless system prompt is configurable via `claude.headless_prompt`:
-- **`null` (omitted)** — no headless prompt injected. Agents can use Claude Code skills, slash commands, and the Skill tool. Use this when your prompts invoke project-specific skills.
-- **String value** — injected via `--append-system-prompt` on first turn. The original default was a prompt blocking interactive workflows; set this explicitly if you want that behavior.
-- **`claude.append_system_prompt`** — always appended after the headless prompt (if any). Use for project-specific context.
-
 ---
 
 ## Component deep-dives

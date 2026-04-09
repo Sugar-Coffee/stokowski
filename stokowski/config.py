@@ -68,7 +68,6 @@ class ClaudeConfig:
     turn_timeout_ms: int = 3_600_000
     stall_timeout_ms: int = 300_000
     append_system_prompt: str | None = None
-    headless_prompt: str | None = None  # None = disabled, set to override default headless context
 
 
 @dataclass
@@ -395,7 +394,6 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
         turn_timeout_ms=_coerce_int(c.get("turn_timeout_ms"), 3_600_000),
         stall_timeout_ms=_coerce_int(c.get("stall_timeout_ms"), 300_000),
         append_system_prompt=c.get("append_system_prompt"),
-        headless_prompt=c.get("headless_prompt"),
     )
 
     # Parse agent

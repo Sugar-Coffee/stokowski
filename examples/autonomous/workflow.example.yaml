@@ -77,7 +77,6 @@ claude:
   max_turns: 30
   turn_timeout_ms: 3600000              # 1 hour
   stall_timeout_ms: 300000              # 5 min with no output → kill
-  # headless_prompt is omitted (None) — skills and slash commands are allowed
   append_system_prompt: >
     You are an autonomous coding agent. Work autonomously — do NOT use
     AskUserQuestion or pause for input. Make all decisions yourself.

@@ -162,7 +162,6 @@ Linear issue → isolated git clone → agent (Claude or Codex) → PR + Human R
 - **MCP-aware** — agents inherit `.mcp.json` from the workspace (Figma, Linear, iOS Simulator, Playwright, etc.)
 - **Persistent terminal UI** — live status bar, single-key controls (`q` quit · `s` status · `r` refresh · `h` help)
 - **Git worktree mode** — use `workspace.mode: worktree` for lightweight isolation from a single repo instead of full clones
-- **Configurable headless prompt** — enable Claude Code skills and slash commands in agents by setting `headless_prompt: null`
 - **Team-based filtering** — use `tracker.team_key` to fetch all issues from a team, regardless of which project they belong to
 - **Triage state** — lightweight pre-check (Haiku, 3 turns) evaluates actionability before burning implementation tokens
 - **Blocked status** — agents signal `<!-- stokowski:blocked -->` to move non-actionable issues to Blocked with a comment
@@ -530,7 +529,6 @@ claude:
   max_turns: 20                         # max turns before giving up
   turn_timeout_ms: 3600000             # per-turn wall-clock timeout (default: 1h)
   stall_timeout_ms: 300000             # kill agent if silent for this long (default: 5m)
-  headless_prompt: null                # null = disabled (skills allowed); set string to override
   append_system_prompt: |              # extra text appended to every agent's system prompt
     Always write tests for new code.
 

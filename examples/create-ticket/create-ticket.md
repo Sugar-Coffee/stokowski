@@ -1,22 +1,16 @@
----
-name: create-ticket
-description: Guide the user through creating a well-structured Linear ticket with acceptance criteria and implementation context, ready for agent execution.
-argument-hint: [TICKET-ID or blank]
----
-
 # Create Ticket
 
 Guide the user through creating a well-structured Linear ticket with acceptance criteria and implementation context, ready for agent execution.
 
 ## Process
 
-### Step 1: Get the ticket
+### Step 1: Create or fetch the ticket
 
 Ask the user:
-> What's the Linear ticket identifier? (e.g., ENG-42)
-> If you haven't created one yet, create a blank ticket in Linear first and give me the identifier.
+> Do you already have a Linear ticket for this? If so, what's the identifier? (e.g., ENG-42)
+> If not, I'll create one for you once we've gathered the details.
 
-Once you have the identifier, use the Linear MCP tool to fetch the current ticket details (title, description, labels, priority).
+If they provide an identifier, use the Linear MCP tool to fetch the current ticket details (title, description, labels, priority). If not, continue to Step 2 — we'll create the ticket at the end.
 
 ### Step 2: Understand the goal
 
@@ -100,13 +94,14 @@ Compose a structured ticket description in this format:
 - [Links to Figma, docs, related tickets, PRs]
 ```
 
-### Step 6: Update the Linear ticket
+### Step 6: Create or update the Linear ticket
 
 Show the user the complete description and ask for approval. Once approved:
 
-1. Use the Linear MCP tool to update the ticket description with the generated content.
-2. Confirm the update was successful.
-3. Report: "Ticket [identifier] is ready for agent execution. Move it to **Todo** when you want an agent to pick it up."
+1. If the ticket already exists, use the Linear MCP tool to update its description with the generated content.
+2. If no ticket exists yet, use the Linear MCP tool to create a new issue with the title, description, and any labels/priority discussed. Ask the user which team to create it in if not already clear.
+3. Confirm the create/update was successful.
+4. Report: "Ticket [identifier] is ready for agent execution. Move it to **Todo** when you want an agent to pick it up."
 
 ## Tips
 

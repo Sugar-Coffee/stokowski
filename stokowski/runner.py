@@ -48,16 +48,9 @@ def build_claude_args(
     if claude_cfg.model:
         args.extend(["--model", claude_cfg.model])
 
-    # System prompt - headless context is configurable (None = disabled)
-    if not session_id:
-        parts: list[str] = []
-        if claude_cfg.headless_prompt is not None:
-            parts.append(claude_cfg.headless_prompt)
-        if claude_cfg.append_system_prompt:
-            parts.append(claude_cfg.append_system_prompt)
-        combined = "\n".join(parts).strip()
-        if combined:
-            args.extend(["--append-system-prompt", combined])
+    # System prompt
+    if not session_id and claude_cfg.append_system_prompt:
+        args.extend(["--append-system-prompt", claude_cfg.append_system_prompt])
 
     return args
 
