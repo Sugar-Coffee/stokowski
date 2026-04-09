@@ -6,6 +6,9 @@ import asyncio
 import hashlib
 import hmac
 import logging
+import os
+import tempfile
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -635,6 +638,298 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 """
 
 
+def _mask_secrets(content: str) -> str:
+    """Mask literal API keys/tokens in YAML content for display."""
+    import re
+    # Mask values that look like API keys (long alphanumeric strings)
+    # but preserve $ENV_VAR references
+    return re.sub(
+        r'(api_key|github_token|secret):\s*"?([^$\s"][^\s"]{20,})"?',
+        r'\1: "****"',
+        content,
+    )
+
+
+def _read_config_yaml(workflow_path: Path) -> str:
+    """Read a workflow YAML file and mask secrets."""
+    return _mask_secrets(workflow_path.read_text())
+
+
+def _write_config_yaml(workflow_path: Path, content: str) -> list[str]:
+    """Validate and atomically write a workflow YAML.
+
+    Returns list of validation errors (empty = success).
+    """
+    from .config import parse_workflow_file, validate_config
+
+    # Write to temp file first to validate
+    fd, tmp = tempfile.mkstemp(
+        dir=workflow_path.parent, prefix=".stokowski_cfg_", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(content)
+
+        # Validate by parsing the temp file
+        try:
+            wf = parse_workflow_file(tmp)
+            errors = validate_config(wf.config)
+        except Exception as e:
+            errors = [str(e)]
+
+        if errors:
+            os.unlink(tmp)
+            return errors
+
+        # Atomic replace
+        os.replace(tmp, workflow_path)
+        return []
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+CONFIG_EDITOR_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stokowski — Config Editor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #080808;
+    --surface:   #0f0f0f;
+    --border:    #1c1c1c;
+    --border-hi: #2a2a2a;
+    --text:      #e8e8e0;
+    --muted:     #555550;
+    --dim:       #333330;
+    --amber:     #e8b84b;
+    --amber-dim: #6b5220;
+    --green:     #4cba6e;
+    --red:       #d95f52;
+    --font:      'IBM Plex Mono', monospace;
+  }
+
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 13px;
+    line-height: 1.5;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .shell {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 28px 24px 60px;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 24px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 24px;
+  }
+
+  .logo { display: flex; align-items: baseline; gap: 12px; }
+  .logo-name { font-size: 22px; font-weight: 600; letter-spacing: -0.5px; }
+  .logo-tag { font-size: 11px; font-weight: 300; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
+
+  a.back { color: var(--amber); text-decoration: none; font-size: 12px; }
+  a.back:hover { text-decoration: underline; }
+
+  .editor-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 0;
+    margin-bottom: 16px;
+  }
+
+  textarea {
+    width: 100%;
+    min-height: 500px;
+    background: var(--surface);
+    color: var(--text);
+    border: none;
+    padding: 20px;
+    font-family: var(--font);
+    font-size: 13px;
+    line-height: 1.6;
+    resize: vertical;
+    outline: none;
+    tab-size: 2;
+  }
+
+  .actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+  }
+
+  button {
+    background: var(--amber);
+    color: var(--bg);
+    border: none;
+    padding: 8px 20px;
+    font-family: var(--font);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+
+  button:hover { opacity: 0.85; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  button.secondary {
+    background: var(--border-hi);
+    color: var(--text);
+  }
+
+  .status {
+    font-size: 12px;
+    font-weight: 300;
+    margin-left: 12px;
+  }
+
+  .status.ok { color: var(--green); }
+  .status.err { color: var(--red); }
+
+  .errors {
+    background: rgba(217,95,82,.08);
+    border: 1px solid rgba(217,95,82,.25);
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    font-size: 12px;
+    color: var(--red);
+    display: none;
+  }
+
+  .errors.visible { display: block; }
+  .errors ul { margin: 4px 0 0 16px; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <header>
+    <div class="logo">
+      <span class="logo-name">STOKOWSKI</span>
+      <span class="logo-tag">Config Editor</span>
+    </div>
+    <a class="back" href="/">< Dashboard</a>
+  </header>
+
+  <div id="errors" class="errors"></div>
+
+  <div class="editor-wrap">
+    <textarea id="editor" spellcheck="false" placeholder="Loading..."></textarea>
+  </div>
+
+  <div class="actions">
+    <button id="save-btn" onclick="saveConfig()">Save</button>
+    <button class="secondary" onclick="reloadConfig()">Reload</button>
+    <span id="status" class="status"></span>
+  </div>
+</div>
+
+<script>
+  const WORKFLOW_NAME = new URLSearchParams(window.location.search).get('workflow') || '';
+
+  function getEndpoint() {
+    if (WORKFLOW_NAME) return `/api/v1/workflows/${encodeURIComponent(WORKFLOW_NAME)}/config`;
+    return '/api/v1/config';
+  }
+
+  async function reloadConfig() {
+    try {
+      const res = await fetch(getEndpoint());
+      const data = await res.json();
+      if (data.error) {
+        showStatus('Failed to load: ' + data.error, true);
+        return;
+      }
+      document.getElementById('editor').value = data.content;
+      showStatus('Loaded', false);
+      hideErrors();
+    } catch(e) {
+      showStatus('Failed to load config', true);
+    }
+  }
+
+  async function saveConfig() {
+    const btn = document.getElementById('save-btn');
+    btn.disabled = true;
+    try {
+      const content = document.getElementById('editor').value;
+      const res = await fetch(getEndpoint(), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content }),
+      });
+      const data = await res.json();
+      if (data.errors && data.errors.length > 0) {
+        showErrors(data.errors);
+        showStatus('Validation failed', true);
+      } else {
+        hideErrors();
+        showStatus('Saved — changes take effect on next tick', false);
+      }
+    } catch(e) {
+      showStatus('Save failed: ' + e.message, true);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function showStatus(msg, isError) {
+    const el = document.getElementById('status');
+    el.textContent = msg;
+    el.className = 'status ' + (isError ? 'err' : 'ok');
+  }
+
+  function showErrors(errors) {
+    const el = document.getElementById('errors');
+    el.innerHTML = '<strong>Validation errors:</strong><ul>' +
+      errors.map(e => '<li>' + e.replace(/</g,'&lt;') + '</li>').join('') +
+      '</ul>';
+    el.classList.add('visible');
+  }
+
+  function hideErrors() {
+    document.getElementById('errors').classList.remove('visible');
+  }
+
+  // Handle Tab key in textarea
+  document.getElementById('editor').addEventListener('keydown', function(e) {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const start = this.selectionStart;
+      const end = this.selectionEnd;
+      this.value = this.value.substring(0, start) + '  ' + this.value.substring(end);
+      this.selectionStart = this.selectionEnd = start + 2;
+    }
+  });
+
+  reloadConfig();
+</script>
+</body>
+</html>
+"""
+
+
 def create_app(orchestrator: Orchestrator) -> FastAPI:
     app = FastAPI(title="Stokowski", version="0.1.0")
 
@@ -659,6 +954,32 @@ def create_app(orchestrator: Orchestrator) -> FastAPI:
             {"error": {"code": "issue_not_found", "message": f"Unknown: {issue_identifier}"}},
             status_code=404,
         )
+
+    @app.get("/config", response_class=HTMLResponse)
+    async def config_editor():
+        return HTMLResponse(CONFIG_EDITOR_HTML)
+
+    @app.get("/api/v1/config")
+    async def api_config_read():
+        try:
+            content = _read_config_yaml(orchestrator.workflow_path)
+            return JSONResponse({"content": content})
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.put("/api/v1/config")
+    async def api_config_write(request: Request):
+        try:
+            body = await request.json()
+            content = body.get("content", "")
+            if not content.strip():
+                return JSONResponse({"errors": ["Empty config"]}, status_code=400)
+            errors = _write_config_yaml(orchestrator.workflow_path, content)
+            if errors:
+                return JSONResponse({"errors": errors}, status_code=422)
+            return JSONResponse({"ok": True})
+        except Exception as e:
+            return JSONResponse({"errors": [str(e)]}, status_code=500)
 
     @app.post("/api/v1/refresh")
     async def api_refresh():
