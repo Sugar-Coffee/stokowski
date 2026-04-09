@@ -560,17 +560,24 @@ def _run_init():
     console.print("  2. GitHub Issues")
     choice = input("\nSelect tracker [1]: ").strip() or "1"
 
+    env_key_name = ""
+    env_key_value = ""
+
     if choice == "2":
         tracker_kind = "github"
         owner = input("GitHub owner (org or user): ").strip()
         repo = input("GitHub repo name: ").strip()
         tracker_fields = f"  github_owner: {owner}\n  github_repo: {repo}\n  github_token: $GITHUB_TOKEN"
         states_section = f"github_states:\n  todo: \"Todo\"\n  active: \"In Progress\"\n  blocked: \"Blocked\"\n  terminal:\n    - Done"
+        env_key_name = "GITHUB_TOKEN"
+        env_key_value = input("GitHub token (or press Enter to set later): ").strip()
     else:
         tracker_kind = "linear"
         team_key = input("Linear team key (e.g. DEV): ").strip() or "DEV"
         tracker_fields = f"  team_key: \"{team_key}\"\n  api_key: $LINEAR_API_KEY"
         states_section = f"linear_states:\n  todo: \"Todo\"\n  active: \"In Progress\"\n  review: \"Human Review\"\n  gate_approved: \"Gate Approved\"\n  rework: \"Rework\"\n  blocked: \"Blocked\"\n  terminal:\n    - Done\n    - Canceled"
+        env_key_name = "LINEAR_API_KEY"
+        env_key_value = input("Linear API key (or press Enter to set later): ").strip()
 
     # Repo path
     repo_path = os.getcwd()
@@ -621,13 +628,10 @@ def _run_init():
         )
         console.print(f"[green]Created {implement_prompt}[/green]")
 
-    # Create .env template
+    # Create .env with API key
     env_file = out_dir / ".env"
     if not env_file.exists():
-        if tracker_kind == "github":
-            env_content = "# Stokowski environment variables\nGITHUB_TOKEN=\n"
-        else:
-            env_content = "# Stokowski environment variables\nLINEAR_API_KEY=\n"
+        env_content = f"# Stokowski environment variables\n{env_key_name}={env_key_value}\n"
         env_file.write_text(env_content)
         console.print(f"[green]Created {env_file}[/green]")
 
@@ -637,7 +641,7 @@ def _run_init():
         "\n# Stokowski",
         ".stokowski/.env",
         ".stokowski/.stokowski_state_*.json",
-        ".stokowski/.worktrees/",
+        ".worktrees/",
     ]
     entries_text = "\n".join(stokowski_entries) + "\n"
     if gitignore.exists():
@@ -663,11 +667,45 @@ def _run_init():
     except Exception as e:
         console.print(f"  [red]Error: {e}[/red]")
 
+    # Create or update root config (stokowski.yaml)
+    root_config = out_dir / "stokowski.yaml"
+    if not root_config.exists():
+        # Scan for all workflow YAML files in .stokowski/
+        workflow_files = sorted(
+            p for p in out_dir.glob("workflow*.yaml")
+            if p.name != "stokowski.yaml"
+        )
+        if not workflow_files:
+            workflow_files = [out_file]
+
+        workflows_block = "workflows:\n"
+        for wf_file in workflow_files:
+            name = wf_file.stem.replace("workflow-", "").replace("workflow", "default")
+            workflows_block += f"  {name}:\n    path: ./{wf_file.name}\n"
+
+        root_content = (
+            f"# Stokowski root config — manages multiple workflows\n"
+            f"# Run: stokowski {root_config}\n\n"
+            f"{workflows_block}"
+        )
+        root_config.write_text(root_content)
+        console.print(f"[green]Created {root_config} ({len(workflow_files)} workflow(s) found)[/green]")
+    else:
+        existing_root = root_config.read_text()
+        if out_file.name not in existing_root:
+            console.print(f"[yellow]Note: {out_file.name} not listed in {root_config} — add it manually[/yellow]")
+        else:
+            console.print(f"[dim]Root config already includes {out_file.name}[/dim]")
+
     console.print(f"\n[bold]Next steps:[/bold]")
-    console.print(f"  1. Set your API key: export {'GITHUB_TOKEN' if tracker_kind == 'github' else 'LINEAR_API_KEY'}=...")
-    console.print(f"  2. Edit prompts in {prompts_dir}/")
-    console.print(f"  3. Run: stokowski {out_file}")
-    console.print(f"  4. Or dry-run: stokowski --dry-run {out_file}")
+    step = 1
+    if not env_key_value:
+        console.print(f"  {step}. Set your API key in {env_file}")
+        step += 1
+    console.print(f"  {step}. Edit prompts in {prompts_dir}/")
+    console.print(f"  {step + 1}. Run single workflow: stokowski {out_file}")
+    console.print(f"  {step + 2}. Run all workflows:    stokowski {root_config}")
+    console.print(f"  {step + 3}. Or dry-run:           stokowski --dry-run {out_file}")
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
