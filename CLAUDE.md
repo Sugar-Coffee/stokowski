@@ -25,6 +25,7 @@ The agent prompt, runtime config, and workspace setup all live in `workflow.yaml
 
 ```
 stokowski/
+  manager.py         Multi-workflow manager (holds N orchestrators)
   config.py          workflow.yaml parser + typed config dataclasses
   tracker.py         TrackerClient protocol (interface for all tracker backends)
   linear.py          Linear GraphQL client (httpx async)

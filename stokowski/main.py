@@ -289,6 +289,173 @@ async def run_orchestrator(workflow_path: str, port: int | None = None):
             console.print("[green]All agents stopped.[/green]")
 
 
+async def run_manager(root_config_path: str, port: int | None = None):
+    """Run multiple workflows from a root config."""
+    from .config import parse_root_config
+    from .manager import Manager
+
+    workflow_paths = parse_root_config(root_config_path)
+    mgr = Manager(workflow_paths)
+    loop = asyncio.get_running_loop()
+
+    # Keyboard handler — uses manager
+    kb = _ManagerKeyboardHandler(mgr, loop)
+    kb.start()
+
+    # Optional web server
+    _uvicorn_server = None
+    _uvicorn_task = None
+    if port is not None:
+        try:
+            from .web import create_app_multi
+            import uvicorn
+
+            app = create_app_multi(mgr)
+            server_config = uvicorn.Config(
+                app, host="127.0.0.1", port=port, log_level="warning",
+            )
+            _uvicorn_server = uvicorn.Server(server_config)
+            _uvicorn_server.install_signal_handlers = lambda: None
+            _uvicorn_task = asyncio.create_task(_uvicorn_server.serve())
+            console.print(f"[green]Web dashboard →[/green] http://127.0.0.1:{port}")
+        except ImportError:
+            console.print(
+                "[yellow]Install web extras for dashboard: pip install stokowski[web][/yellow]"
+            )
+
+    await check_for_updates()
+
+    names = ", ".join(workflow_paths.keys())
+    console.print(Panel(
+        f"[bold]Stokowski[/bold]  [dim]Claude Code Orchestrator (multi-workflow)[/dim]\n"
+        f"[dim]workflows:[/dim] {names}",
+        border_style="dim",
+    ))
+
+    async def _update_footer(live: Live):
+        while True:
+            try:
+                live.update(_make_manager_footer(mgr))
+                await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                break
+
+    with Live(_make_manager_footer(mgr), console=console, refresh_per_second=2) as live:
+        footer_task = asyncio.create_task(_update_footer(live))
+        try:
+            await mgr.start()
+        finally:
+            footer_task.cancel()
+            kb.stop()
+            if _uvicorn_server is not None:
+                _uvicorn_server.should_exit = True
+                if _uvicorn_task is not None:
+                    try:
+                        await asyncio.wait_for(_uvicorn_task, timeout=2.0)
+                    except (asyncio.TimeoutError, asyncio.CancelledError):
+                        pass
+            _force_kill_children()
+            console.print("[green]All agents stopped.[/green]")
+
+
+def _make_manager_footer(mgr) -> Text:
+    """Build footer for multi-workflow mode."""
+    try:
+        snap = mgr.get_aggregate_snapshot()
+        running = snap["counts"]["running"]
+        retrying = snap["counts"]["retrying"]
+        tokens = snap["totals"]["total_tokens"]
+        n_wf = len(mgr.orchestrators)
+        if running:
+            status = f"[green]●[/green] {running} running ({n_wf} workflows)"
+        elif retrying:
+            status = f"[blue]●[/blue] {retrying} retrying ({n_wf} workflows)"
+        else:
+            status = f"[dim]● idle ({n_wf} workflows)[/dim]"
+        meta = f"  [dim]tokens={tokens:,}[/dim]" if tokens else ""
+    except Exception:
+        status = "[dim]● idle[/dim]"
+        meta = ""
+
+    update = f"  [dim yellow]⬆ {_update_message}[/dim yellow]" if _update_message else ""
+
+    return Text.from_markup(
+        f"  [bold yellow]q[/bold yellow] quit  "
+        f"[bold yellow]s[/bold yellow] status  "
+        f"[bold yellow]r[/bold yellow] refresh  "
+        f"[bold yellow]h[/bold yellow] help"
+        f"     {status}{meta}{update}"
+    )
+
+
+class _ManagerKeyboardHandler:
+    """Keyboard handler for multi-workflow mode."""
+
+    def __init__(self, manager, loop):
+        self._manager = manager
+        self._loop = loop
+        self._thread = None
+        self._stop = threading.Event()
+
+    def start(self):
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+
+    def _run(self):
+        import select
+        import tty
+        import termios
+        fd = sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+        try:
+            tty.setcbreak(fd)
+            while not self._stop.is_set():
+                if select.select([sys.stdin], [], [], 0.1)[0]:
+                    ch = sys.stdin.read(1)
+                    self._handle(ch)
+        except Exception:
+            pass
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+    def _handle(self, ch: str):
+        if ch == "q":
+            console.print("\n[yellow]Shutting down all workflows...[/yellow]")
+            asyncio.run_coroutine_threadsafe(self._manager.stop(), self._loop)
+        elif ch == "s":
+            snap = self._manager.get_aggregate_snapshot()
+            running = snap["counts"]["running"]
+            retrying = snap["counts"]["retrying"]
+            gates = snap["counts"]["gates"]
+            tokens = snap["totals"]["total_tokens"]
+            console.print(
+                f"\n[bold]Status:[/bold] {running} running, "
+                f"{retrying} retrying, {gates} gates, "
+                f"{tokens:,} tokens"
+            )
+            for name, wf_snap in snap.get("workflows", {}).items():
+                wr = wf_snap.get("counts", {}).get("running", 0)
+                wt = wf_snap.get("totals", {}).get("total_tokens", 0)
+                console.print(f"  [dim]{name}:[/dim] {wr} running, {wt:,} tokens")
+        elif ch == "r":
+            console.print("[dim]Forcing poll on all workflows...[/dim]")
+            for orch in self._manager.orchestrators.values():
+                asyncio.run_coroutine_threadsafe(orch._tick(), self._loop)
+        elif ch == "h":
+            console.print(
+                "\n[bold]Keys:[/bold] "
+                "[yellow]q[/yellow] quit  "
+                "[yellow]s[/yellow] status  "
+                "[yellow]r[/yellow] refresh  "
+                "[yellow]h[/yellow] help"
+            )
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def cli():
@@ -333,8 +500,17 @@ def cli():
     _load_dotenv()
     setup_logging(args.verbose)
 
+    from .config import is_root_config
+
     if args.dry_run:
         asyncio.run(dry_run(args.workflow))
+    elif is_root_config(args.workflow):
+        try:
+            asyncio.run(run_manager(args.workflow, args.port))
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Interrupted — killing all agents...[/yellow]")
+            _force_kill_children()
+            console.print("[green]Done.[/green]")
     else:
         try:
             asyncio.run(run_orchestrator(args.workflow, args.port))
