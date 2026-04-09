@@ -31,11 +31,18 @@ class PollingConfig:
 @dataclass
 class WorkspaceConfig:
     root: str = ""
+    mode: str = "clone"  # "clone" or "worktree"
+    repo_path: str = ""  # required for worktree mode — path to the git repo
 
     def resolved_root(self) -> Path:
         if self.root:
             return Path(os.path.expandvars(os.path.expanduser(self.root)))
         return Path(tempfile.gettempdir()) / "stokowski_workspaces"
+
+    def resolved_repo_path(self) -> Path | None:
+        if self.repo_path:
+            return Path(os.path.expandvars(os.path.expanduser(self.repo_path)))
+        return None
 
 
 @dataclass
@@ -60,6 +67,7 @@ class ClaudeConfig:
     turn_timeout_ms: int = 3_600_000
     stall_timeout_ms: int = 300_000
     append_system_prompt: str | None = None
+    headless_prompt: str | None = None  # None = disabled, set to override default headless context
 
 
 @dataclass
@@ -329,7 +337,11 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
 
     # Parse workspace
     w = config_raw.get("workspace", {}) or {}
-    workspace = WorkspaceConfig(root=str(w.get("root", "")))
+    workspace = WorkspaceConfig(
+        root=str(w.get("root", "")),
+        mode=str(w.get("mode", "clone")),
+        repo_path=str(w.get("repo_path", "")),
+    )
 
     # Parse hooks
     h = config_raw.get("hooks", {}) or {}
@@ -354,6 +366,7 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
         turn_timeout_ms=_coerce_int(c.get("turn_timeout_ms"), 3_600_000),
         stall_timeout_ms=_coerce_int(c.get("stall_timeout_ms"), 300_000),
         append_system_prompt=c.get("append_system_prompt"),
+        headless_prompt=c.get("headless_prompt"),
     )
 
     # Parse agent

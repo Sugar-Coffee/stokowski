@@ -48,17 +48,16 @@ def build_claude_args(
     if claude_cfg.model:
         args.extend(["--model", claude_cfg.model])
 
-    # System prompt - always include headless context, plus any user additions
+    # System prompt - headless context is configurable (None = disabled)
     if not session_id:
-        headless_context = (
-            "You are running in headless/unattended mode via Stokowski orchestrator. "
-            "Do NOT use interactive skills, slash commands, or the Skill tool. "
-            "Do NOT invoke brainstorming, plan mode, or any interactive workflow. "
-            "Work autonomously and directly on the task."
-        )
-        extra = claude_cfg.append_system_prompt or ""
-        combined = f"{headless_context}\n{extra}".strip()
-        args.extend(["--append-system-prompt", combined])
+        parts: list[str] = []
+        if claude_cfg.headless_prompt is not None:
+            parts.append(claude_cfg.headless_prompt)
+        if claude_cfg.append_system_prompt:
+            parts.append(claude_cfg.append_system_prompt)
+        combined = "\n".join(parts).strip()
+        if combined:
+            args.extend(["--append-system-prompt", combined])
 
     return args
 

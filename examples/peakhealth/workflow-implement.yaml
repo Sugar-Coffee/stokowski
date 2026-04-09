@@ -1,0 +1,144 @@
+# =============================================================================
+# peakHealth — Implementation Workflow (Fully Autonomous)
+# =============================================================================
+#
+# Picks issues from Linear Todo/Backlog, implements, reviews, merges.
+# No human gates. Uses peakHealth's existing Claude Code skills.
+#
+# Usage:
+#   stokowski examples/peakhealth/workflow-implement.yaml
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Tracker
+# ---------------------------------------------------------------------------
+tracker:
+  kind: linear
+  project_slug: $LINEAR_PROJECT_SLUG      # set in .env or env var
+  api_key: $LINEAR_API_KEY                 # set in .env or env var
+
+# ---------------------------------------------------------------------------
+# Linear state mapping
+# ---------------------------------------------------------------------------
+linear_states:
+  todo: "Todo"
+  active: "In Progress"
+  review: "In Review"                       # used by fix-pr-reviews
+  gate_approved: "Gate Approved"            # unused in this workflow
+  rework: "Rework"                          # unused in this workflow
+  terminal:
+    - Done
+    - Canceled
+    - Duplicate
+    - Blocked
+
+# ---------------------------------------------------------------------------
+# Polling
+# ---------------------------------------------------------------------------
+polling:
+  interval_ms: 15000
+
+# ---------------------------------------------------------------------------
+# Workspace — git worktrees in the peakHealth repo
+# ---------------------------------------------------------------------------
+workspace:
+  mode: worktree
+  repo_path: ~/Documents/Projects/peakHealth
+  root: ~/Documents/Projects/peakHealth/.worktrees
+
+# ---------------------------------------------------------------------------
+# Hooks
+# ---------------------------------------------------------------------------
+hooks:
+  after_create: |
+    pnpm install --frozen-lockfile 2>/dev/null || true
+  before_run: |
+    git fetch origin main 2>/dev/null
+    git rebase origin/main 2>/dev/null || git rebase --abort 2>/dev/null || true
+  timeout_ms: 180000
+
+# ---------------------------------------------------------------------------
+# Claude defaults
+# ---------------------------------------------------------------------------
+claude:
+  permission_mode: auto
+  model: claude-sonnet-4-6
+  max_turns: 30
+  turn_timeout_ms: 3600000                  # 1 hour
+  stall_timeout_ms: 300000                  # 5 min
+  # headless_prompt is deliberately omitted (None) — skills are allowed
+  append_system_prompt: >
+    You are an autonomous coding agent working on the peakHealth project.
+    Work autonomously — do NOT use AskUserQuestion or pause for input.
+    Make all decisions yourself. When unsure, pick the pragmatic option.
+    Follow CLAUDE.md conventions. Use i18n for all user-facing text (en + es).
+    Keep changes under 300 lines. Commit with conventional commit format.
+
+# ---------------------------------------------------------------------------
+# Agent concurrency
+# ---------------------------------------------------------------------------
+agent:
+  max_concurrent_agents: 3
+  max_retry_backoff_ms: 300000
+  max_concurrent_agents_by_state:
+    implement: 3
+    review-push: 1                          # serialize pushes to avoid conflicts
+    fix-reviews: 1                          # serialize PR review fixes
+
+# ---------------------------------------------------------------------------
+# Prompts
+# ---------------------------------------------------------------------------
+prompts:
+  global_prompt: examples/peakhealth/prompts/global.md
+
+# ---------------------------------------------------------------------------
+# Server (dashboard)
+# ---------------------------------------------------------------------------
+server:
+  port: 4200
+
+# ---------------------------------------------------------------------------
+# State machine — no gates, fully autonomous
+# ---------------------------------------------------------------------------
+states:
+
+  # ── 1. Implement ────────────────────────────────────────────────────────
+  # Follows /start-task patterns: create branch, explore, implement, commit.
+  implement:
+    type: agent
+    prompt: examples/peakhealth/prompts/implement.md
+    linear_state: active
+    model: claude-sonnet-4-6
+    max_turns: 30
+    session: inherit
+    transitions:
+      complete: review-push
+
+  # ── 2. Review & Push ────────────────────────────────────────────────────
+  # Follows /review-before-push patterns: review diff, fix issues, push, create PR.
+  review-push:
+    type: agent
+    prompt: examples/peakhealth/prompts/review-push.md
+    linear_state: active
+    model: claude-opus-4-6
+    max_turns: 15
+    session: fresh                           # adversarial review — clean perspective
+    transitions:
+      complete: fix-reviews
+
+  # ── 3. Fix PR Reviews & Merge ──────────────────────────────────────────
+  # Follows /fix-pr-reviews patterns: watch CI, fix comments, merge.
+  fix-reviews:
+    type: agent
+    prompt: examples/peakhealth/prompts/fix-reviews.md
+    linear_state: active
+    model: claude-sonnet-4-6
+    max_turns: 20
+    session: fresh
+    transitions:
+      complete: done
+
+  # ── 4. Done ─────────────────────────────────────────────────────────────
+  done:
+    type: terminal
+    linear_state: terminal

@@ -28,7 +28,7 @@ from .models import Issue, RetryEntry, RunAttempt
 from .prompt import assemble_prompt, build_lifecycle_section
 from .runner import run_agent_turn, run_turn
 from .tracking import make_gate_comment, make_state_comment, parse_latest_tracking
-from .workspace import ensure_workspace, remove_workspace
+from .workspace import ensure_workspace, remove_workspace, WorkspaceResult
 
 logger = logging.getLogger("stokowski")
 
@@ -163,7 +163,7 @@ class Orchestrator:
             )
             ws_root = self.cfg.workspace.resolved_root()
             for issue in terminal:
-                await remove_workspace(ws_root, issue.identifier, self.cfg.hooks)
+                await remove_workspace(ws_root, issue.identifier, self.cfg.hooks, workspace_cfg=self.cfg.workspace)
             if terminal:
                 logger.info(f"Cleaned {len(terminal)} terminal workspaces")
         except Exception as e:
@@ -360,7 +360,7 @@ class Orchestrator:
             # Clean up workspace
             try:
                 ws_root = self.cfg.workspace.resolved_root()
-                await remove_workspace(ws_root, issue.identifier, self.cfg.hooks)
+                await remove_workspace(ws_root, issue.identifier, self.cfg.hooks, workspace_cfg=self.cfg.workspace)
             except Exception as e:
                 logger.warning(f"Failed to remove workspace for {issue.identifier}: {e}")
             # Clean up tracking state
@@ -688,7 +688,11 @@ class Orchestrator:
                 runner_type = state_cfg.runner
 
             ws_root = self.cfg.workspace.resolved_root()
-            ws = await ensure_workspace(ws_root, issue.identifier, self.cfg.hooks)
+            ws = await ensure_workspace(
+                ws_root, issue.identifier, self.cfg.hooks,
+                workspace_cfg=self.cfg.workspace,
+                branch_name=issue.branch_name,
+            )
             attempt.workspace_path = str(ws.path)
 
             # Move issue from Todo to In Progress if needed
@@ -1090,7 +1094,8 @@ class Orchestrator:
                 if attempt:
                     ws_root = self.cfg.workspace.resolved_root()
                     await remove_workspace(
-                        ws_root, attempt.issue_identifier, self.cfg.hooks
+                        ws_root, attempt.issue_identifier, self.cfg.hooks,
+                        workspace_cfg=self.cfg.workspace,
                     )
 
                 self.running.pop(issue_id, None)
