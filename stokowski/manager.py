@@ -26,32 +26,82 @@ class Manager:
         self.workflow_paths = workflow_paths
         self.shared_raw = shared_raw or {}
         self.orchestrators: dict[str, Orchestrator] = {}
+        self._workflow_tasks: dict[str, asyncio.Task] = {}
+        self._workflow_status: dict[str, str] = {}  # "running", "stopped", "failed"
         for name, path in workflow_paths.items():
             self.orchestrators[name] = Orchestrator(path, shared_raw=self.shared_raw)
+            self._workflow_status[name] = "stopped"
 
     async def start(self):
         """Start all orchestrators concurrently."""
-        tasks = {
-            name: asyncio.create_task(orch.start(), name=f"workflow:{name}")
-            for name, orch in self.orchestrators.items()
-        }
-        self._tasks = tasks
-        logger.info(f"Starting {len(tasks)} workflows: {', '.join(tasks.keys())}")
+        for name in self.orchestrators:
+            self.start_workflow(name)
+
+        logger.info(f"Starting {len(self._workflow_tasks)} workflows: {', '.join(self._workflow_tasks.keys())}")
+
+        if not self._workflow_tasks:
+            return
+
         # Wait for all — don't crash the daemon if one workflow fails
         done, pending = await asyncio.wait(
-            tasks.values(), return_when=asyncio.FIRST_COMPLETED
+            self._workflow_tasks.values(), return_when=asyncio.FIRST_COMPLETED
         )
         for t in done:
             exc = t.exception()
             if exc:
-                name = t.get_name().replace("workflow:", "")
-                logger.error(f"Workflow '{name}' failed to start: {exc}")
+                wf_name = t.get_name().replace("workflow:", "")
+                self._workflow_status[wf_name] = "failed"
+                logger.error(f"Workflow '{wf_name}' failed: {exc}")
         # If all workflows failed, re-raise the first error
         if not pending and all(t.exception() for t in done):
             raise done.pop().exception()
-        # Otherwise keep running with the healthy workflows
         if pending:
             await asyncio.wait(pending)
+
+    def start_workflow(self, name: str) -> bool:
+        """Start a single workflow. Returns False if already running or unknown."""
+        if name not in self.orchestrators:
+            return False
+        if name in self._workflow_tasks and not self._workflow_tasks[name].done():
+            return False  # already running
+
+        # Re-create orchestrator if it was stopped (stop() clears internal state)
+        if self._workflow_status.get(name) in ("stopped", "failed"):
+            from .orchestrator import Orchestrator
+            path = self.workflow_paths[name]
+            self.orchestrators[name] = Orchestrator(path, shared_raw=self.shared_raw)
+
+        orch = self.orchestrators[name]
+        task = asyncio.create_task(orch.start(), name=f"workflow:{name}")
+        task.add_done_callback(lambda t, n=name: self._on_workflow_done(n, t))
+        self._workflow_tasks[name] = task
+        self._workflow_status[name] = "running"
+        logger.info(f"Started workflow '{name}'")
+        return True
+
+    async def stop_workflow(self, name: str) -> bool:
+        """Stop a single workflow. Returns False if not running or unknown."""
+        if name not in self.orchestrators:
+            return False
+        orch = self.orchestrators[name]
+        await orch.stop()
+        task = self._workflow_tasks.get(name)
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._workflow_status[name] = "stopped"
+        logger.info(f"Stopped workflow '{name}'")
+        return True
+
+    def _on_workflow_done(self, name: str, task: asyncio.Task):
+        """Callback when a workflow task completes."""
+        if task.exception():
+            self._workflow_status[name] = "failed"
+        elif self._workflow_status.get(name) != "stopped":
+            self._workflow_status[name] = "stopped"
 
     async def stop(self):
         """Stop all orchestrators."""
@@ -66,9 +116,14 @@ class Manager:
         snapshots = {}
         for name, orch in self.orchestrators.items():
             try:
-                snapshots[name] = orch.get_state_snapshot()
+                snap = orch.get_state_snapshot()
+                snap["status"] = self._workflow_status.get(name, "stopped")
+                snapshots[name] = snap
             except Exception:
-                snapshots[name] = {"counts": {}, "totals": {}}
+                snapshots[name] = {
+                    "counts": {}, "totals": {},
+                    "status": self._workflow_status.get(name, "stopped"),
+                }
 
         total_running = sum(s.get("counts", {}).get("running", 0) for s in snapshots.values())
         total_retrying = sum(s.get("counts", {}).get("retrying", 0) for s in snapshots.values())

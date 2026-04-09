@@ -480,6 +480,18 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     color: var(--amber-dim);
   }
 
+  .wf-toggle {
+    margin-left: 8px;
+    cursor: pointer;
+    font-size: 9px;
+    opacity: 0.4;
+    transition: opacity 0.15s;
+  }
+
+  .wf-toggle:hover {
+    opacity: 1;
+  }
+
   .agent-workflow {
     font-size: 10px;
     color: var(--dim);
@@ -667,9 +679,22 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       const wf = data.workflows[name];
       const c = (wf.counts?.running || 0) + (wf.counts?.retrying || 0) + (wf.counts?.gates || 0);
       const active = currentWorkflow === name ? 'active' : '';
-      html += `<button class="wf-tab ${active}" onclick="switchWorkflow('${esc(name)}')">${esc(name)}<span class="wf-tab-count">${c}</span></button>`;
+      const status = wf.status || 'stopped';
+      const isRunning = status === 'running';
+      const dot = isRunning ? '<span style="color:var(--green)">●</span>' : '<span style="color:var(--red)">●</span>';
+      const toggleBtn = isRunning
+        ? `<span class="wf-toggle" onclick="event.stopPropagation();toggleWorkflow('${esc(name)}','stop')" title="Stop">◼</span>`
+        : `<span class="wf-toggle" onclick="event.stopPropagation();toggleWorkflow('${esc(name)}','start')" title="Start">▶</span>`;
+      html += `<button class="wf-tab ${active}" onclick="switchWorkflow('${esc(name)}')">${dot} ${esc(name)}<span class="wf-tab-count">${c}</span>${toggleBtn}</button>`;
     }
     tabs.innerHTML = html;
+  }
+
+  async function toggleWorkflow(name, action) {
+    try {
+      await fetch('/api/v1/workflows/' + encodeURIComponent(name) + '/' + action, { method: 'POST' });
+      refresh();
+    } catch(e) {}
   }
 
   function switchWorkflow(name) {
@@ -1231,6 +1256,22 @@ def create_app_multi(manager) -> FastAPI:
             return JSONResponse({"error": "workflow not found"}, status_code=404)
         asyncio.create_task(orch._tick())
         return JSONResponse({"ok": True})
+
+    @app.post("/api/v1/workflows/{name}/start")
+    async def api_workflow_start(name: str):
+        if name not in manager.orchestrators:
+            return JSONResponse({"error": "workflow not found"}, status_code=404)
+        ok = manager.start_workflow(name)
+        if not ok:
+            return JSONResponse({"error": "already running"}, status_code=409)
+        return JSONResponse({"ok": True, "status": "running"})
+
+    @app.post("/api/v1/workflows/{name}/stop")
+    async def api_workflow_stop(name: str):
+        if name not in manager.orchestrators:
+            return JSONResponse({"error": "workflow not found"}, status_code=404)
+        await manager.stop_workflow(name)
+        return JSONResponse({"ok": True, "status": "stopped"})
 
     @app.post("/api/v1/webhook/linear")
     async def webhook_linear(request: Request):
