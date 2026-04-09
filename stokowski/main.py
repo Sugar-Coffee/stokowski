@@ -455,6 +455,220 @@ class _ManagerKeyboardHandler:
                 "[yellow]h[/yellow] help"
             )
 
+# ── Init ──────────────────────────────────────────────────────────────────────
+
+_INIT_TEMPLATE = """\
+# Stokowski workflow config
+# Docs: https://github.com/erikpr1994/stokowski
+
+tracker:
+  kind: {tracker_kind}
+{tracker_fields}
+
+{states_section}
+
+polling:
+  interval_ms: 15000
+
+workspace:
+  mode: worktree
+  repo_path: {repo_path}
+  root: {repo_path}/.worktrees
+
+hooks:
+  after_create: |
+    # Install dependencies after creating a new worktree
+    # npm install || pnpm install --frozen-lockfile || true
+  before_run: |
+    git fetch origin main 2>/dev/null
+    git rebase origin/main 2>/dev/null || git rebase --abort 2>/dev/null || true
+  timeout_ms: 120000
+
+claude:
+  permission_mode: auto
+  max_turns: 20
+  turn_timeout_ms: 3600000
+  stall_timeout_ms: 300000
+
+agent:
+  max_concurrent_agents: 3
+  max_retry_backoff_ms: 300000
+
+prompts:
+  global_prompt: prompts/global.md
+
+server:
+  port: 4200
+
+states:
+  implement:
+    type: agent
+    prompt: prompts/implement.md
+    linear_state: active
+    max_turns: 30
+    session: inherit
+    transitions:
+      complete: done
+
+  done:
+    type: terminal
+    linear_state: terminal
+"""
+
+
+def _run_init():
+    """Interactive init command to scaffold a workflow config."""
+    import shutil
+    import subprocess
+
+    console.print("[bold]Stokowski Init[/bold]\n")
+
+    # Check required tools
+    checks = [
+        ("claude", "Claude Code CLI"),
+        ("gh", "GitHub CLI"),
+        ("git", "Git"),
+    ]
+    optional_checks = [
+        ("codex", "Codex CLI"),
+        ("gemini", "Gemini CLI"),
+    ]
+
+    all_ok = True
+    for cmd, label in checks:
+        if shutil.which(cmd):
+            console.print(f"  [green]OK[/green] {label} ({cmd})")
+        else:
+            console.print(f"  [red]MISSING[/red] {label} ({cmd})")
+            all_ok = False
+
+    for cmd, label in optional_checks:
+        if shutil.which(cmd):
+            console.print(f"  [green]OK[/green] {label} ({cmd}) [dim](optional)[/dim]")
+        else:
+            console.print(f"  [dim]--[/dim] {label} ({cmd}) [dim](optional)[/dim]")
+
+    if not all_ok:
+        console.print("\n[red]Install missing required tools before continuing.[/red]")
+        sys.exit(1)
+
+    console.print()
+
+    # Tracker selection
+    console.print("[bold]Tracker:[/bold]")
+    console.print("  1. Linear")
+    console.print("  2. GitHub Issues")
+    choice = input("\nSelect tracker [1]: ").strip() or "1"
+
+    if choice == "2":
+        tracker_kind = "github"
+        owner = input("GitHub owner (org or user): ").strip()
+        repo = input("GitHub repo name: ").strip()
+        tracker_fields = f"  github_owner: {owner}\n  github_repo: {repo}\n  github_token: $GITHUB_TOKEN"
+        states_section = f"github_states:\n  todo: \"Todo\"\n  active: \"In Progress\"\n  blocked: \"Blocked\"\n  terminal:\n    - Done"
+    else:
+        tracker_kind = "linear"
+        team_key = input("Linear team key (e.g. DEV): ").strip() or "DEV"
+        tracker_fields = f"  team_key: \"{team_key}\"\n  api_key: $LINEAR_API_KEY"
+        states_section = f"linear_states:\n  todo: \"Todo\"\n  active: \"In Progress\"\n  review: \"Human Review\"\n  gate_approved: \"Gate Approved\"\n  rework: \"Rework\"\n  blocked: \"Blocked\"\n  terminal:\n    - Done\n    - Canceled"
+
+    # Repo path
+    repo_path = os.getcwd()
+    console.print(f"\n[dim]Repo path:[/dim] {repo_path}")
+
+    # Output path
+    out_dir = Path(repo_path) / ".stokowski"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_file = out_dir / "workflow.yaml"
+
+    if out_file.exists():
+        overwrite = input(f"\n{out_file} already exists. Overwrite? [y/N]: ").strip().lower()
+        if overwrite != "y":
+            console.print("[yellow]Aborted.[/yellow]")
+            return
+
+    # Generate config
+    content = _INIT_TEMPLATE.format(
+        tracker_kind=tracker_kind,
+        tracker_fields=tracker_fields,
+        states_section=states_section,
+        repo_path=repo_path,
+    )
+
+    out_file.write_text(content)
+    console.print(f"\n[green]Created {out_file}[/green]")
+
+    # Create prompts directory
+    prompts_dir = out_dir / "prompts"
+    prompts_dir.mkdir(parents=True, exist_ok=True)
+
+    global_prompt = prompts_dir / "global.md"
+    if not global_prompt.exists():
+        global_prompt.write_text(
+            "# Global Prompt\n\n"
+            "You are an autonomous coding agent. Work autonomously — do NOT use\n"
+            "AskUserQuestion or pause for input. Read CLAUDE.md for project\n"
+            "conventions before starting.\n"
+        )
+        console.print(f"[green]Created {global_prompt}[/green]")
+
+    implement_prompt = prompts_dir / "implement.md"
+    if not implement_prompt.exists():
+        implement_prompt.write_text(
+            "# Implement\n\n"
+            "Implement the changes described in the issue. Follow the project's\n"
+            "coding conventions. Write tests if applicable. Create a PR when done.\n"
+        )
+        console.print(f"[green]Created {implement_prompt}[/green]")
+
+    # Create .env template
+    env_file = out_dir / ".env"
+    if not env_file.exists():
+        if tracker_kind == "github":
+            env_content = "# Stokowski environment variables\nGITHUB_TOKEN=\n"
+        else:
+            env_content = "# Stokowski environment variables\nLINEAR_API_KEY=\n"
+        env_file.write_text(env_content)
+        console.print(f"[green]Created {env_file}[/green]")
+
+    # Add .stokowski entries to .gitignore
+    gitignore = Path(repo_path) / ".gitignore"
+    stokowski_entries = [
+        "\n# Stokowski",
+        ".stokowski/.env",
+        ".stokowski/.stokowski_state_*.json",
+        ".stokowski/.worktrees/",
+    ]
+    entries_text = "\n".join(stokowski_entries) + "\n"
+    if gitignore.exists():
+        existing = gitignore.read_text()
+        if ".stokowski/.env" not in existing:
+            gitignore.write_text(existing.rstrip() + "\n" + entries_text)
+            console.print(f"[green]Updated {gitignore}[/green]")
+    else:
+        gitignore.write_text(entries_text)
+        console.print(f"[green]Created {gitignore}[/green]")
+
+    # Validate
+    console.print("\n[bold]Validating...[/bold]")
+    from .config import parse_workflow_file, validate_config
+    try:
+        wf = parse_workflow_file(str(out_file))
+        errors = validate_config(wf.config)
+        if errors:
+            for e in errors:
+                console.print(f"  [yellow]Warning: {e}[/yellow]")
+        else:
+            console.print("  [green]Config valid[/green]")
+    except Exception as e:
+        console.print(f"  [red]Error: {e}[/red]")
+
+    console.print(f"\n[bold]Next steps:[/bold]")
+    console.print(f"  1. Set your API key: export {'GITHUB_TOKEN' if tracker_kind == 'github' else 'LINEAR_API_KEY'}=...")
+    console.print(f"  2. Edit prompts in {prompts_dir}/")
+    console.print(f"  3. Run: stokowski {out_file}")
+    console.print(f"  4. Or dry-run: stokowski --dry-run {out_file}")
+
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
@@ -482,6 +696,12 @@ def cli():
     )
 
     args = parser.parse_args()
+
+    # Handle "stokowski init" as a special case
+    if args.workflow == "init":
+        _load_dotenv()
+        _run_init()
+        return
 
     if args.workflow is None:
         if Path("workflow.yaml").exists():
