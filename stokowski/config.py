@@ -406,6 +406,7 @@ class RootConfig:
     """Parsed root config with shared settings and workflow paths."""
     workflow_paths: dict[str, Path]
     shared_raw: dict[str, Any]  # shared config sections to merge into workflows
+    workflow_enabled: dict[str, bool] = field(default_factory=dict)  # per-workflow enabled flag
 
 
 # Sections that live in the root config (shared across workflows)
@@ -430,22 +431,30 @@ def parse_root_config(path: str | Path) -> RootConfig:
 
     base_dir = path.parent
     workflow_paths: dict[str, Path] = {}
+    workflow_enabled: dict[str, bool] = {}
     for name, entry in raw["workflows"].items():
         if isinstance(entry, str):
             wf_path = entry
+            enabled = True
         elif isinstance(entry, dict):
             wf_path = str(entry.get("path", ""))
+            enabled = entry.get("enabled", True)
         else:
             raise ValueError(f"Invalid workflow entry '{name}'")
         resolved = (base_dir / wf_path).resolve()
         if not resolved.exists():
             raise FileNotFoundError(f"Workflow '{name}' not found: {resolved}")
         workflow_paths[name] = resolved
+        workflow_enabled[name] = bool(enabled)
 
     # Extract shared sections
     shared_raw = {k: v for k, v in raw.items() if k in _SHARED_SECTIONS and v}
 
-    return RootConfig(workflow_paths=workflow_paths, shared_raw=shared_raw)
+    return RootConfig(
+        workflow_paths=workflow_paths,
+        shared_raw=shared_raw,
+        workflow_enabled=workflow_enabled,
+    )
 
 
 def parse_workflow_file(

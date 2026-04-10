@@ -296,7 +296,11 @@ async def run_manager(root_config_path: str, port: int | None = None):
     from .manager import Manager
 
     root_cfg = parse_root_config(root_config_path)
-    mgr = Manager(root_cfg.workflow_paths, shared_raw=root_cfg.shared_raw)
+    mgr = Manager(
+        root_cfg.workflow_paths,
+        shared_raw=root_cfg.shared_raw,
+        workflow_enabled=root_cfg.workflow_enabled,
+    )
     loop = asyncio.get_running_loop()
 
     # Read port from root config if not specified on CLI
@@ -607,6 +611,49 @@ def _run_init():
             env_key_name = "LINEAR_API_KEY"
             env_key_value = input("Linear API key (or press Enter to set later): ").strip()
 
+    # Webhook configuration
+    webhook_secret = ""
+    webhook_configured = False
+    if root_config_path.exists():
+        try:
+            root_raw = _yaml.safe_load(root_config_path.read_text()) or {}
+            existing_wh = root_raw.get("webhook", {})
+            if isinstance(existing_wh, dict) and existing_wh.get("secret"):
+                webhook_configured = True
+                console.print(f"[dim]Webhook already configured[/dim]")
+        except Exception:
+            pass
+
+    if not webhook_configured:
+        console.print("\n[bold]Event delivery:[/bold]")
+        console.print("  1. Polling only [dim](simpler, checks every N seconds)[/dim]")
+        console.print("  2. Webhook + polling [dim](instant reactions, polling as fallback)[/dim]")
+        wh_choice = input("\nSelect mode [1]: ").strip() or "1"
+
+        if wh_choice == "2":
+            webhook_secret = input("Webhook signing secret (or press Enter to generate one): ").strip()
+            if not webhook_secret:
+                import secrets
+                webhook_secret = secrets.token_hex(32)
+                console.print(f"  [green]Generated secret:[/green] {webhook_secret}")
+
+            console.print(f"\n  [bold]Setup instructions:[/bold]")
+            if tracker_kind == "github":
+                console.print(f"  1. Go to your repo → Settings → Webhooks → Add webhook")
+                console.print(f"  2. Payload URL: http://<your-host>:4200/api/v1/webhook/github")
+                console.print(f"  3. Content type: application/json")
+                console.print(f"  4. Secret: {webhook_secret}")
+                console.print(f"  5. Events: select 'Issues', 'Pull requests', 'Pull request reviews'")
+                console.print(f"  [dim]Docs: https://docs.github.com/en/webhooks/using-webhooks/creating-webhooks[/dim]")
+            else:
+                console.print(f"  1. Go to Linear → Settings → API → Webhooks → New webhook")
+                console.print(f"  2. URL: http://<your-host>:4200/api/v1/webhook/linear")
+                console.print(f"  3. Secret: {webhook_secret}")
+                console.print(f"  4. Events: select 'Issues' (data change)")
+                console.print(f"  [dim]Docs: https://developers.linear.app/docs/graphql/webhooks[/dim]")
+
+            console.print(f"\n  [dim]For local dev, use ngrok or similar to expose the port.[/dim]")
+
     console.print(f"\n[dim]Repo path:[/dim] {repo_path}")
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -897,7 +944,8 @@ def _run_init():
             f"  max_retry_backoff_ms: 300000\n\n"
             f"server:\n"
             f"  port: 4200\n\n"
-            f"# ── Workflows ──\n\n"
+            + (f"webhook:\n  secret: {webhook_secret}\n\n" if webhook_secret else "")
+            + f"# ── Workflows ──\n\n"
             f"{workflows_block}"
         )
         root_config.write_text(root_content)

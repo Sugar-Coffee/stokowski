@@ -20,6 +20,7 @@ class Manager:
         self,
         workflow_paths: dict[str, Path],
         shared_raw: dict[str, Any] | None = None,
+        workflow_enabled: dict[str, bool] | None = None,
     ):
         from .orchestrator import Orchestrator
 
@@ -31,32 +32,43 @@ class Manager:
         for name, path in workflow_paths.items():
             self.orchestrators[name] = Orchestrator(path, shared_raw=self.shared_raw)
             self._workflow_status[name] = "stopped"
+        self._workflow_enabled = workflow_enabled or {}
 
     async def start(self):
-        """Start all orchestrators concurrently."""
+        """Start enabled workflows. Disabled workflows stay stopped (start from UI)."""
         for name in self.orchestrators:
-            self.start_workflow(name)
+            if self._workflow_enabled.get(name, False):
+                self.start_workflow(name)
 
-        logger.info(f"Starting {len(self._workflow_tasks)} workflows: {', '.join(self._workflow_tasks.keys())}")
+        started = [n for n, s in self._workflow_status.items() if s == "running"]
+        stopped = [n for n, s in self._workflow_status.items() if s == "stopped"]
+        if started:
+            logger.info(f"Started {len(started)} workflow(s): {', '.join(started)}")
+        if stopped:
+            logger.info(f"{len(stopped)} workflow(s) stopped (start from dashboard): {', '.join(stopped)}")
 
-        if not self._workflow_tasks:
-            return
-
-        # Wait for all — don't crash the daemon if one workflow fails
-        done, pending = await asyncio.wait(
-            self._workflow_tasks.values(), return_when=asyncio.FIRST_COMPLETED
-        )
-        for t in done:
-            exc = t.exception()
-            if exc:
-                wf_name = t.get_name().replace("workflow:", "")
-                self._workflow_status[wf_name] = "failed"
-                logger.error(f"Workflow '{wf_name}' failed: {exc}")
-        # If all workflows failed, re-raise the first error
-        if not pending and all(t.exception() for t in done):
-            raise done.pop().exception()
-        if pending:
-            await asyncio.wait(pending)
+        # Keep running — wait for tasks or idle (dashboard-only mode)
+        self._stop_event = asyncio.Event()
+        while not self._stop_event.is_set():
+            running_tasks = [t for t in self._workflow_tasks.values() if not t.done()]
+            if running_tasks:
+                done, _ = await asyncio.wait(
+                    running_tasks,
+                    return_when=asyncio.FIRST_COMPLETED,
+                    timeout=5.0,
+                )
+                for t in done:
+                    exc = t.exception()
+                    if exc:
+                        wf_name = t.get_name().replace("workflow:", "")
+                        self._workflow_status[wf_name] = "failed"
+                        logger.error(f"Workflow '{wf_name}' failed: {exc}")
+            else:
+                # No workflows running — idle, waiting for UI to start one
+                try:
+                    await asyncio.wait_for(self._stop_event.wait(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    pass
 
     def start_workflow(self, name: str) -> bool:
         """Start a single workflow. Returns False if already running or unknown."""
@@ -106,6 +118,8 @@ class Manager:
     async def stop(self):
         """Stop all orchestrators."""
         logger.info("Stopping all workflows")
+        if hasattr(self, "_stop_event"):
+            self._stop_event.set()
         await asyncio.gather(
             *(orch.stop() for orch in self.orchestrators.values()),
             return_exceptions=True,
