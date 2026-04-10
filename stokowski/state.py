@@ -19,6 +19,17 @@ logger = logging.getLogger("stokowski.state")
 
 
 @dataclass
+class PersistedIssueState:
+    """Per-issue state for crash recovery."""
+    issue_id: str = ""
+    identifier: str = ""
+    current_state: str = ""       # internal state machine state
+    run: int = 1
+    session_id: str | None = None
+    workspace_path: str = ""
+
+
+@dataclass
 class PersistedState:
     last_schedule_fire_iso: str | None = None
     total_input_tokens: int = 0
@@ -26,6 +37,8 @@ class PersistedState:
     total_tokens: int = 0
     total_seconds_running: float = 0
     retry_attempts: dict[str, dict] = field(default_factory=dict)
+    # Per-issue tracking for crash recovery
+    issues: dict[str, dict] = field(default_factory=dict)  # issue_id -> PersistedIssueState as dict
 
 
 def state_file_path(workflow_path: Path) -> Path:
