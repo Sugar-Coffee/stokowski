@@ -193,6 +193,7 @@ class ServiceConfig:
     tracker_enabled: bool = True        # false = no tracker polling (schedule-only workflows)
     filter_labels: list[str] = field(default_factory=list)  # only pick up issues with these labels
     pickup_states: list[str] = field(default_factory=list)  # only pick up issues in these states (default: all active)
+    exclude_labels: list[str] = field(default_factory=list)  # skip issues with any of these labels
     workspace_enabled: bool = True      # false = no worktree/clone, agent runs in repo root
 
     def resolved_api_key(self) -> str:
@@ -642,6 +643,7 @@ def parse_workflow_file(
     if tracker_enabled is None:
         tracker_enabled = True
     filter_labels = _coerce_list(config_raw.get("filter_labels"))
+    exclude_labels = _coerce_list(config_raw.get("exclude_labels"))
     pickup_states = _coerce_list(config_raw.get("pickup_states"))
     workspace_enabled = config_raw.get("workspace_enabled", True)
     if workspace_enabled is None:
@@ -664,6 +666,7 @@ def parse_workflow_file(
         github_states=github_states,
         tracker_enabled=bool(tracker_enabled),
         filter_labels=filter_labels,
+        exclude_labels=exclude_labels,
         pickup_states=pickup_states,
         workspace_enabled=bool(workspace_enabled),
     )

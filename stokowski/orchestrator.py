@@ -1045,6 +1045,13 @@ class Orchestrator:
             if not required & issue_labels:
                 return False
 
+        # Exclude labels filter
+        if self.cfg.exclude_labels:
+            excluded = {l.lower() for l in self.cfg.exclude_labels}
+            issue_labels = {l.lower() for l in issue.labels}
+            if excluded & issue_labels:
+                return False
+
         # Blocker check for Todo
         if state_lower == "todo":
             for blocker in issue.blocked_by:
