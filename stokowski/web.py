@@ -1253,8 +1253,9 @@ def create_app_multi(manager) -> FastAPI:
 
     @app.post("/api/v1/refresh")
     async def api_refresh():
-        for orch in manager.orchestrators.values():
-            asyncio.create_task(orch._tick())
+        for name, orch in manager.orchestrators.items():
+            if manager._workflow_status.get(name) == "running":
+                asyncio.create_task(orch._tick())
         return JSONResponse({"ok": True})
 
     @app.post("/api/v1/workflows/{name}/refresh")

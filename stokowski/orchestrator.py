@@ -761,6 +761,8 @@ class Orchestrator:
 
     async def webhook_tick(self):
         """Coalesced tick triggered by webhook. Deduplicates rapid calls."""
+        if not self._running:
+            return
         self._last_webhook_at = datetime.now(timezone.utc)
         if self._webhook_tick_pending:
             return
@@ -866,6 +868,9 @@ class Orchestrator:
 
     async def _tick(self):
         """Single poll tick: reconcile, validate, fetch, dispatch."""
+        if not self._running:
+            return  # workflow is stopped
+
         # Reload workflow (supports hot-reload)
         errors = self._load_workflow()
 
