@@ -702,7 +702,24 @@ def _run_init():
             console.print(f"\n  [bold]Step 3: Copy the signing secret[/bold]")
             webhook_secret = input("  Paste the signing secret: ").strip()
             if webhook_secret:
-                console.print(f"  [green]Webhook configured[/green]")
+                # Save webhook secret to stokowski.yaml
+                root_cfg_path = out_dir / "stokowski.yaml"
+                if root_cfg_path.exists():
+                    root_content = root_cfg_path.read_text()
+                    if "webhook:" not in root_content:
+                        root_cfg_path.write_text(
+                            root_content.rstrip() + f"\n\nwebhook:\n  secret: {webhook_secret}\n"
+                        )
+                    else:
+                        # Update existing webhook section
+                        import re
+                        root_content = re.sub(
+                            r'webhook:\s*\n(\s*secret:\s*).*',
+                            f'webhook:\n  secret: {webhook_secret}',
+                            root_content,
+                        )
+                        root_cfg_path.write_text(root_content)
+                console.print(f"  [green]Webhook configured and saved to stokowski.yaml[/green]")
             else:
                 console.print(f"  [yellow]No secret — webhook signature verification will be skipped[/yellow]")
 
@@ -920,29 +937,14 @@ def _run_init():
             else:
                 console.print(f"  [green]{wf_path.name}: valid[/green]")
 
-            # Auto-migrate shared fields from workflow to root config
+            # Note per-workflow overrides (don't migrate — they're intentional)
             if root_config.exists():
                 wf_raw = _yaml.safe_load(wf_path.read_text()) or {}
-                duplicated = [k for k in _SHARED_KEYS if k in wf_raw and wf_raw[k]]
-                if duplicated:
-                    # Read root config and add missing shared sections
-                    root_raw = _yaml.safe_load(root_config.read_text()) or {}
-                    additions = ""
-                    for key in duplicated:
-                        if key not in root_raw or not root_raw[key]:
-                            # Move to root config
-                            additions += f"\n# Migrated from {wf_path.name}\n"
-                            additions += _yaml.dump({key: wf_raw[key]}, default_flow_style=False)
-                    if additions:
-                        root_config.write_text(root_config.read_text().rstrip() + "\n" + additions)
-
-                    # Remove shared sections from workflow file
-                    wf_content = wf_path.read_text()
-                    cleaned_raw = {k: v for k, v in wf_raw.items() if k not in _SHARED_KEYS}
-                    wf_path.write_text(_yaml.dump(cleaned_raw, default_flow_style=False, sort_keys=False))
+                overrides = [k for k in _SHARED_KEYS if k in wf_raw and wf_raw[k]]
+                if overrides:
                     console.print(
-                        f"  [green]{wf_path.name}: migrated {', '.join(duplicated)} "
-                        f"to stokowski.yaml[/green]"
+                        f"  [dim]{wf_path.name}: overrides {', '.join(overrides)} "
+                        f"(intentional per-workflow config)[/dim]"
                     )
         except Exception as e:
             console.print(f"  [red]{wf_path.name}: {e}[/red]")
