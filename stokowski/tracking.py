@@ -1,14 +1,11 @@
-"""State machine tracking via issue description.
+"""State machine tracking.
 
-Tracking data is stored as a hidden block at the bottom of the issue
-description, not as comments. This keeps the comment stream clean.
+Tracking data is stored in the persistent state file, not in
+issue descriptions or comments. This avoids polluting the issue
+with machine-readable markup that Linear renders as visible text.
 
-The block format:
-  <!-- stokowski:tracking
-  {"state": "implement", "run": 1, "timestamp": "..."}
-  -->
-
-This is invisible in both Linear and GitHub renderers.
+Legacy support: the parser still reads old <!-- stokowski:state -->
+comment format for backwards compatibility during migration.
 """
 
 from __future__ import annotations

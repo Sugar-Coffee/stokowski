@@ -131,14 +131,12 @@ class Orchestrator:
         return self._tracker
 
     async def _update_tracking(self, issue_id: str, payload: dict) -> bool:
-        """Update tracking data in the issue description."""
-        # Skip for synthetic issues (schedule-only, no real tracker issue)
-        if issue_id.startswith("schedule:") or not self.cfg.tracker_enabled:
-            return True
-        client = self._ensure_tracker_client()
-        desc = await client.fetch_issue_description(issue_id)
-        new_desc = update_description_tracking(desc, payload)
-        return await client.update_issue_description(issue_id, new_desc)
+        """Update tracking state — stored in memory + persistent state file.
+
+        No longer writes to issue descriptions or comments to avoid
+        polluting the issue with machine-readable markup.
+        """
+        return True
 
     def _clear_state(self):
         """Delete persisted state file on clean shutdown."""
@@ -425,9 +423,7 @@ class Orchestrator:
             reason = attempt.last_message or "Agent could not complete this issue"
             comment = (
                 f"**Stokowski: Issue blocked**\n\n"
-                f"{reason}\n\n"
-                f"<!-- stokowski:blocked {{\"state\":\"{attempt.state_name}\","
-                f"\"reason\":\"{reason[:100]}\"}} -->"
+                f"{reason}"
             )
             await client.post_comment(issue.id, comment)
 
