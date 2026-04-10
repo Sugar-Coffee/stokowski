@@ -173,6 +173,36 @@ class TestParseWorkflow:
         wf = parse_workflow_file(path)
         assert wf.config.states["review"].auto_approve == "when_no_questions"
 
+    def test_max_concurrent_parsed(self, tmp_yaml):
+        path = tmp_yaml("""
+            tracker:
+              kind: linear
+              api_key: test_key
+              team_key: DEV
+            states:
+              triage:
+                type: agent
+                prompt: prompts/triage.md
+                linear_state: active
+                max_concurrent: 1
+                transitions:
+                  complete: done
+              implement:
+                type: agent
+                prompt: prompts/impl.md
+                linear_state: active
+                max_concurrent: 3
+                transitions:
+                  complete: done
+              done:
+                type: terminal
+                linear_state: terminal
+        """)
+        wf = parse_workflow_file(path)
+        assert wf.config.states["triage"].max_concurrent == 1
+        assert wf.config.states["implement"].max_concurrent == 3
+        assert wf.config.states["done"].max_concurrent is None
+
     def test_missing_file_raises(self):
         with pytest.raises(FileNotFoundError):
             parse_workflow_file("/nonexistent/path.yaml")

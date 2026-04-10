@@ -159,6 +159,7 @@ class StateConfig:
     session: str = "inherit"
     permission_mode: str | None = None
     allowed_tools: list[str] | None = None
+    max_concurrent: int | None = None  # per-state concurrency limit (overrides agent.max_concurrent_agents_by_state)
     rework_to: str | None = None     # gate only
     max_rework: int | None = None    # gate only
     auto_approve: str = "never"      # gate only: "never", "when_no_questions", "always"
@@ -372,6 +373,7 @@ def _parse_state_config(name: str, raw: dict[str, Any]) -> StateConfig:
         session=str(raw.get("session", "inherit")),
         permission_mode=raw.get("permission_mode"),
         allowed_tools=_coerce_list(allowed) if allowed is not None else None,
+        max_concurrent=raw.get("max_concurrent"),
         rework_to=raw.get("rework_to"),
         max_rework=raw.get("max_rework"),
         auto_approve=str(raw.get("auto_approve", "never")),

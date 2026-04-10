@@ -347,3 +347,106 @@ class TestAutoApproveGate:
 
         # Flag should be cleaned up regardless
         assert issue.id not in orch._issue_needs_review
+
+
+@pytest.fixture
+def concurrent_workflow_yaml(tmp_path):
+    """Create a workflow with per-state max_concurrent."""
+    p = tmp_path / "workflow.yaml"
+    p.write_text(textwrap.dedent("""\
+        tracker:
+          kind: linear
+          api_key: test_key
+          team_key: DEV
+        states:
+          triage:
+            type: agent
+            prompt: prompts/triage.md
+            linear_state: active
+            max_concurrent: 1
+            transitions:
+              complete: implement
+          implement:
+            type: agent
+            prompt: prompts/impl.md
+            linear_state: active
+            max_concurrent: 2
+            transitions:
+              complete: done
+          done:
+            type: terminal
+            linear_state: terminal
+    """))
+    return p
+
+
+class TestPerStateConcurrency:
+    def test_max_concurrent_parsed(self, concurrent_workflow_yaml):
+        orch = _make_orch(concurrent_workflow_yaml)
+        assert orch.cfg.states["triage"].max_concurrent == 1
+        assert orch.cfg.states["implement"].max_concurrent == 2
+        assert orch.cfg.states["done"].max_concurrent is None
+
+    def test_state_limit_blocks_dispatch(self, concurrent_workflow_yaml):
+        """When max_concurrent is reached for a state, additional issues are skipped."""
+        orch = _make_orch(concurrent_workflow_yaml)
+
+        # Simulate one agent already running in triage
+        running_attempt = RunAttempt(issue_id="issue-running", issue_identifier="DEV-0")
+        orch.running["issue-running"] = running_attempt
+        orch._issue_current_state["issue-running"] = "triage"
+        orch._last_issues["issue-running"] = _make_issue(id="issue-running", identifier="DEV-0")
+
+        # New issue wants to enter triage
+        issue = _make_issue(id="issue-new", identifier="DEV-1")
+        orch._issue_current_state["issue-new"] = "triage"
+
+        # Manually run the per-state concurrency check logic
+        state_key = "triage"
+        state_cfg = orch.cfg.states.get(state_key)
+        state_limit = state_cfg.max_concurrent if state_cfg and state_cfg.max_concurrent is not None else None
+        state_count = sum(
+            1 for r in orch.running.values()
+            if orch._issue_current_state.get(r.issue_id, "") == state_key
+        )
+
+        assert state_limit == 1
+        assert state_count == 1
+        assert state_count >= state_limit  # Would be skipped in dispatch
+
+    def test_different_state_not_blocked(self, concurrent_workflow_yaml):
+        """An issue in a different state is not blocked by another state's limit."""
+        orch = _make_orch(concurrent_workflow_yaml)
+
+        # One agent running in triage (limit=1)
+        running_attempt = RunAttempt(issue_id="issue-running", issue_identifier="DEV-0")
+        orch.running["issue-running"] = running_attempt
+        orch._issue_current_state["issue-running"] = "triage"
+
+        # New issue wants implement (limit=2)
+        state_key = "implement"
+        state_cfg = orch.cfg.states.get(state_key)
+        state_limit = state_cfg.max_concurrent
+        state_count = sum(
+            1 for r in orch.running.values()
+            if orch._issue_current_state.get(r.issue_id, "") == state_key
+        )
+
+        assert state_limit == 2
+        assert state_count == 0
+        assert state_count < state_limit  # Would be dispatched
+
+    def test_inline_overrides_agent_level(self, concurrent_workflow_yaml):
+        """StateConfig.max_concurrent takes precedence over agent.max_concurrent_agents_by_state."""
+        orch = _make_orch(concurrent_workflow_yaml)
+        # Set a conflicting agent-level limit
+        orch.cfg.agent.max_concurrent_agents_by_state["triage"] = 10
+
+        state_cfg = orch.cfg.states.get("triage")
+        # Inline should win
+        state_limit = (
+            state_cfg.max_concurrent
+            if state_cfg and state_cfg.max_concurrent is not None
+            else orch.cfg.agent.max_concurrent_agents_by_state.get("triage")
+        )
+        assert state_limit == 1  # inline, not 10

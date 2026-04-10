@@ -1075,7 +1075,13 @@ class Orchestrator:
             # Per-state concurrency check (global)
             issue_machine_state = self._issue_current_state.get(issue.id, "")
             state_key_for_limit = issue_machine_state or issue.state.strip().lower()
-            state_limit = self.cfg.agent.max_concurrent_agents_by_state.get(state_key_for_limit)
+            # Prefer inline max_concurrent on the state, fall back to agent-level config
+            state_cfg = self.cfg.states.get(state_key_for_limit)
+            state_limit = (
+                state_cfg.max_concurrent
+                if state_cfg and state_cfg.max_concurrent is not None
+                else self.cfg.agent.max_concurrent_agents_by_state.get(state_key_for_limit)
+            )
             if state_limit is not None:
                 state_count = sum(
                     1
