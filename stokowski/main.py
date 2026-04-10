@@ -631,28 +631,58 @@ def _run_init():
         wh_choice = input("\nSelect mode [1]: ").strip() or "1"
 
         if wh_choice == "2":
+            import shutil as _shutil
+
+            # Determine webhook URL
+            webhook_endpoint = "/api/v1/webhook/github" if tracker_kind == "github" else "/api/v1/webhook/linear"
+            webhook_url = f"http://127.0.0.1:4200{webhook_endpoint}"
+
+            # Step 1: Tunnel setup
+            console.print(f"\n  [bold]Step 1: Set up a tunnel[/bold]")
+            console.print(f"  Webhooks need a public URL — your tracker can't reach localhost.")
+            if _shutil.which("ngrok"):
+                console.print(f"  [green]ngrok found![/green] Run this in a separate terminal:")
+                console.print(f"    [bold]ngrok http 4200[/bold]")
+            else:
+                console.print(f"  Install ngrok:")
+                console.print(f"    [bold]brew install ngrok[/bold]")
+                console.print(f"  Then run in a separate terminal:")
+                console.print(f"    [bold]ngrok http 4200[/bold]")
+                console.print(f"  [dim]Alternative: brew install cloudflared && cloudflared tunnel --url http://localhost:4200[/dim]")
+
+            input("\n  Press Enter when your tunnel is running...")
+
+            public_url = input(f"  Paste your public tunnel URL (e.g. https://abc123.ngrok.io): ").strip()
+            if public_url:
+                public_url = public_url.rstrip("/")
+                webhook_url = f"{public_url}{webhook_endpoint}"
+            console.print(f"  [dim]Webhook URL: {webhook_url}[/dim]")
+
+            # Step 2: Create webhook in tracker
+            console.print(f"\n  [bold]Step 2: Create the webhook in {'GitHub' if tracker_kind == 'github' else 'Linear'}[/bold]")
             if tracker_kind == "github":
-                console.print(f"\n  [bold]Create the webhook first:[/bold]")
                 console.print(f"  1. Go to your repo → Settings → Webhooks → Add webhook")
-                console.print(f"  2. Payload URL: http://127.0.0.1:4200/api/v1/webhook/github")
+                console.print(f"  2. Payload URL: {webhook_url}")
                 console.print(f"  3. Content type: application/json")
                 console.print(f"  4. Set a secret and copy it")
                 console.print(f"  5. Events: select 'Issues', 'Pull requests', 'Pull request reviews'")
+                console.print(f"  6. Click 'Add webhook'")
                 console.print(f"  [dim]Docs: https://docs.github.com/en/webhooks/using-webhooks/creating-webhooks[/dim]")
             else:
-                console.print(f"\n  [bold]Create the webhook first:[/bold]")
                 console.print(f"  1. Go to Linear → Settings → API → Webhooks → New webhook")
                 console.print(f"  2. Label: Stokowski")
-                console.print(f"  3. URL: http://127.0.0.1:4200/api/v1/webhook/linear")
+                console.print(f"  3. URL: {webhook_url}")
                 console.print(f"  4. Data change events: select 'Issues' and 'Issue labels'")
                 console.print(f"  5. Click 'Create webhook'")
                 console.print(f"  [dim]Docs: https://developers.linear.app/docs/graphql/webhooks[/dim]")
 
-            console.print(f"\n  [dim]For local dev, use ngrok or similar to expose the port.[/dim]")
-            console.print()
-            webhook_secret = input("  Paste the signing secret from your webhook: ").strip()
+            input("\n  Press Enter when the webhook is created...")
+
+            # Step 3: Get the signing secret
+            console.print(f"\n  [bold]Step 3: Copy the signing secret[/bold]")
+            webhook_secret = input("  Paste the signing secret: ").strip()
             if webhook_secret:
-                console.print(f"  [green]Webhook secret saved[/green]")
+                console.print(f"  [green]Webhook configured[/green]")
             else:
                 console.print(f"  [yellow]No secret — webhook signature verification will be skipped[/yellow]")
 
