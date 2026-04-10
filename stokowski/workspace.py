@@ -219,8 +219,9 @@ async def _ensure_worktree_inner(
                             )
                             return WorkspaceResult(
                                 path=existing_path,
-                                branch=branch_name,
-                                created=False,
+                                workspace_key=issue_identifier,
+                                created_now=False,
+                                branch_name=branch_name,
                             )
                 raise RuntimeError(
                     f"Failed to create worktree for {issue_identifier}: "
