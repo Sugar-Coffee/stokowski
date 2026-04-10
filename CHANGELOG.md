@@ -8,6 +8,49 @@ All notable changes to Stokowski are documented here.
 
 ---
 
+## [0.5.0] - 2026-04-10
+
+### Added
+
+- feat: multi-workflow manager — run N workflows from a shared `stokowski.yaml` root config with independent start/stop controls (manager.py) (99b12bf)
+- feat: GitHub Issues tracker backend — label-based state management with automatic label creation and atomic swaps (github_issues.py) (68d928b)
+- feat: PR-based dispatch — `source: github-prs` processes pull requests directly without a tracker (68d928b)
+- feat: crash recovery — persist and restore per-issue state (stage, session ID, workspace path) on restart (2974b97)
+- feat: run history — completed agent runs recorded to `history.json` and displayed in dashboard (644d4f4, ddaec4d)
+- feat: shared Linear rate limiter — all workflows share one API client with semaphore throttling and exponential cooldown (99b12bf, ce18abe)
+- feat: dispatch queue — candidate issues survive failed API ticks instead of being dropped (1baec5f)
+- feat: per-workflow filtering — `filter_labels`, `exclude_labels`, `pickup_states`, per-workflow `linear_states` (4b49141, 2ae492b, 789714c)
+- feat: schedule-only workflows — `tracker_enabled: false` with cron schedule, no tracker dependency (4b49141)
+- feat: workspace-free workflows — `workspace_enabled: false` skips worktree/clone creation (6c9ea43)
+- feat: light/dark mode with system preference detection, responsive layout, ARIA accessibility (d859b85, 8b048fa, ff351c3)
+- feat: webhook init — `stokowski init` configures secrets for both Linear and GitHub with HMAC verification (9d412f1)
+- feat: Gemini CLI runner with session resumption and stream-json parsing (runner.py)
+- feat: orphan agent cleanup — kill stale `claude -p` processes on startup (839bde8)
+- feat: terminal states support custom `linear_state` and `"none"` (3d71c34)
+- feat: workflow start time shown in dashboard tabs (f2c576d)
+- feat: manager state recovery — previously running workflows auto-restart (ddaec4d)
+
+### Fixed
+
+- fix: preserve workspace when issue is blocked — unpushed WIP survives (bc90fcf)
+- fix: CancelledError during shutdown on Python 3.14 — `task.cancelled()` guard (839bde8)
+- fix: worktree reuse when branch is already checked out (a511b5e, 5d00b3c)
+- fix: reconciliation includes pickup_states as valid active states (844ee78)
+- fix: PR-based issues skip all Linear API calls (caf82c1, 62e8d99)
+- fix: stopped workflows cannot be ticked by webhooks or poll loops (bd92bee)
+- fix: Linear API retry on 400/429 with exponential backoff (f677fac)
+- fix: serialize worktree creation with asyncio.Lock (d8be170)
+- fix: prevent re-dispatch of completed issues (d8be170)
+- fix: eliminate unnecessary Linear API calls from orchestrator (55ac029)
+- fix: WorkspaceResult field names (419519a, 135b867)
+- fix: webhook secret storage in .env and stokowski.yaml (889a07f, 71401d4)
+- fix: light mode hardcoded colors and schedule validation (0146255)
+- fix: file logging + don't cancel internally-tracked workers (9f0c5d6)
+- fix: stop retry spam when no orchestrator slots available (1b2cf4e)
+- fix: remove all HTML comments from Linear issues (72eb638)
+
+---
+
 ## [0.4.0] - 2026-03-23
 
 ### Added
@@ -128,7 +171,8 @@ All notable changes to Stokowski are documented here.
 
 ---
 
-[Unreleased]: https://github.com/erikpr1994/stokowski/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/erikpr1994/stokowski/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/erikpr1994/stokowski/releases/tag/v0.5.0
 [0.4.0]: https://github.com/erikpr1994/stokowski/releases/tag/v0.4.0
 [0.3.0]: https://github.com/erikpr1994/stokowski/releases/tag/v0.3.0
 [0.2.2]: https://github.com/erikpr1994/stokowski/releases/tag/v0.2.2
