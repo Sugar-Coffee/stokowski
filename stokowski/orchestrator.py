@@ -329,6 +329,12 @@ class Orchestrator:
                 self._issue_state_runs[issue.id] = 1
                 return entry, 1
 
+        # For PR-based or synthetic issues, use entry state directly
+        if issue.id.startswith("pr:") or issue.id.startswith("schedule:") or not self.cfg.tracker_enabled:
+            self._issue_current_state[issue.id] = entry
+            self._issue_state_runs[issue.id] = 1
+            return entry, 1
+
         # For in-progress issues, fetch tracking to recover state
         client = self._ensure_tracker_client()
         desc = await client.fetch_issue_description(issue.id)
@@ -1116,11 +1122,12 @@ class Orchestrator:
             if excluded & issue_labels:
                 return False
 
-        # Blocker check for Todo
-        if state_lower == "todo":
-            for blocker in issue.blocked_by:
-                if blocker.state and blocker.state.strip().lower() not in terminal_lower:
-                    return False
+        # Blocker check for Todo (skip for PR-based issues)
+        if not issue.id.startswith("pr:"):
+            if issue.state.strip().lower() == "todo":
+                for blocker in issue.blocked_by:
+                    if blocker.state and blocker.state.strip().lower() not in [s.strip().lower() for s in self.cfg.terminal_linear_states()]:
+                        return False
 
         return True
 
@@ -1385,7 +1392,7 @@ class Orchestrator:
 
             # Fetch comments for lifecycle context (skip for synthetic/trackerless)
             comments: list[dict] | None = None
-            if self.cfg.tracker_enabled and not issue.id.startswith("schedule:"):
+            if self.cfg.tracker_enabled and not issue.id.startswith("schedule:") and not issue.id.startswith("pr:"):
                 try:
                     client = self._ensure_tracker_client()
                     comments = await client.fetch_comments(issue.id)
