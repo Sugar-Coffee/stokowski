@@ -132,6 +132,9 @@ class Orchestrator:
 
     async def _update_tracking(self, issue_id: str, payload: dict) -> bool:
         """Update tracking data in the issue description."""
+        # Skip for synthetic issues (schedule-only, no real tracker issue)
+        if issue_id.startswith("schedule:") or not self.cfg.tracker_enabled:
+            return True
         client = self._ensure_tracker_client()
         desc = await client.fetch_issue_description(issue_id)
         new_desc = update_description_tracking(desc, payload)
@@ -249,16 +252,18 @@ class Orchestrator:
                     pass
         self._child_pids.clear()
 
-        # Cancel async tasks
+        # Cancel async tasks and wait for them to finish
         for issue_id, task in list(self._tasks.items()):
             task.cancel()
-        # Give them a moment to finish
         if self._tasks:
-            await asyncio.sleep(0.5)
+            await asyncio.gather(
+                *self._tasks.values(), return_exceptions=True
+            )
         self._tasks.clear()
 
         self._clear_state()
 
+        # Close tracker client after all tasks are done
         if self._tracker:
             await self._tracker.close()
 
@@ -291,17 +296,30 @@ class Orchestrator:
             run = self._issue_state_runs.get(issue.id, 1)
             return state_name, run
 
-        # Parse tracking from description (falls back to legacy comments)
-        client = self._ensure_tracker_client()
-        desc = await client.fetch_issue_description(issue.id)
-        comments = await client.fetch_comments(issue.id)
-        tracking = parse_latest_tracking(desc, comments)
-
         entry = self.cfg.entry_state_for_issue(issue.labels)
         if entry is None:
             raise RuntimeError("No entry state defined in config")
 
-        # No tracking → entry state (may be label-routed), run 1
+        # For issues in pickup states (typically Todo/Backlog), assume no prior
+        # tracking — they haven't been worked on yet. Skip expensive API calls.
+        pickup = self.cfg.pickup_states
+        if pickup:
+            pickup_lower = {s.strip().lower() for s in pickup}
+            if issue.state.strip().lower() in pickup_lower:
+                self._issue_current_state[issue.id] = entry
+                self._issue_state_runs[issue.id] = 1
+                return entry, 1
+
+        # For in-progress issues, fetch tracking to recover state
+        client = self._ensure_tracker_client()
+        desc = await client.fetch_issue_description(issue.id)
+        tracking = parse_latest_tracking(desc)
+
+        # Fall back to legacy comments only if description has no tracking
+        if tracking is None:
+            comments = await client.fetch_comments(issue.id)
+            tracking = parse_latest_tracking(desc, comments)
+
         if tracking is None:
             self._issue_current_state[issue.id] = entry
             self._issue_state_runs[issue.id] = 1

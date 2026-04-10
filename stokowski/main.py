@@ -454,9 +454,10 @@ class _ManagerKeyboardHandler:
                 wt = wf_snap.get("totals", {}).get("total_tokens", 0)
                 console.print(f"  [dim]{name}:[/dim] {wr} running, {wt:,} tokens")
         elif ch == "r":
-            console.print("[dim]Forcing poll on all workflows...[/dim]")
+            console.print("[dim]Forcing poll on tracker-enabled workflows...[/dim]")
             for orch in self._manager.orchestrators.values():
-                asyncio.run_coroutine_threadsafe(orch._tick(), self._loop)
+                if orch.workflow and orch.cfg.tracker_enabled:
+                    asyncio.run_coroutine_threadsafe(orch._tick(), self._loop)
         elif ch == "h":
             console.print(
                 "\n[bold]Keys:[/bold] "
