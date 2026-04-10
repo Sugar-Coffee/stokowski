@@ -545,6 +545,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     opacity: 1;
   }
 
+  .wf-tab-time {
+    font-size: 12px;
+    color: var(--dim);
+    margin-left: 6px;
+    font-weight: 300;
+  }
+
   .agent-workflow {
     font-size: 12px;
     color: var(--dim);
@@ -669,6 +676,15 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     return n.toString();
   }
 
+  function fmtRelativeTime(iso) {
+    if (!iso) return '';
+    const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+    if (diff < 60) return `${diff}s ago`;
+    if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff/3600)}h ${Math.floor((diff%3600)/60)}m ago`;
+    return `${Math.floor(diff/86400)}d ago`;
+  }
+
   function fmtSecs(s) {
     if (s < 60)   return Math.round(s) + 's';
     if (s < 3600) return Math.floor(s/60) + 'm ' + Math.round(s%60) + 's';
@@ -769,7 +785,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         ? `<span class="wf-toggle" onclick="event.stopPropagation();toggleWorkflow('${esc(name)}','stop')" title="Stop">◼</span>`
         : `<span class="wf-toggle" onclick="event.stopPropagation();toggleWorkflow('${esc(name)}','start')" title="Start">▶</span>`;
       const runNowBtn = `<span class="wf-toggle" onclick="event.stopPropagation();triggerRun('${esc(name)}')" title="Run Now">RUN</span>`;
-      html += `<button class="wf-tab ${active}" onclick="switchWorkflow('${esc(name)}')">${dot} ${esc(name)}<span class="wf-tab-count">${c}</span>${toggleBtn}${runNowBtn}</button>`;
+      const startedAt = wf.started_at || '';
+      const startedInfo = startedAt && isRunning ? ` <span class="wf-tab-time" title="Started ${startedAt}">${fmtRelativeTime(startedAt)}</span>` : '';
+      html += `<button class="wf-tab ${active}" onclick="switchWorkflow('${esc(name)}')">${dot} ${esc(name)}<span class="wf-tab-count">${c}</span>${startedInfo}${toggleBtn}${runNowBtn}</button>`;
     }
     tabs.innerHTML = html;
   }

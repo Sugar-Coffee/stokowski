@@ -29,6 +29,7 @@ class Manager:
         self.orchestrators: dict[str, Orchestrator] = {}
         self._workflow_tasks: dict[str, asyncio.Task] = {}
         self._workflow_status: dict[str, str] = {}  # "running", "stopped", "failed"
+        self._workflow_started_at: dict[str, str] = {}  # ISO timestamp
         self._shared_tracker = None  # shared Linear/GitHub client
 
         for name, path in workflow_paths.items():
@@ -144,6 +145,8 @@ class Manager:
         task.add_done_callback(lambda t, n=name: self._on_workflow_done(n, t))
         self._workflow_tasks[name] = task
         self._workflow_status[name] = "running"
+        from datetime import datetime, timezone
+        self._workflow_started_at[name] = datetime.now(timezone.utc).isoformat()
         logger.info(f"Started workflow '{name}'")
         return True
 
@@ -188,10 +191,12 @@ class Manager:
             try:
                 snap = orch.get_state_snapshot()
                 snap["status"] = self._workflow_status.get(name, "stopped")
+                snap["started_at"] = self._workflow_started_at.get(name, "")
                 snapshots[name] = snap
             except Exception:
                 snapshots[name] = {
                     "counts": {}, "totals": {},
+                    "started_at": self._workflow_started_at.get(name, ""),
                     "status": self._workflow_status.get(name, "stopped"),
                 }
 
