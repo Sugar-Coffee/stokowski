@@ -661,7 +661,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <div class="metric" id="m-runtime">
       <div class="metric-label">Runtime</div>
       <div class="metric-value" id="v-runtime">—</div>
-      <div class="metric-sub">cumulative seconds</div>
+      <div class="metric-sub">cumulative runtime</div>
     </div>
   </div>
 
