@@ -95,6 +95,7 @@ class Orchestrator:
 
         # Webhook coalescing
         self._webhook_tick_pending: bool = False
+        self._last_webhook_at: datetime | None = None
 
         # Persistent state
         self._state_path: Path | None = None
@@ -196,15 +197,28 @@ class Orchestrator:
             except Exception as e:
                 logger.error(f"Tick error: {e}")
 
-            # Interruptible sleep — use longer interval when webhooks are active
-            poll_ms = self.cfg.polling.interval_ms
+            # When webhooks are active and working, skip polling.
+            # Fall back to polling if no webhook received in 10 minutes.
             if self.cfg.webhook.secret:
-                poll_ms = max(poll_ms, 300_000)  # 5 min minimum when webhooks active
+                since_wh = (
+                    (datetime.now(timezone.utc) - self._last_webhook_at).total_seconds()
+                    if self._last_webhook_at else float("inf")
+                )
+                if since_wh < 600:
+                    try:
+                        await asyncio.wait_for(self._stop_event.wait(), timeout=600)
+                        break
+                    except asyncio.TimeoutError:
+                        pass
+                    continue
+                elif self._last_webhook_at:
+                    logger.warning("No webhook received in 10 min — falling back to polling")
 
+            # Interruptible sleep
             try:
                 await asyncio.wait_for(
                     self._stop_event.wait(),
-                    timeout=poll_ms / 1000,
+                    timeout=self.cfg.polling.interval_ms / 1000,
                 )
                 break  # stop_event was set
             except asyncio.TimeoutError:
@@ -720,6 +734,7 @@ class Orchestrator:
 
     async def webhook_tick(self):
         """Coalesced tick triggered by webhook. Deduplicates rapid calls."""
+        self._last_webhook_at = datetime.now(timezone.utc)
         if self._webhook_tick_pending:
             return
         self._webhook_tick_pending = True
@@ -856,11 +871,13 @@ class Orchestrator:
             return
 
         # Part 3: Fetch candidates
+        # Use pickup_states for polling if configured, otherwise default active states
+        poll_states = self.cfg.pickup_states if self.cfg.pickup_states else self.cfg.active_linear_states()
         try:
             client = self._ensure_tracker_client()
             candidates = await client.fetch_candidate_issues(
                 self.cfg.tracker.project_slug,
-                self.cfg.active_linear_states(),
+                poll_states,
                 team_key=self.cfg.tracker.team_key,
             )
         except Exception as e:
