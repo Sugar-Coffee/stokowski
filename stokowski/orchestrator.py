@@ -499,6 +499,7 @@ class Orchestrator:
             return
 
         run = self._issue_state_runs.get(issue.id, 1)
+        _is_synthetic = issue.id.startswith("schedule:") or not self.cfg.tracker_enabled
 
         if target_cfg.type == "terminal":
             # Move issue to the terminal's configured linear_state
@@ -544,16 +545,16 @@ class Orchestrator:
             await self._enter_gate(issue, target_name)
 
         else:
-            # Agent state — post state comment, ensure active Linear state, schedule retry
+            # Agent state — update tracking, ensure active Linear state, schedule retry
             self._issue_current_state[issue.id] = target_name
-            client = self._ensure_tracker_client()
             await self._update_tracking(issue.id, make_state_payload(state=target_name, run=run))
 
-            # Ensure issue is in active Linear state
-            active_state = self.cfg.linear_states.active
-            moved = await client.update_issue_state(issue.id, active_state)
-            if not moved:
-                logger.warning(f"Failed to move {issue.identifier} to active state '{active_state}'")
+            if not _is_synthetic:
+                client = self._ensure_tracker_client()
+                active_state = self.cfg.linear_states.active
+                moved = await client.update_issue_state(issue.id, active_state)
+                if not moved:
+                    logger.warning(f"Failed to move {issue.identifier} to active state '{active_state}'")
 
             self._schedule_retry(issue, attempt_num=0, delay_ms=1000)
 
@@ -1108,9 +1109,15 @@ class Orchestrator:
                 repo_path = self.cfg.workspace.resolved_repo_path()
                 attempt.workspace_path = str(repo_path or Path.cwd())
 
-            # Move issue from Todo to In Progress if needed
+            # Move issue from Todo to Active if needed (skip if same state or synthetic)
             todo_state = self.cfg.linear_states.todo
-            if todo_state and issue.state.strip().lower() == todo_state.strip().lower():
+            active_state_name = self.cfg.linear_states.active
+            _skip_move = (
+                not self.cfg.tracker_enabled
+                or issue.id.startswith("schedule:")
+                or (todo_state and active_state_name and todo_state.strip().lower() == active_state_name.strip().lower())
+            )
+            if not _skip_move and todo_state and issue.state.strip().lower() == todo_state.strip().lower():
                 try:
                     client = self._ensure_tracker_client()
                     active_state = self.cfg.linear_states.active
