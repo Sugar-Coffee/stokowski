@@ -695,7 +695,7 @@ def validate_config(cfg: ServiceConfig) -> list[str]:
         return errors
 
     # Valid linear_state keys
-    valid_linear_keys = {"todo", "active", "review", "gate_approved", "rework", "blocked", "terminal"}
+    valid_linear_keys = {"todo", "active", "review", "gate_approved", "rework", "blocked", "terminal", "none"}
 
     has_agent = False
     has_terminal = False
@@ -729,8 +729,10 @@ def validate_config(cfg: ServiceConfig) -> list[str]:
         elif sc.type == "terminal":
             has_terminal = True
 
-        # Validate linear_state key
-        if sc.linear_state not in valid_linear_keys:
+        # Validate linear_state key (allow literal state names too)
+        if sc.linear_state not in valid_linear_keys and sc.linear_state == sc.linear_state.lower():
+            # Only warn for lowercase keys that aren't recognized
+            # Capitalized values like "Todo", "In Progress" are treated as literal state names
             errors.append(
                 f"State '{name}' has invalid linear_state: '{sc.linear_state}' "
                 f"(valid: {', '.join(sorted(valid_linear_keys))})"
