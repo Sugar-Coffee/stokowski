@@ -631,28 +631,30 @@ def _run_init():
         wh_choice = input("\nSelect mode [1]: ").strip() or "1"
 
         if wh_choice == "2":
-            webhook_secret = input("Webhook signing secret (or press Enter to generate one): ").strip()
-            if not webhook_secret:
-                import secrets
-                webhook_secret = secrets.token_hex(32)
-                console.print(f"  [green]Generated secret:[/green] {webhook_secret}")
-
-            console.print(f"\n  [bold]Setup instructions:[/bold]")
             if tracker_kind == "github":
+                console.print(f"\n  [bold]Create the webhook first:[/bold]")
                 console.print(f"  1. Go to your repo → Settings → Webhooks → Add webhook")
-                console.print(f"  2. Payload URL: http://<your-host>:4200/api/v1/webhook/github")
+                console.print(f"  2. Payload URL: http://127.0.0.1:4200/api/v1/webhook/github")
                 console.print(f"  3. Content type: application/json")
-                console.print(f"  4. Secret: {webhook_secret}")
+                console.print(f"  4. Set a secret and copy it")
                 console.print(f"  5. Events: select 'Issues', 'Pull requests', 'Pull request reviews'")
                 console.print(f"  [dim]Docs: https://docs.github.com/en/webhooks/using-webhooks/creating-webhooks[/dim]")
             else:
+                console.print(f"\n  [bold]Create the webhook first:[/bold]")
                 console.print(f"  1. Go to Linear → Settings → API → Webhooks → New webhook")
-                console.print(f"  2. URL: http://<your-host>:4200/api/v1/webhook/linear")
-                console.print(f"  3. Secret: {webhook_secret}")
-                console.print(f"  4. Events: select 'Issues' (data change)")
+                console.print(f"  2. Label: Stokowski")
+                console.print(f"  3. URL: http://127.0.0.1:4200/api/v1/webhook/linear")
+                console.print(f"  4. Data change events: select 'Issues' and 'Issue labels'")
+                console.print(f"  5. Click 'Create webhook'")
                 console.print(f"  [dim]Docs: https://developers.linear.app/docs/graphql/webhooks[/dim]")
 
             console.print(f"\n  [dim]For local dev, use ngrok or similar to expose the port.[/dim]")
+            console.print()
+            webhook_secret = input("  Paste the signing secret from your webhook: ").strip()
+            if webhook_secret:
+                console.print(f"  [green]Webhook secret saved[/green]")
+            else:
+                console.print(f"  [yellow]No secret — webhook signature verification will be skipped[/yellow]")
 
     console.print(f"\n[dim]Repo path:[/dim] {repo_path}")
     out_dir.mkdir(parents=True, exist_ok=True)
