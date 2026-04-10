@@ -460,11 +460,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   /* ── Workflow tabs ── */
   .workflow-tabs {
     display: flex;
+    flex-wrap: wrap;
     gap: 1px;
     background: var(--border);
     border: 1px solid var(--border);
     margin-bottom: 24px;
     display: none;  /* hidden in single-workflow mode */
+    overflow-x: auto;
   }
 
   .workflow-tabs.visible {
@@ -549,6 +551,32 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     letter-spacing: 0.08em;
     text-transform: uppercase;
     margin-top: 2px;
+  }
+
+  /* ── Responsive ── */
+  @media (max-width: 768px) {
+    .shell { padding: 0 12px 40px; }
+    header { flex-wrap: wrap; gap: 12px; padding: 16px 0; }
+    .logo-tag { display: none; }
+
+    .metrics { grid-template-columns: repeat(2, 1fr); }
+    .metric { padding: 14px 16px; }
+    .metric-value { font-size: 24px; }
+
+    .workflow-tabs { flex-wrap: wrap; }
+    .wf-tab { padding: 8px 12px; font-size: 12px; flex: 0 0 auto; min-width: 0; }
+
+    .agent-card { grid-template-columns: 80px 1fr; gap: 10px; padding: 12px 16px; }
+    .agent-meta { display: none; }
+    .agent-msg { max-width: 100%; }
+
+    .stats-bar { flex-wrap: wrap; gap: 12px; }
+    footer { flex-direction: column; gap: 8px; text-align: center; }
+  }
+
+  @media (max-width: 480px) {
+    .metrics { grid-template-columns: 1fr; }
+    .wf-tab { flex: 1 1 auto; text-align: center; min-width: 80px; }
   }
 </style>
 </head>
