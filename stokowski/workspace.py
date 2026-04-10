@@ -175,8 +175,27 @@ async def _ensure_worktree_inner(
 
     if proc.returncode != 0:
         error_msg = stderr.decode()[:500]
-        # Branch might already exist — try without -b
-        if "already exists" in error_msg:
+        if "already used by worktree" in error_msg:
+            # Branch is checked out at another worktree — reuse it
+            import re
+            match = re.search(r"worktree at '([^']+)'", error_msg)
+            if match:
+                existing_path = Path(match.group(1))
+                if existing_path.exists():
+                    logger.info(
+                        f"Reusing existing worktree for {issue_identifier} "
+                        f"at {existing_path}"
+                    )
+                    return WorkspaceResult(
+                        path=existing_path,
+                        branch=branch_name,
+                        created=False,
+                    )
+            raise RuntimeError(
+                f"Failed to create worktree for {issue_identifier}: {error_msg}"
+            )
+        elif "already exists" in error_msg:
+            # Branch exists but no worktree — try without -b
             proc2 = await asyncio.create_subprocess_exec(
                 "git", "worktree", "add",
                 str(worktree_dir), branch_name,
