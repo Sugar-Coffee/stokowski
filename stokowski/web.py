@@ -685,9 +685,19 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       const toggleBtn = isRunning
         ? `<span class="wf-toggle" onclick="event.stopPropagation();toggleWorkflow('${esc(name)}','stop')" title="Stop">◼</span>`
         : `<span class="wf-toggle" onclick="event.stopPropagation();toggleWorkflow('${esc(name)}','start')" title="Start">▶</span>`;
-      html += `<button class="wf-tab ${active}" onclick="switchWorkflow('${esc(name)}')">${dot} ${esc(name)}<span class="wf-tab-count">${c}</span>${toggleBtn}</button>`;
+      const runNowBtn = isRunning
+        ? `<span class="wf-toggle" onclick="event.stopPropagation();triggerRun('${esc(name)}')" title="Run Now">⚡</span>`
+        : '';
+      html += `<button class="wf-tab ${active}" onclick="switchWorkflow('${esc(name)}')">${dot} ${esc(name)}<span class="wf-tab-count">${c}</span>${toggleBtn}${runNowBtn}</button>`;
     }
     tabs.innerHTML = html;
+  }
+
+  async function triggerRun(name) {
+    try {
+      await fetch('/api/v1/workflows/' + encodeURIComponent(name) + '/trigger', { method: 'POST' });
+      refresh();
+    } catch(e) {}
   }
 
   async function toggleWorkflow(name, action) {

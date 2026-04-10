@@ -137,6 +137,14 @@ class Orchestrator:
         new_desc = update_description_tracking(desc, payload)
         return await client.update_issue_description(issue_id, new_desc)
 
+    def _clear_state(self):
+        """Delete persisted state file on clean shutdown."""
+        if self._state_path and self._state_path.exists():
+            try:
+                self._state_path.unlink()
+            except OSError:
+                pass
+
     def _save_state(self):
         """Persist current state to disk."""
         if not self._state_path:
@@ -249,7 +257,7 @@ class Orchestrator:
             await asyncio.sleep(0.5)
         self._tasks.clear()
 
-        self._save_state()
+        self._clear_state()
 
         if self._tracker:
             await self._tracker.close()
