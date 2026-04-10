@@ -566,6 +566,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .history-row:hover { background: var(--border); }
   .history-id { font-weight: 600; color: var(--amber); }
   .history-title { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .history-stage { color: var(--dim); font-size: 11px; margin-left: 8px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 3px; }
   .history-wf { color: var(--dim); font-size: 12px; }
   .history-status { font-size: 12px; font-weight: 500; }
   .history-status.succeeded { color: var(--green); }
@@ -940,7 +941,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             <div class="history-id">${esc(r.identifier)}</div>
             <div class="history-wf">${esc(r.workflow)}</div>
           </div>
-          <div class="history-title">${esc(r.title || r.last_message || '—')}</div>
+          <div class="history-title">
+            ${esc(r.title || '—')}
+            ${r.stages && r.stages.length ? `<span class="history-stage">${esc(r.stages[r.stages.length - 1])}</span>` : ''}
+          </div>
           <div class="history-status ${statusCls}">${esc(r.status)}</div>
           <div class="history-tokens">${fmt(r.tokens || 0)} tok</div>
           <div class="history-time">${esc(time)}</div>
