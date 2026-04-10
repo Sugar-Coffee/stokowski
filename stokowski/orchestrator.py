@@ -1600,14 +1600,23 @@ class Orchestrator:
                 self._tasks.pop(issue_id, None)
 
             elif state_lower not in active_lower:
-                # Neither active nor terminal nor review - stop without cleanup
-                logger.info(
-                    f"Reconciliation: {issue_id} not active ({current_state}), stopping"
-                )
-                task = self._tasks.get(issue_id)
-                if task:
-                    task.cancel()
-                self.running.pop(issue_id, None)
+                # Check if we're actively managing this issue's state machine
+                if issue_id in self._issue_current_state:
+                    # We're driving this issue — don't cancel even if Linear state
+                    # doesn't match (agent may have moved it during review-push)
+                    logger.debug(
+                        f"Reconciliation: {issue_id} Linear state={current_state} "
+                        f"but internal state={self._issue_current_state[issue_id]}, keeping"
+                    )
+                else:
+                    # Not tracked internally — externally moved, stop worker
+                    logger.info(
+                        f"Reconciliation: {issue_id} not active ({current_state}), stopping"
+                    )
+                    task = self._tasks.get(issue_id)
+                    if task:
+                        task.cancel()
+                    self.running.pop(issue_id, None)
                 self._tasks.pop(issue_id, None)
                 self.claimed.discard(issue_id)
 

@@ -48,11 +48,27 @@ _update_message: str | None = None
 
 def setup_logging(verbose: bool = False):
     level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="%(message)s",
-        handlers=[RichHandler(console=console, rich_tracebacks=True)],
-    )
+
+    # Console handler (Rich)
+    console_handler = RichHandler(console=console, rich_tracebacks=True)
+    console_handler.setLevel(level)
+
+    # File handler — logs to .stokowski/stokowski.log
+    handlers: list[logging.Handler] = [console_handler]
+    log_dir = Path(".stokowski")
+    if log_dir.exists():
+        file_handler = logging.FileHandler(
+            log_dir / "stokowski.log", mode="a", encoding="utf-8"
+        )
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        ))
+        handlers.append(file_handler)
+
+    logging.basicConfig(level=level, format="%(message)s", handlers=handlers)
+
     # Suppress noisy httpx request logs
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
