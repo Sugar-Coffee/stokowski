@@ -1481,6 +1481,7 @@ class Orchestrator:
                 last_message=attempt.last_message[:200] if attempt.last_message else "",
                 result_text=attempt.last_message[:2000] if attempt.last_message else "",
                 session_id=attempt.session_id or "",
+                session_ids=list(attempt.session_ids),
                 error=attempt.error[:200] if attempt.error else None,
             )
             append_run(history_path, record)
@@ -1714,6 +1715,7 @@ class Orchestrator:
                     "issue_id": r.issue_id,
                     "issue_identifier": r.issue_identifier,
                     "session_id": r.session_id,
+                    "session_ids": r.session_ids,
                     "turn_count": r.turn_count,
                     "status": r.status,
                     "last_event": r.last_event,

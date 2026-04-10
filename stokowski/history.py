@@ -31,7 +31,8 @@ class RunRecord:
     stages: list[str] = field(default_factory=list)  # state machine states traversed
     last_message: str = ""
     result_text: str = ""  # full agent result (final output)
-    session_id: str = ""   # claude session ID for replay via --resume
+    session_id: str = ""   # last claude session ID for replay via --resume
+    session_ids: list[str] = field(default_factory=list)  # all session IDs across turns
     error: str | None = None
 
 

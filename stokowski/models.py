@@ -39,6 +39,7 @@ class RunAttempt:
     started_at: datetime | None = None
     status: str = "pending"
     session_id: str | None = None
+    session_ids: list[str] = field(default_factory=list)  # all session IDs across turns
     error: str | None = None
     input_tokens: int = 0
     output_tokens: int = 0

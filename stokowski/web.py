@@ -353,6 +353,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     color: var(--muted);
     font-weight: 300;
   }
+  .agent-session {
+    font-size: 11px;
+    color: var(--dim);
+    font-family: monospace;
+    cursor: help;
+  }
 
   /* ── Empty state ── */
   .empty {
@@ -797,6 +803,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         <div class="agent-meta">
           <div class="agent-tokens">${fmt(r.tokens?.total_tokens || 0)} tok</div>
           <div class="agent-turns">turn ${r.turn_count || 0}</div>
+          ${r.session_id ? `<div class="agent-session" title="${esc(r.session_ids?.join(', ') || r.session_id)}">${esc(r.session_id.slice(0, 8))}...</div>` : ''}
         </div>
       </div>`;
     }).join('');
@@ -947,7 +954,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         <div class="history-detail" id="${detailId}">
           ${r.result_text ? `<div class="history-result">${esc(r.result_text)}</div>` : ''}
           ${r.error ? `<div class="history-error">Error: ${esc(r.error)}</div>` : ''}
-          ${r.session_id ? `<div class="history-session">session: ${esc(r.session_id)}</div>` : ''}
+          ${r.session_ids && r.session_ids.length ? `<div class="history-session">sessions: ${r.session_ids.map(s => esc(s)).join(', ')}</div>` : r.session_id ? `<div class="history-session">session: ${esc(r.session_id)}</div>` : ''}
         </div>` : '';
         return `
         <div class="history-row" ${clickAttr}>

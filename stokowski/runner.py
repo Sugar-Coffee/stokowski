@@ -445,6 +445,8 @@ def _process_event(
     if event_type == "result":
         if "session_id" in event:
             attempt.session_id = event["session_id"]
+            if event["session_id"] not in attempt.session_ids:
+                attempt.session_ids.append(event["session_id"])
         # Extract token usage
         usage = event.get("usage", {})
         if usage:
@@ -497,6 +499,8 @@ def _process_gemini_event(
         # Gemini sends session_id in the init event
         if "session_id" in event:
             attempt.session_id = event["session_id"]
+            if event["session_id"] not in attempt.session_ids:
+                attempt.session_ids.append(event["session_id"])
 
     elif event_type == "result":
         # Stats use different field names than Claude
