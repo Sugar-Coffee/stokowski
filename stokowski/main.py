@@ -702,24 +702,40 @@ def _run_init():
             console.print(f"\n  [bold]Step 3: Copy the signing secret[/bold]")
             webhook_secret = input("  Paste the signing secret: ").strip()
             if webhook_secret:
-                # Save webhook secret to stokowski.yaml
+                # Save secret to .env
+                env_file = out_dir / ".env"
+                if env_file.exists():
+                    env_content = env_file.read_text()
+                    if "WEBHOOK_SECRET=" in env_content:
+                        lines = env_content.splitlines(keepends=True)
+                        for i, line in enumerate(lines):
+                            if line.strip().startswith("WEBHOOK_SECRET="):
+                                lines[i] = f"WEBHOOK_SECRET={webhook_secret}\n"
+                                break
+                        env_file.write_text("".join(lines))
+                    else:
+                        env_file.write_text(env_content.rstrip() + f"\nWEBHOOK_SECRET={webhook_secret}\n")
+                else:
+                    env_file.write_text(f"WEBHOOK_SECRET={webhook_secret}\n")
+
+                # Save webhook config (secret ref + URL) to stokowski.yaml
                 root_cfg_path = out_dir / "stokowski.yaml"
                 if root_cfg_path.exists():
                     root_content = root_cfg_path.read_text()
+                    webhook_block = f"webhook:\n  secret: $WEBHOOK_SECRET\n  url: {webhook_url}\n"
                     if "webhook:" not in root_content:
-                        root_cfg_path.write_text(
-                            root_content.rstrip() + f"\n\nwebhook:\n  secret: {webhook_secret}\n"
-                        )
+                        root_cfg_path.write_text(root_content.rstrip() + f"\n\n{webhook_block}")
                     else:
-                        # Update existing webhook section
                         import re
                         root_content = re.sub(
-                            r'webhook:\s*\n(\s*secret:\s*).*',
-                            f'webhook:\n  secret: {webhook_secret}',
+                            r'webhook:.*?(?=\n\S|\Z)',
+                            webhook_block.rstrip(),
                             root_content,
+                            flags=re.DOTALL,
                         )
                         root_cfg_path.write_text(root_content)
-                console.print(f"  [green]Webhook configured and saved to stokowski.yaml[/green]")
+
+                console.print(f"  [green]Webhook secret saved to .env, config saved to stokowski.yaml[/green]")
             else:
                 console.print(f"  [yellow]No secret — webhook signature verification will be skipped[/yellow]")
 
