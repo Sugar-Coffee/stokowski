@@ -1086,13 +1086,18 @@ class Orchestrator:
                 )
                 runner_type = state_cfg.runner
 
-            ws_root = self.cfg.workspace.resolved_root()
-            ws = await ensure_workspace(
-                ws_root, issue.identifier, self.cfg.hooks,
-                workspace_cfg=self.cfg.workspace,
-                branch_name=issue.branch_name,
-            )
-            attempt.workspace_path = str(ws.path)
+            if self.cfg.workspace_enabled:
+                ws_root = self.cfg.workspace.resolved_root()
+                ws = await ensure_workspace(
+                    ws_root, issue.identifier, self.cfg.hooks,
+                    workspace_cfg=self.cfg.workspace,
+                    branch_name=issue.branch_name,
+                )
+                attempt.workspace_path = str(ws.path)
+            else:
+                # No workspace — run in repo root
+                repo_path = self.cfg.workspace.resolved_repo_path()
+                attempt.workspace_path = str(repo_path or Path.cwd())
 
             # Move issue from Todo to In Progress if needed
             todo_state = self.cfg.linear_states.todo
