@@ -287,11 +287,19 @@ class LinearClient:
         await self._client.aclose()
 
     async def _graphql(self, query: str, variables: dict) -> dict:
-        resp = await self._client.post(
-            self.endpoint,
-            json={"query": query, "variables": variables},
-        )
-        resp.raise_for_status()
+        import asyncio
+        for attempt in range(3):
+            resp = await self._client.post(
+                self.endpoint,
+                json={"query": query, "variables": variables},
+            )
+            if resp.status_code in (429, 400) and attempt < 2:
+                wait = (attempt + 1) * 2
+                logger.debug(f"Linear API {resp.status_code}, retrying in {wait}s")
+                await asyncio.sleep(wait)
+                continue
+            resp.raise_for_status()
+            break
         data = resp.json()
         if "errors" in data:
             raise RuntimeError(f"Linear GraphQL errors: {data['errors']}")
