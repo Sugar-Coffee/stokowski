@@ -87,6 +87,7 @@ class Orchestrator:
         # Internal
         self._tracker: TrackerClient | None = None
         self._tasks: dict[str, asyncio.Task] = {}
+        self._background_tasks: set[asyncio.Task] = set()  # prevent GC of fire-and-forget tasks
         self._retry_timers: dict[str, asyncio.TimerHandle] = {}
         self._child_pids: set[int] = set()  # Track claude subprocess PIDs
         self._last_session_ids: dict[str, str] = {}  # issue_id -> last known session_id
@@ -395,6 +396,12 @@ class Orchestrator:
             f"Gate entered issue={issue.identifier} gate={state_name} "
             f"run={run}"
         )
+
+    def _spawn_background(self, coro):
+        """Create a background task that won't be garbage collected."""
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
     async def _move_to_blocked(self, issue: Issue, attempt: RunAttempt):
         """Move an issue to Blocked state when the agent signals it can't proceed."""
@@ -1101,7 +1108,7 @@ class Orchestrator:
         # If at a gate, enter it instead of dispatching a worker
         state_cfg = self.cfg.states.get(state_name) if state_name else None
         if state_cfg and state_cfg.type == "gate":
-            asyncio.create_task(self._safe_enter_gate(issue, state_name))
+            self._spawn_background(self._safe_enter_gate(issue, state_name))
             return
 
         attempt = RunAttempt(
@@ -1491,11 +1498,11 @@ class Orchestrator:
 
         if attempt.status == "blocked":
             # Agent signaled it can't handle this issue — move to Blocked
-            asyncio.create_task(self._move_to_blocked(issue, attempt))
+            self._spawn_background(self._move_to_blocked(issue, attempt))
         elif attempt.status == "succeeded":
             if attempt.state_name and attempt.state_name in self.cfg.states:
                 # State machine mode: transition via "complete"
-                asyncio.create_task(self._safe_transition(issue, "complete"))
+                self._spawn_background(self._safe_transition(issue, "complete"))
             else:
                 # Legacy mode
                 self._schedule_retry(issue, attempt_num=1, delay_ms=1000)
