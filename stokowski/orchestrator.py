@@ -25,7 +25,7 @@ from .config import (
 )
 from .models import Issue, RetryEntry, RunAttempt
 from .history import RunRecord, append_run, history_file_path, load_history
-from .state import PersistedState, load_state, save_state, state_file_path
+from .state import PersistedState, load_state, save_session, save_state, state_file_path
 from .tracker import TrackerClient
 from .prompt import assemble_prompt, build_lifecycle_section
 from .runner import run_agent_turn, run_turn
@@ -1485,6 +1485,14 @@ class Orchestrator:
                 error=attempt.error[:200] if attempt.error else None,
             )
             append_run(history_path, record)
+            # Persist session IDs to sessions.json
+            if attempt.session_ids:
+                save_session(
+                    self.workflow_path.parent,
+                    issue.identifier or attempt.issue_identifier,
+                    attempt.session_id,
+                    list(attempt.session_ids),
+                )
         except Exception as e:
             logger.debug(f"Failed to record history: {e}")
 

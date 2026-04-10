@@ -13,6 +13,7 @@ import logging
 import os
 import tempfile
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 logger = logging.getLogger("stokowski.state")
@@ -86,3 +87,68 @@ def save_state(path: Path, state: PersistedState) -> None:
             raise
     except Exception as e:
         logger.warning(f"Failed to save state to {path}: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Session ID persistence — saves per-issue session IDs to sessions.json
+# ---------------------------------------------------------------------------
+
+def sessions_file_path(stokowski_dir: Path) -> Path:
+    """Path to the sessions file."""
+    return stokowski_dir / "sessions.json"
+
+
+def load_sessions(path: Path) -> dict[str, dict]:
+    """Load sessions map from JSON file."""
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+        if isinstance(data, dict):
+            return data
+        return {}
+    except Exception as e:
+        logger.warning(f"Failed to load sessions from {path}: {e}")
+        return {}
+
+
+def save_session(
+    stokowski_dir: Path,
+    identifier: str,
+    session_id: str | None,
+    session_ids: list[str],
+) -> None:
+    """Update the sessions file with session IDs for an issue."""
+    if not session_ids:
+        return
+    path = sessions_file_path(stokowski_dir)
+    try:
+        sessions = load_sessions(path)
+        existing = sessions.get(identifier, {})
+        # Merge session_ids — keep existing ones, append new
+        all_ids: list[str] = existing.get("session_ids", [])
+        for sid in session_ids:
+            if sid not in all_ids:
+                all_ids.append(sid)
+        sessions[identifier] = {
+            "session_id": session_id or (all_ids[-1] if all_ids else ""),
+            "session_ids": all_ids,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        # Atomic write
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(
+            dir=path.parent, prefix=".sessions_", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(sessions, f, indent=2)
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+    except Exception as e:
+        logger.warning(f"Failed to save session for {identifier}: {e}")
