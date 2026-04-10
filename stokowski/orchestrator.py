@@ -301,8 +301,8 @@ class Orchestrator:
 
         self._clear_state()
 
-        # Close tracker client after all tasks are done
-        if self._tracker:
+        # Close tracker client after all tasks are done (skip if shared across workflows)
+        if self._tracker and not getattr(self, '_tracker_shared', False):
             await self._tracker.close()
 
     async def _startup_cleanup(self):

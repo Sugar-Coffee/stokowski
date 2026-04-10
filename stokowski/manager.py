@@ -79,6 +79,7 @@ class Manager:
                 try:
                     if orch.workflow and orch.cfg.tracker_enabled and orch.cfg.source != "github-prs":
                         orch._tracker = self._shared_tracker
+                        orch._tracker_shared = True
                 except Exception:
                     pass
 
@@ -147,6 +148,7 @@ class Manager:
                     errors = orch._load_workflow()
                     if not errors and orch.cfg.tracker_enabled and orch.cfg.source != "github-prs":
                         orch._tracker = self._shared_tracker
+                        orch._tracker_shared = True
                 except Exception:
                     pass
             self.orchestrators[name] = orch
@@ -235,6 +237,12 @@ class Manager:
             *(orch.stop() for orch in self.orchestrators.values()),
             return_exceptions=True,
         )
+        # Close shared tracker client last — after all orchestrators stopped
+        if self._shared_tracker:
+            try:
+                await self._shared_tracker.close()
+            except Exception:
+                pass
 
     def get_aggregate_snapshot(self) -> dict:
         """Merge snapshots from all orchestrators."""
