@@ -438,7 +438,7 @@ def parse_root_config(path: str | Path) -> RootConfig:
             enabled = True
         elif isinstance(entry, dict):
             wf_path = str(entry.get("path", ""))
-            enabled = entry.get("enabled", True)
+            enabled = entry.get("enabled", False)
         else:
             raise ValueError(f"Invalid workflow entry '{name}'")
         resolved = (base_dir / wf_path).resolve()
