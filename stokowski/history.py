@@ -30,6 +30,8 @@ class RunRecord:
     tokens: int
     stages: list[str] = field(default_factory=list)  # state machine states traversed
     last_message: str = ""
+    result_text: str = ""  # full agent result (final output)
+    session_id: str = ""   # claude session ID for replay via --resume
     error: str | None = None
 
 

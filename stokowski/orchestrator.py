@@ -1479,6 +1479,8 @@ class Orchestrator:
                 tokens=attempt.total_tokens,
                 stages=[attempt.state_name] if attempt.state_name else [],
                 last_message=attempt.last_message[:200] if attempt.last_message else "",
+                result_text=attempt.last_message[:2000] if attempt.last_message else "",
+                session_id=attempt.session_id or "",
                 error=attempt.error[:200] if attempt.error else None,
             )
             append_run(history_path, record)
