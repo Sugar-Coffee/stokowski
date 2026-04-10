@@ -330,6 +330,10 @@ Exit code 0 = success. Non-zero = failure (stderr captured for error message).
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[web,schedule]"
+pip install pytest pytest-asyncio
+
+# Run tests
+pytest tests/ -v
 
 # Validate config without dispatching agents
 stokowski --dry-run
@@ -341,7 +345,11 @@ stokowski -v
 stokowski --port 4200
 ```
 
-There are no automated tests beyond `--dry-run`. The system is best verified by running against a real Linear project with a test ticket.
+### Testing policy
+
+Every change must include tests. When fixing a bug, add a test that reproduces the bug. When adding a feature, add tests for the new behavior. Tests run automatically on PRs via GitHub Actions CI.
+
+Tests live in `tests/` and use pytest with pytest-asyncio for async tests. Use mocks for external services (Linear API, GitHub API, subprocess calls) — tests must not hit real APIs.
 
 ---
 
