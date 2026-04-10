@@ -575,9 +575,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .history-stage { color: var(--dim); font-size: 11px; margin-left: 8px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 3px; }
   .history-detail { display: none; padding: 12px 20px; background: var(--bg); border-top: 1px solid var(--border); font-size: 12px; }
   .history-detail.visible { display: block; }
-  .history-result { white-space: pre-wrap; word-break: break-word; color: var(--text); max-height: 300px; overflow-y: auto; }
-  .history-error { color: var(--red); margin-top: 8px; }
-  .history-session { color: var(--dim); margin-top: 8px; font-family: monospace; font-size: 11px; }
+  .history-detail-meta { margin-bottom: 8px; display: flex; flex-wrap: wrap; gap: 12px; }
+  .history-result { white-space: pre-wrap; word-break: break-word; color: var(--text); max-height: 300px; overflow-y: auto; padding: 8px; background: var(--surface); border-radius: 4px; }
+  .history-error { color: var(--red); }
+  .history-session { color: var(--dim); font-family: monospace; font-size: 11px; user-select: all; }
   .history-wf { color: var(--dim); font-size: 12px; }
   .history-status { font-size: 12px; font-weight: 500; }
   .history-status.succeeded { color: var(--green); }
@@ -952,9 +953,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         const clickAttr = hasDetail ? `onclick="document.getElementById('${detailId}').classList.toggle('visible')" style="cursor:pointer"` : '';
         const detail = hasDetail ? `
         <div class="history-detail" id="${detailId}">
+          <div class="history-detail-meta">
+            ${r.session_ids && r.session_ids.length ? `<span class="history-session">sessions: ${r.session_ids.map(s => esc(s)).join(', ')}</span>` : r.session_id ? `<span class="history-session">session: ${esc(r.session_id)}</span>` : ''}
+            ${r.error ? `<span class="history-error">Error: ${esc(r.error)}</span>` : ''}
+          </div>
           ${r.result_text ? `<div class="history-result">${esc(r.result_text)}</div>` : ''}
-          ${r.error ? `<div class="history-error">Error: ${esc(r.error)}</div>` : ''}
-          ${r.session_ids && r.session_ids.length ? `<div class="history-session">sessions: ${r.session_ids.map(s => esc(s)).join(', ')}</div>` : r.session_id ? `<div class="history-session">session: ${esc(r.session_id)}</div>` : ''}
         </div>` : '';
         return `
         <div class="history-row" ${clickAttr}>
