@@ -545,6 +545,36 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     opacity: 1;
   }
 
+  /* History rows */
+  .history-row {
+    background: var(--surface);
+    padding: 10px 20px;
+    display: grid;
+    grid-template-columns: 90px 1fr 80px 80px 80px;
+    gap: 12px;
+    align-items: center;
+    font-size: 13px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .history-row:hover { background: var(--border); }
+  .history-id { font-weight: 600; color: var(--amber); }
+  .history-title { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .history-wf { color: var(--dim); font-size: 12px; }
+  .history-status { font-size: 12px; font-weight: 500; }
+  .history-status.succeeded { color: var(--green); }
+  .history-status.failed { color: var(--red); }
+  .history-status.blocked { color: var(--red); }
+  .history-status.canceled { color: var(--muted); }
+  .history-tokens { color: var(--muted); font-size: 12px; text-align: right; }
+  .history-time { color: var(--dim); font-size: 12px; text-align: right; }
+  .history-empty { background: var(--surface); border: 1px solid var(--border); padding: 24px; text-align: center; color: var(--dim); font-size: 13px; }
+
+  @media (max-width: 768px) {
+    .history-row { grid-template-columns: 70px 1fr 60px; }
+    .history-tokens, .history-time { display: none; }
+  }
+
   .wf-tab-time {
     font-size: 12px;
     color: var(--dim);
@@ -636,6 +666,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   </div>
 
   <div id="agents-container"></div>
+
+  <div class="section-header" style="margin-top:24px">
+    <span class="section-title">Run History</span>
+    <div class="section-line"></div>
+    <span class="section-count" id="history-count">0</span>
+  </div>
+
+  <div id="history-container"></div>
 
   <div class="stats-bar">
     <div class="stat-item">
@@ -866,6 +904,44 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       document.getElementById('status-dot').className = 'status-dot idle';
     }
   }
+
+  // ── History ──
+  async function loadHistory() {
+    try {
+      const res = await fetch('/api/v1/history');
+      const history = await res.json();
+      document.getElementById('history-count').textContent = history.length;
+
+      if (history.length === 0) {
+        document.getElementById('history-container').innerHTML =
+          '<div class="history-empty">No completed runs yet</div>';
+        return;
+      }
+
+      const rows = history.slice(0, 50).map(r => {
+        const statusCls = ['succeeded','failed','blocked','canceled'].includes(r.status) ? r.status : '';
+        const time = r.completed_at ? fmtRelativeTime(r.completed_at) : '';
+        return `
+        <div class="history-row">
+          <div>
+            <div class="history-id">${esc(r.identifier)}</div>
+            <div class="history-wf">${esc(r.workflow)}</div>
+          </div>
+          <div class="history-title">${esc(r.title || r.last_message || '—')}</div>
+          <div class="history-status ${statusCls}">${esc(r.status)}</div>
+          <div class="history-tokens">${fmt(r.tokens || 0)} tok</div>
+          <div class="history-time">${esc(time)}</div>
+        </div>`;
+      }).join('');
+
+      document.getElementById('history-container').innerHTML =
+        `<div style="border:1px solid var(--border)">${rows}</div>`;
+    } catch(e) {}
+  }
+
+  // Load history on start and every 30s
+  loadHistory();
+  setInterval(loadHistory, 30000);
 
   // ── Theme toggle ──
   function getPreferredTheme() {

@@ -83,10 +83,19 @@ class Manager:
                     pass
 
     async def start(self):
-        """Start enabled workflows. Disabled workflows stay stopped (start from UI)."""
-        for name in self.orchestrators:
-            if self._workflow_enabled.get(name, False):
-                self.start_workflow(name)
+        """Start enabled workflows or recover previously running ones."""
+        # Check for recovery — restart workflows that were running before shutdown
+        previously_running = self._load_manager_state()
+        if previously_running:
+            logger.info(f"Recovering {len(previously_running)} previously running workflow(s)")
+            for name in previously_running:
+                if name in self.orchestrators:
+                    self.start_workflow(name)
+        else:
+            # Normal start — use enabled flags
+            for name in self.orchestrators:
+                if self._workflow_enabled.get(name, False):
+                    self.start_workflow(name)
 
         started = [n for n, s in self._workflow_status.items() if s == "running"]
         stopped = [n for n, s in self._workflow_status.items() if s == "stopped"]
@@ -147,6 +156,7 @@ class Manager:
         self._workflow_status[name] = "running"
         from datetime import datetime, timezone
         self._workflow_started_at[name] = datetime.now(timezone.utc).isoformat()
+        self._save_manager_state()
         logger.info(f"Started workflow '{name}'")
         return True
 
@@ -164,6 +174,7 @@ class Manager:
             except (asyncio.CancelledError, Exception):
                 pass
         self._workflow_status[name] = "stopped"
+        self._save_manager_state()
         logger.info(f"Stopped workflow '{name}'")
         return True
 
@@ -174,9 +185,46 @@ class Manager:
         elif self._workflow_status.get(name) != "stopped":
             self._workflow_status[name] = "stopped"
 
+    def _save_manager_state(self):
+        """Save which workflows were running for recovery."""
+        import json
+        state_path = None
+        for orch in self.orchestrators.values():
+            state_path = orch.workflow_path.parent / ".stokowski_manager_state.json"
+            break
+        if not state_path:
+            return
+        try:
+            data = {
+                "running_workflows": [
+                    name for name, status in self._workflow_status.items()
+                    if status == "running"
+                ],
+                "started_at": dict(self._workflow_started_at),
+            }
+            state_path.write_text(json.dumps(data, indent=2))
+        except Exception as e:
+            logger.debug(f"Failed to save manager state: {e}")
+
+    def _load_manager_state(self) -> list[str]:
+        """Load previously running workflows for recovery."""
+        import json
+        state_path = None
+        for orch in self.orchestrators.values():
+            state_path = orch.workflow_path.parent / ".stokowski_manager_state.json"
+            break
+        if not state_path or not state_path.exists():
+            return []
+        try:
+            data = json.loads(state_path.read_text())
+            return data.get("running_workflows", [])
+        except Exception:
+            return []
+
     async def stop(self):
         """Stop all orchestrators."""
         logger.info("Stopping all workflows")
+        self._save_manager_state()
         if hasattr(self, "_stop_event"):
             self._stop_event.set()
         await asyncio.gather(
