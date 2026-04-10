@@ -329,78 +329,15 @@ class Orchestrator:
 
         # For issues in pickup states (typically Todo/Backlog), assume no prior
         # tracking — they haven't been worked on yet. Skip expensive API calls.
-        pickup = self.cfg.pickup_states
-        if pickup:
-            pickup_lower = {s.strip().lower() for s in pickup}
-            if issue.state.strip().lower() in pickup_lower:
-                self._issue_current_state[issue.id] = entry
-                self._issue_state_runs[issue.id] = 1
-                return entry, 1
-
-        # For PR-based or synthetic issues, use entry state directly
+        # For new issues (not recovered from crash), always use entry state.
+        # No need to fetch description/comments — tracking is in memory/state file.
+        # Only fetch if we have persisted state that says this issue was mid-workflow.
         if issue.id.startswith("pr:") or issue.id.startswith("schedule:") or not self.cfg.tracker_enabled:
             self._issue_current_state[issue.id] = entry
             self._issue_state_runs[issue.id] = 1
             return entry, 1
 
-        # For in-progress issues, fetch tracking to recover state
-        client = self._ensure_tracker_client()
-        desc = await client.fetch_issue_description(issue.id)
-        tracking = parse_latest_tracking(desc)
-
-        # Fall back to legacy comments only if description has no tracking
-        if tracking is None:
-            comments = await client.fetch_comments(issue.id)
-            tracking = parse_latest_tracking(desc, comments)
-
-        if tracking is None:
-            self._issue_current_state[issue.id] = entry
-            self._issue_state_runs[issue.id] = 1
-            return entry, 1
-
-        if tracking["type"] == "state":
-            state_name = tracking.get("state", entry)
-            run = tracking.get("run", 1)
-            if state_name in self.cfg.states:
-                self._issue_current_state[issue.id] = state_name
-                self._issue_state_runs[issue.id] = run
-                return state_name, run
-            # Unknown state → fallback to entry
-            self._issue_current_state[issue.id] = entry
-            self._issue_state_runs[issue.id] = 1
-            return entry, 1
-
-        if tracking["type"] == "gate":
-            gate_state = tracking.get("state", "")
-            status = tracking.get("status", "")
-            run = tracking.get("run", 1)
-
-            if status == "waiting":
-                if gate_state in self.cfg.states:
-                    self._issue_current_state[issue.id] = gate_state
-                    self._issue_state_runs[issue.id] = run
-                    self._pending_gates[issue.id] = gate_state
-                    return gate_state, run
-
-            elif status == "approved":
-                gate_cfg = self.cfg.states.get(gate_state)
-                if gate_cfg and "approve" in gate_cfg.transitions:
-                    target = gate_cfg.transitions["approve"]
-                    self._issue_current_state[issue.id] = target
-                    self._issue_state_runs[issue.id] = run
-                    return target, run
-
-            elif status == "rework":
-                gate_cfg = self.cfg.states.get(gate_state)
-                rework_to = tracking.get("rework_to", "")
-                if not rework_to and gate_cfg:
-                    rework_to = gate_cfg.rework_to or ""
-                if rework_to and rework_to in self.cfg.states:
-                    self._issue_current_state[issue.id] = rework_to
-                    self._issue_state_runs[issue.id] = run
-                    return rework_to, run
-
-        # Fallback to entry state
+        # Default: assume entry state (no API calls — agent reads details via MCP)
         self._issue_current_state[issue.id] = entry
         self._issue_state_runs[issue.id] = 1
         return entry, 1
@@ -631,30 +568,25 @@ class Orchestrator:
 
             gate_state = self._pending_gates.pop(issue.id, None)
             if not gate_state:
-                desc = await client.fetch_issue_description(issue.id)
-                tracking = parse_latest_tracking(desc)
-                if tracking and tracking.get("type") == "gate" and tracking.get("status") == "waiting":
-                    gate_state = tracking.get("state", "")
+                continue  # no gate tracked in memory — skip (no API call)
 
-            if gate_state:
-                run = self._issue_state_runs.get(issue.id, 1)
-                await self._update_tracking(issue.id, make_gate_payload(state=gate_state, status="approved", run=run))
+            run = self._issue_state_runs.get(issue.id, 1)
+            await self._update_tracking(issue.id, make_gate_payload(state=gate_state, status="approved", run=run))
 
-                # Follow approve transition
-                self._issue_current_state[issue.id] = gate_state
-                gate_cfg = self.cfg.states.get(gate_state)
-                if gate_cfg and "approve" in gate_cfg.transitions:
-                    target = gate_cfg.transitions["approve"]
-                    self._issue_current_state[issue.id] = target
+            self._issue_current_state[issue.id] = gate_state
+            gate_cfg = self.cfg.states.get(gate_state)
+            if gate_cfg and "approve" in gate_cfg.transitions:
+                target = gate_cfg.transitions["approve"]
+                self._issue_current_state[issue.id] = target
 
-                active_state = self.cfg.linear_states.active
-                moved = await client.update_issue_state(issue.id, active_state)
-                if moved:
-                    issue.state = active_state
-                else:
-                    logger.warning(f"Failed to move {issue.identifier} to active after gate approval")
-                self._last_issues[issue.id] = issue
-                logger.info(f"Gate approved issue={issue.identifier} gate={gate_state}")
+            active_state = self.cfg.linear_states.active
+            moved = await client.update_issue_state(issue.id, active_state)
+            if moved:
+                issue.state = active_state
+            else:
+                logger.warning(f"Failed to move {issue.identifier} to active after gate approval")
+            self._last_issues[issue.id] = issue
+            logger.info(f"Gate approved issue={issue.identifier} gate={gate_state}")
 
         # Fetch rework issues
         try:
@@ -673,10 +605,7 @@ class Orchestrator:
 
             gate_state = self._pending_gates.pop(issue.id, None)
             if not gate_state:
-                desc = await client.fetch_issue_description(issue.id)
-                tracking = parse_latest_tracking(desc)
-                if tracking and tracking.get("type") == "gate" and tracking.get("status") == "waiting":
-                    gate_state = tracking.get("state", "")
+                continue  # no gate tracked in memory — skip (no API call)
 
             if gate_state:
                 gate_cfg = self.cfg.states.get(gate_state)
@@ -1426,14 +1355,8 @@ class Orchestrator:
             last_completed = self._last_completed_at.get(issue.id)
             last_run_at = last_completed.isoformat() if last_completed else None
 
-            # Fetch comments for lifecycle context (skip for synthetic/trackerless)
+            # Don't fetch comments — the agent reads them via MCP
             comments: list[dict] | None = None
-            if self.cfg.tracker_enabled and not issue.id.startswith("schedule:") and not issue.id.startswith("pr:"):
-                try:
-                    client = self._ensure_tracker_client()
-                    comments = await client.fetch_comments(issue.id)
-                except Exception as e:
-                    logger.warning(f"Failed to fetch comments for prompt: {e}")
 
             return assemble_prompt(
                 cfg=self.cfg,

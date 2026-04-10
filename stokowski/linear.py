@@ -297,8 +297,8 @@ class LinearClient:
         async with self._rate_sem:
             import time
             elapsed = time.monotonic() - self._last_request
-            if elapsed < 2.5:  # Linear limit: 1500/hour ≈ 25/min ≈ 1 per 2.4s
-                await asyncio.sleep(2.5 - elapsed)
+            if elapsed < 1.0:  # Min 1s between requests (safe with fewer total calls)
+                await asyncio.sleep(1.0 - elapsed)
 
             for attempt in range(3):
                 resp = await self._client.post(
