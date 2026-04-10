@@ -536,13 +536,19 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .wf-toggle {
     margin-left: 8px;
     cursor: pointer;
-    font-size: 9px;
-    opacity: 0.4;
+    font-size: 11px;
+    opacity: 0.6;
     transition: opacity 0.15s;
   }
 
   .wf-toggle:hover {
     opacity: 1;
+  }
+  .wf-stop {
+    color: var(--red);
+  }
+  .wf-start {
+    color: var(--green);
   }
 
   /* History rows */
@@ -820,8 +826,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       const isRunning = status === 'running';
       const dot = isRunning ? '<span style="color:var(--green)">●</span>' : '<span style="color:var(--red)">●</span>';
       const toggleBtn = isRunning
-        ? `<span class="wf-toggle" onclick="event.stopPropagation();toggleWorkflow('${esc(name)}','stop')" title="Stop">◼</span>`
-        : `<span class="wf-toggle" onclick="event.stopPropagation();toggleWorkflow('${esc(name)}','start')" title="Start">▶</span>`;
+        ? `<span class="wf-toggle wf-stop" onclick="event.stopPropagation();toggleWorkflow('${esc(name)}','stop')" title="Stop">STOP</span>`
+        : `<span class="wf-toggle wf-start" onclick="event.stopPropagation();toggleWorkflow('${esc(name)}','start')" title="Start">START</span>`;
       const runNowBtn = `<span class="wf-toggle" onclick="event.stopPropagation();triggerRun('${esc(name)}')" title="Run Now">RUN</span>`;
       const startedAt = wf.started_at || '';
       const startedInfo = startedAt && isRunning ? ` <span class="wf-tab-time" title="Started ${startedAt}">${fmtRelativeTime(startedAt)}</span>` : '';
