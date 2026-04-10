@@ -811,6 +811,12 @@ class Orchestrator:
 
     async def trigger_scheduled_run(self):
         """Manually trigger a scheduled run (called from dashboard or API)."""
+        # Load workflow config if not yet loaded (trigger can fire before start)
+        if self.workflow is None:
+            errors = self._load_workflow()
+            if errors:
+                logger.error(f"Cannot trigger: {errors}")
+                return
         fire_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         await self._dispatch_scheduled_run(fire_date)
 
