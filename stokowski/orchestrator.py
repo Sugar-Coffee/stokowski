@@ -1288,13 +1288,14 @@ class Orchestrator:
             last_completed = self._last_completed_at.get(issue.id)
             last_run_at = last_completed.isoformat() if last_completed else None
 
-            # Fetch comments for lifecycle context
+            # Fetch comments for lifecycle context (skip for synthetic/trackerless)
             comments: list[dict] | None = None
-            try:
-                client = self._ensure_tracker_client()
-                comments = await client.fetch_comments(issue.id)
-            except Exception as e:
-                logger.warning(f"Failed to fetch comments for prompt: {e}")
+            if self.cfg.tracker_enabled and not issue.id.startswith("schedule:"):
+                try:
+                    client = self._ensure_tracker_client()
+                    comments = await client.fetch_comments(issue.id)
+                except Exception as e:
+                    logger.warning(f"Failed to fetch comments for prompt: {e}")
 
             return assemble_prompt(
                 cfg=self.cfg,
