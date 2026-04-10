@@ -264,6 +264,8 @@ class Orchestrator:
 
     async def _startup_cleanup(self):
         """Remove workspaces for issues already in terminal states."""
+        if not self.cfg.tracker_enabled:
+            return
         try:
             client = self._ensure_tracker_client()
             terminal = await client.fetch_issues_by_states(
