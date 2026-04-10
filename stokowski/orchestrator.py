@@ -7,7 +7,7 @@ import logging
 import os
 import signal
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -104,6 +104,13 @@ class Orchestrator:
 
         # Webhook coalescing
         self._webhook_tick_pending: bool = False
+
+        # Dispatch queue — candidates survive failed ticks
+        self._candidate_queue: list[Issue] = []
+
+        # API cooldown — exponential backoff on errors
+        self._consecutive_errors: int = 0
+        self._cooldown_until: datetime | None = None
         self._last_webhook_at: datetime | None = None
 
         # Persistent state
@@ -956,6 +963,10 @@ class Orchestrator:
         if not self._running:
             return  # workflow is stopped
 
+        # API cooldown — skip tick if in cooldown period
+        if self._cooldown_until and datetime.now(timezone.utc) < self._cooldown_until:
+            return
+
         # Reload workflow (supports hot-reload)
         errors = self._load_workflow()
 
@@ -1010,7 +1021,31 @@ class Orchestrator:
                 )
             except Exception as e:
                 logger.error(f"Failed to fetch candidates: {e}")
-                return
+                self._consecutive_errors += 1
+                cooldown_secs = min(30 * (2 ** (self._consecutive_errors - 1)), 300)
+                self._cooldown_until = datetime.now(timezone.utc) + timedelta(seconds=cooldown_secs)
+                logger.warning(f"API error — cooling down for {cooldown_secs}s")
+                # Use queued candidates from last successful fetch
+                candidates = self._candidate_queue
+
+        # Reset error counter on successful fetch
+        if candidates and candidates is not self._candidate_queue:
+            self._consecutive_errors = 0
+            self._cooldown_until = None
+
+        # Merge into queue (deduplicate by id)
+        queued_ids = {i.id for i in self._candidate_queue}
+        for issue in candidates:
+            if issue.id not in queued_ids:
+                self._candidate_queue.append(issue)
+                queued_ids.add(issue.id)
+
+        # Clean queue — remove completed/running issues
+        self._candidate_queue = [
+            i for i in self._candidate_queue
+            if i.id not in self.completed and i.id not in self.running and i.id not in self.claimed
+        ]
+        candidates = self._candidate_queue
 
         # Cache issues for retry lookup
         for issue in candidates:
