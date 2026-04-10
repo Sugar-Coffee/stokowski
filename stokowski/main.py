@@ -53,6 +53,9 @@ def setup_logging(verbose: bool = False):
         format="%(message)s",
         handlers=[RichHandler(console=console, rich_tracebacks=True)],
     )
+    # Suppress noisy httpx request logs
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 # ── Update check ───────────────────────────────────────────────────────────

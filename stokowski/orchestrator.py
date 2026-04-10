@@ -268,23 +268,12 @@ class Orchestrator:
             await self._tracker.close()
 
     async def _startup_cleanup(self):
-        """Remove workspaces for issues already in terminal states."""
-        if not self.cfg.tracker_enabled:
-            return
-        try:
-            client = self._ensure_tracker_client()
-            terminal = await client.fetch_issues_by_states(
-                self.cfg.tracker.project_slug,
-                self.cfg.terminal_linear_states(),
-                team_key=self.cfg.tracker.team_key,
-            )
-            ws_root = self.cfg.workspace.resolved_root()
-            for issue in terminal:
-                await remove_workspace(ws_root, issue.identifier, self.cfg.hooks, workspace_cfg=self.cfg.workspace)
-            if terminal:
-                logger.info(f"Cleaned {len(terminal)} terminal workspaces")
-        except Exception as e:
-            logger.warning(f"Startup cleanup failed (continuing): {e}")
+        """Startup cleanup — skipped to avoid expensive API calls.
+
+        Workspaces are cleaned up when issues reach terminal state during
+        normal operation. No need to scan all terminal issues on startup.
+        """
+        pass
 
     async def _resolve_current_state(self, issue: Issue) -> tuple[str, int]:
         """Resolve current state machine state for an issue.
