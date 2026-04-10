@@ -1273,6 +1273,15 @@ def create_app_multi(manager) -> FastAPI:
         await manager.stop_workflow(name)
         return JSONResponse({"ok": True, "status": "stopped"})
 
+    @app.post("/api/v1/workflows/{name}/trigger")
+    async def api_workflow_trigger(name: str):
+        """Trigger an immediate scheduled run for a workflow."""
+        orch = manager.orchestrators.get(name)
+        if not orch:
+            return JSONResponse({"error": "workflow not found"}, status_code=404)
+        asyncio.create_task(orch.trigger_scheduled_run())
+        return JSONResponse({"ok": True, "action": "triggered"})
+
     @app.post("/api/v1/webhook/linear")
     async def webhook_linear(request: Request):
         body = await request.body()

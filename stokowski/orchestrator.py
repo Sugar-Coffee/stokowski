@@ -731,9 +731,9 @@ class Orchestrator:
             logger.error(f"Webhook-triggered tick error: {e}")
 
     async def _check_schedule(self):
-        """Check if a scheduled issue should be created via create_command."""
+        """Check if a scheduled run should fire."""
         schedule = self.cfg.schedule
-        if not schedule or not schedule.cron or not schedule.create_command:
+        if not schedule or not schedule.cron:
             return
 
         try:
@@ -751,34 +751,70 @@ class Orchestrator:
         if self._last_schedule_fire and self._last_schedule_fire >= prev_fire:
             return
 
-        # Substitute placeholders in create_command
         fire_date = prev_fire.strftime("%Y-%m-%d")
         fire_datetime = prev_fire.strftime("%Y-%m-%d %H:%M")
-        command = schedule.create_command.replace("{date}", fire_date).replace("{datetime}", fire_datetime)
 
-        logger.info(f"Schedule fired, running create_command")
-        try:
-            proc = await asyncio.create_subprocess_shell(
-                command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=self.cfg.agent_env(),
-            )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
-            if proc.returncode == 0:
-                logger.info(f"Schedule create_command succeeded: {stdout.decode().strip()[:200]}")
-            else:
-                logger.error(
-                    f"Schedule create_command failed (exit {proc.returncode}): "
-                    f"{stderr.decode().strip()[:200]}"
+        if not self.cfg.tracker_enabled:
+            # Schedule-only mode: dispatch agent directly without a tracker issue
+            await self._dispatch_scheduled_run(fire_date)
+        elif schedule.create_command:
+            # Tracker mode: create an issue via external command
+            command = schedule.create_command.replace("{date}", fire_date).replace("{datetime}", fire_datetime)
+            logger.info("Schedule fired, running create_command")
+            try:
+                proc = await asyncio.create_subprocess_shell(
+                    command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=self.cfg.agent_env(),
                 )
-        except asyncio.TimeoutError:
-            logger.error("Schedule create_command timed out after 30s")
-        except Exception as e:
-            logger.error(f"Schedule create_command error: {e}")
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+                if proc.returncode == 0:
+                    logger.info(f"Schedule create_command succeeded: {stdout.decode().strip()[:200]}")
+                else:
+                    logger.error(
+                        f"Schedule create_command failed (exit {proc.returncode}): "
+                        f"{stderr.decode().strip()[:200]}"
+                    )
+            except asyncio.TimeoutError:
+                logger.error("Schedule create_command timed out after 30s")
+            except Exception as e:
+                logger.error(f"Schedule create_command error: {e}")
 
         self._last_schedule_fire = prev_fire
         self._save_state()
+
+    async def trigger_scheduled_run(self):
+        """Manually trigger a scheduled run (called from dashboard or API)."""
+        fire_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        await self._dispatch_scheduled_run(fire_date)
+
+    async def _dispatch_scheduled_run(self, fire_date: str):
+        """Dispatch an agent run directly from a schedule (no tracker issue)."""
+        # Build a synthetic issue from the workflow name and date
+        wf_name = self.workflow_path.stem.replace("workflow-", "")
+        synthetic_id = f"schedule:{wf_name}:{fire_date}"
+
+        if synthetic_id in self.running or synthetic_id in self.claimed:
+            logger.debug(f"Scheduled run already active: {synthetic_id}")
+            return
+
+        issue = Issue(
+            id=synthetic_id,
+            identifier=f"[{wf_name}]",
+            title=f"Scheduled run — {wf_name} — {fire_date}",
+            description=f"Automatic scheduled run for {wf_name} on {fire_date}.",
+            state="In Progress",
+            created_at=datetime.now(timezone.utc),
+        )
+
+        entry_state = self.cfg.entry_state
+        if entry_state:
+            self._issue_current_state[synthetic_id] = entry_state
+            self._issue_state_runs[synthetic_id] = 1
+
+        logger.info(f"Schedule dispatching: {issue.identifier} — {fire_date}")
+        self._dispatch(issue, attempt_num=0)
 
     async def _tick(self):
         """Single poll tick: reconcile, validate, fetch, dispatch."""
