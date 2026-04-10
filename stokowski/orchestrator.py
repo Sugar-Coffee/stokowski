@@ -1139,7 +1139,7 @@ class Orchestrator:
                 from .workspace import run_hook
                 ok = await run_hook(
                     state_cfg.hooks.on_stage_enter,
-                    ws.path,
+                    Path(attempt.workspace_path),
                     (state_cfg.hooks.timeout_ms if state_cfg.hooks else self.cfg.hooks.timeout_ms),
                     f"on_stage_enter:{state_name}",
                 )
@@ -1165,7 +1165,7 @@ class Orchestrator:
                     claude_cfg=claude_cfg,
                     hooks_cfg=hooks_cfg,
                     prompt=prompt,
-                    workspace_path=ws.path,
+                    workspace_path=Path(attempt.workspace_path),
                     issue=issue,
                     attempt=attempt,
                     on_event=self._on_agent_event,
@@ -1197,7 +1197,7 @@ class Orchestrator:
                             claude_cfg=claude_cfg,
                             hooks_cfg=hooks_cfg,
                             prompt=prompt,
-                            workspace_path=ws.path,
+                            workspace_path=Path(attempt.workspace_path),
                             issue=issue,
                             attempt=attempt,
                             on_event=self._on_agent_event,
@@ -1240,7 +1240,7 @@ class Orchestrator:
                         claude_cfg=claude_cfg,
                         hooks_cfg=hooks_cfg,
                         prompt=prompt,
-                        workspace_path=ws.path,
+                        workspace_path=Path(attempt.workspace_path),
                         issue=issue,
                         attempt=attempt,
                         on_event=self._on_agent_event,

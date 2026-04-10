@@ -107,7 +107,7 @@ def build_template_context(
         "issue_priority": issue.priority,
         "issue_state": issue.state,
         "issue_branch": issue.branch_name or "",
-        "issue_labels": issue.labels,
+        "issue_labels": ", ".join(issue.labels) if isinstance(issue.labels, list) else (issue.labels or ""),
         "state_name": state_name,
         "run": run,
         "attempt": attempt,
