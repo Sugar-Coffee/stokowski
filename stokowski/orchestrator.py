@@ -980,10 +980,15 @@ class Orchestrator:
             return False
 
         state_lower = issue.state.strip().lower()
-        active_lower = [s.strip().lower() for s in self.cfg.active_linear_states()]
         terminal_lower = [s.strip().lower() for s in self.cfg.terminal_linear_states()]
 
-        if state_lower not in active_lower:
+        # Use pickup_states if configured, otherwise active states
+        if self.cfg.pickup_states:
+            eligible_lower = [s.strip().lower() for s in self.cfg.pickup_states]
+        else:
+            eligible_lower = [s.strip().lower() for s in self.cfg.active_linear_states()]
+
+        if state_lower not in eligible_lower:
             return False
         if state_lower in terminal_lower:
             return False
@@ -991,12 +996,6 @@ class Orchestrator:
             return False
         if issue.id in self.claimed:
             return False
-
-        # Per-workflow pickup state filter
-        if self.cfg.pickup_states:
-            pickup_lower = [s.strip().lower() for s in self.cfg.pickup_states]
-            if state_lower not in pickup_lower:
-                return False
 
         # Per-workflow label filter
         if self.cfg.filter_labels:
