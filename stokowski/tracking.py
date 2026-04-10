@@ -33,8 +33,10 @@ def build_tracking_block(payload: dict[str, Any]) -> str:
     return f"<!-- stokowski:tracking\n{json.dumps(payload)}\n-->"
 
 
-def parse_tracking_from_description(description: str) -> dict[str, Any] | None:
+def parse_tracking_from_description(description) -> dict[str, Any] | None:
     """Extract tracking data from issue description."""
+    if not isinstance(description, str):
+        return None
     match = _TRACKING_PATTERN.search(description)
     if match:
         try:

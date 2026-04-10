@@ -288,7 +288,7 @@ def assemble_prompt(
     # Filter comments to recent non-tracking ones
     recent: list[dict[str, Any]] = []
     if comments:
-        last_ts = get_last_tracking_timestamp(comments)
+        last_ts = get_last_tracking_timestamp("", comments)
         recent = get_comments_since(comments, last_ts)
 
     lifecycle = build_lifecycle_section(
