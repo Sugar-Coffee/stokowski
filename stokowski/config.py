@@ -191,6 +191,7 @@ class ServiceConfig:
     github_states: GitHubStatesConfig = field(default_factory=GitHubStatesConfig)
     # Per-workflow filtering
     tracker_enabled: bool = True        # false = no tracker polling (schedule-only workflows)
+    source: str = "tracker"             # "tracker" (default) or "github-prs" (poll open PRs)
     filter_labels: list[str] = field(default_factory=list)  # only pick up issues with these labels
     pickup_states: list[str] = field(default_factory=list)  # only pick up issues in these states (default: all active)
     exclude_labels: list[str] = field(default_factory=list)  # skip issues with any of these labels
@@ -642,6 +643,7 @@ def parse_workflow_file(
     tracker_enabled = config_raw.get("tracker_enabled", True)
     if tracker_enabled is None:
         tracker_enabled = True
+    source = str(config_raw.get("source", "tracker"))
     filter_labels = _coerce_list(config_raw.get("filter_labels"))
     exclude_labels = _coerce_list(config_raw.get("exclude_labels"))
     pickup_states = _coerce_list(config_raw.get("pickup_states"))
@@ -665,6 +667,7 @@ def parse_workflow_file(
         webhook=webhook,
         github_states=github_states,
         tracker_enabled=bool(tracker_enabled),
+        source=source,
         filter_labels=filter_labels,
         exclude_labels=exclude_labels,
         pickup_states=pickup_states,

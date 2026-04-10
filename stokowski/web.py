@@ -720,6 +720,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <div class="agent-card">
         <div>
           <div class="agent-id">${esc(r.issue_identifier)}</div>
+          ${r.workflow ? `<div class="agent-workflow">${esc(r.workflow)}</div>` : ''}
         </div>
         <div>
           <div class="agent-status-row">

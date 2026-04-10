@@ -159,15 +159,18 @@ class Manager:
                     1,
                 ),
             },
-            # Flatten running/retrying/gates across workflows for dashboard compat
+            # Flatten running/retrying/gates across workflows with workflow name
             "running": [
-                r for s in snapshots.values() for r in s.get("running", [])
+                {**r, "workflow": name}
+                for name, s in snapshots.items() for r in s.get("running", [])
             ],
             "retrying": [
-                r for s in snapshots.values() for r in s.get("retrying", [])
+                {**r, "workflow": name}
+                for name, s in snapshots.items() for r in s.get("retrying", [])
             ],
             "gates": [
-                g for s in snapshots.values() for g in s.get("gates", [])
+                {**g, "workflow": name}
+                for name, s in snapshots.items() for g in s.get("gates", [])
             ],
         }
 

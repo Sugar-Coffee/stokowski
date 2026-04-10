@@ -38,6 +38,15 @@ from .workspace import ensure_workspace, remove_workspace, WorkspaceResult
 
 logger = logging.getLogger("stokowski")
 
+
+def _parse_dt(val: str | None) -> datetime | None:
+    if not val:
+        return None
+    try:
+        return datetime.fromisoformat(val.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+
 _RATE_LIMIT_PATTERNS = [
     "rate limit",
     "rate_limit",
@@ -890,6 +899,52 @@ class Orchestrator:
         logger.info(f"Schedule dispatching: {issue.identifier} — {fire_date}")
         self._dispatch(issue, attempt_num=0)
 
+    async def _fetch_pr_candidates(self) -> list[Issue] | None:
+        """Fetch open GitHub PRs as synthetic Issue objects."""
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "gh", "pr", "list", "--state", "open",
+                "--json", "number,title,headRefName,url,labels,createdAt,updatedAt",
+                "--limit", "50",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(self.cfg.workspace.resolved_repo_path() or Path.cwd()),
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+            if proc.returncode != 0:
+                logger.error(f"gh pr list failed: {stderr.decode()[:200]}")
+                return None
+
+            import json as _json
+            prs = _json.loads(stdout.decode())
+            candidates = []
+            for pr in prs:
+                pr_number = pr.get("number", 0)
+                pr_id = f"pr:{pr_number}"
+                labels = [l.get("name", "") for l in pr.get("labels", []) if isinstance(l, dict)]
+
+                issue = Issue(
+                    id=pr_id,
+                    identifier=f"#{pr_number}",
+                    title=pr.get("title", ""),
+                    description=None,
+                    state="open",
+                    branch_name=pr.get("headRefName", ""),
+                    url=pr.get("url", ""),
+                    labels=labels,
+                    created_at=_parse_dt(pr.get("createdAt")),
+                    updated_at=_parse_dt(pr.get("updatedAt")),
+                )
+                candidates.append(issue)
+
+            return candidates
+        except asyncio.TimeoutError:
+            logger.error("gh pr list timed out")
+            return None
+        except Exception as e:
+            logger.error(f"Failed to fetch PR candidates: {e}")
+            return None
+
     async def _tick(self):
         """Single poll tick: reconcile, validate, fetch, dispatch."""
         if not self._running:
@@ -918,33 +973,38 @@ class Orchestrator:
             logger.warning(f"Schedule check failed: {e}")
 
         # Skip tracker operations if tracker is disabled (schedule-only workflows)
-        if not self.cfg.tracker_enabled:
+        if not self.cfg.tracker_enabled and self.cfg.source != "github-prs":
             return
 
-        # Part 1: Reconcile running issues
-        await self._reconcile()
+        # PR-based dispatch — poll GitHub PRs instead of tracker
+        if self.cfg.source == "github-prs":
+            candidates = await self._fetch_pr_candidates()
+            if candidates is None:
+                return
+        else:
+            # Part 1: Reconcile running issues
+            await self._reconcile()
 
-        # Handle gate responses
-        await self._handle_gate_responses()
+            # Handle gate responses
+            await self._handle_gate_responses()
 
-        # Part 2: Validate config
-        if errors:
-            logger.warning(f"Config invalid, skipping dispatch: {errors}")
-            return
+            # Part 2: Validate config
+            if errors:
+                logger.warning(f"Config invalid, skipping dispatch: {errors}")
+                return
 
-        # Part 3: Fetch candidates
-        # Use pickup_states for polling if configured, otherwise default active states
-        poll_states = self.cfg.pickup_states if self.cfg.pickup_states else self.cfg.active_linear_states()
-        try:
-            client = self._ensure_tracker_client()
-            candidates = await client.fetch_candidate_issues(
-                self.cfg.tracker.project_slug,
-                poll_states,
-                team_key=self.cfg.tracker.team_key,
-            )
-        except Exception as e:
-            logger.error(f"Failed to fetch candidates: {e}")
-            return
+            # Part 3: Fetch candidates
+            poll_states = self.cfg.pickup_states if self.cfg.pickup_states else self.cfg.active_linear_states()
+            try:
+                client = self._ensure_tracker_client()
+                candidates = await client.fetch_candidate_issues(
+                    self.cfg.tracker.project_slug,
+                    poll_states,
+                    team_key=self.cfg.tracker.team_key,
+                )
+            except Exception as e:
+                logger.error(f"Failed to fetch candidates: {e}")
+                return
 
         # Cache issues for retry lookup
         for issue in candidates:
@@ -1019,24 +1079,28 @@ class Orchestrator:
             return False
         if issue.id in self.completed:
             return False
-
-        state_lower = issue.state.strip().lower()
-        terminal_lower = [s.strip().lower() for s in self.cfg.terminal_linear_states()]
-
-        # Use pickup_states if configured, otherwise active states
-        if self.cfg.pickup_states:
-            eligible_lower = [s.strip().lower() for s in self.cfg.pickup_states]
-        else:
-            eligible_lower = [s.strip().lower() for s in self.cfg.active_linear_states()]
-
-        if state_lower not in eligible_lower:
-            return False
-        if state_lower in terminal_lower:
-            return False
         if issue.id in self.running:
             return False
         if issue.id in self.claimed:
             return False
+
+        # PR-based issues skip tracker state checks
+        if issue.id.startswith("pr:"):
+            pass  # all open PRs are eligible
+        else:
+            state_lower = issue.state.strip().lower()
+            terminal_lower = [s.strip().lower() for s in self.cfg.terminal_linear_states()]
+
+            # Use pickup_states if configured, otherwise active states
+            if self.cfg.pickup_states:
+                eligible_lower = [s.strip().lower() for s in self.cfg.pickup_states]
+            else:
+                eligible_lower = [s.strip().lower() for s in self.cfg.active_linear_states()]
+
+            if state_lower not in eligible_lower:
+                return False
+            if state_lower in terminal_lower:
+                return False
 
         # Per-workflow label filter
         if self.cfg.filter_labels:
