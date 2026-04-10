@@ -417,15 +417,9 @@ class Orchestrator:
             else:
                 logger.warning(f"Failed to move {issue.identifier} to Blocked state")
 
-            # Clean up workspace
-            try:
-                ws_root = self.cfg.workspace.resolved_root()
-                await remove_workspace(
-                    ws_root, issue.identifier, self.cfg.hooks,
-                    workspace_cfg=self.cfg.workspace,
-                )
-            except Exception as e:
-                logger.warning(f"Failed to remove workspace for blocked {issue.identifier}: {e}")
+            # Keep workspace intact — agent may have unpushed WIP.
+            # Workspace will be reused if the issue is moved back to a pickup state,
+            # or cleaned up manually.
 
         except Exception as e:
             logger.error(f"Failed to block {issue.identifier}: {e}")
