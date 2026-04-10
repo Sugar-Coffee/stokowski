@@ -847,6 +847,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   function switchWorkflow(name) {
     currentWorkflow = name;
     refresh();
+    loadHistory();
   }
 
   function getViewData(fullData) {
@@ -909,7 +910,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   async function loadHistory() {
     try {
       const res = await fetch('/api/v1/history');
-      const history = await res.json();
+      let history = await res.json();
+
+      // Filter by selected workflow
+      if (currentWorkflow) {
+        history = history.filter(r => r.workflow === currentWorkflow);
+      }
+
       document.getElementById('history-count').textContent = history.length;
 
       if (history.length === 0) {

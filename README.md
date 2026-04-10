@@ -4,7 +4,7 @@
 
 **Autonomous coding agents, orchestrated by issue trackers.**
 
-Built on [OpenAI's Symphony](https://github.com/openai/symphony) spec and taken further — with configurable state machines, gate-based human review, multi-runner support, and a live web dashboard. Works with [Claude Code](https://claude.ai/claude-code), [Codex](https://openai.com/index/introducing-codex/), [Linear](https://linear.app), and [GitHub Issues](https://github.com/features/issues).
+Built on [OpenAI's Symphony](https://github.com/openai/symphony) spec and taken further — with configurable state machines, gate-based human review, multi-runner support, and a live web dashboard. Works with [Claude Code](https://claude.ai/claude-code), [Codex](https://openai.com/index/introducing-codex/), [Gemini CLI](https://blog.google/technology/developers/gemini-cli/), [Linear](https://linear.app), and [GitHub Issues](https://github.com/features/issues).
 
 [![Python](https://img.shields.io/badge/python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-22c55e)](LICENSE)
@@ -104,13 +104,13 @@ Stokowski agent:        Claude reads CLAUDE.md               ← same convention
 | | Stokowski | Emdash |
 |---|---|---|
 | Model | Autonomous daemon — polls Linear, dispatches agents, manages lifecycle | Interactive desktop app — human-initiated agent runs |
-| Agent runners | Claude Code + Codex per state | 22+ agent CLIs (Claude Code, Codex, Gemini, Cursor, etc.) |
+| Agent runners | Claude Code, Codex, and Gemini CLI per state | 22+ agent CLIs (Claude Code, Codex, Gemini, Cursor, etc.) |
 | State machine | Configurable stages, gates, transitions, rework loops | No workflow engine — single-shot agent runs |
 | Human review gates | Built-in gate protocol with approve/rework Linear states | No gate protocol |
 | Prompt assembly | Three-layer Jinja2 (global + stage + auto-injected lifecycle) | No custom prompt templates |
 | Quality gate hooks | `before_run` / `after_run` / `on_stage_enter` shell scripts | Not available |
-| Retry & recovery | Exponential backoff, stall detection, crash recovery from tracking comments | No retry logic |
-| Issue trackers | Linear | Linear, Jira, GitHub Issues |
+| Retry & recovery | Exponential backoff, stall detection, crash recovery from persistent state on disk | No retry logic |
+| Issue trackers | Linear, GitHub Issues | Linear, Jira, GitHub Issues |
 | MCP servers | Any `.mcp.json` in the workspace | MCP support |
 | Concurrency control | Global + per-state limits | Parallel agents in worktrees |
 | Cost | Your existing API subscriptions | Free / open source |
@@ -138,7 +138,7 @@ Linear issue → isolated git clone → agent (Claude or Codex) → PR + Human R
 
 | Symphony | Stokowski |
 |----------|-----------|
-| `codex app-server` JSON-RPC | `claude -p --output-format stream-json` or `codex --quiet` |
+| `codex app-server` JSON-RPC | `claude -p --output-format stream-json`, `codex --quiet`, or `gemini --output-format stream-json` |
 | `thread/start` → thread_id | First turn → `session_id` |
 | `turn/start` on thread | `claude -p --resume <session_id>` |
 | `approval_policy: never` | `--dangerously-skip-permissions` |
@@ -150,32 +150,41 @@ Linear issue → isolated git clone → agent (Claude or Codex) → PR + Human R
 ## Features
 
 - **Configurable state machine** — define agent stages, human gates, and transitions in `workflow.yaml`; issues flow through your pipeline automatically
+- **Multi-workflow daemon** — manage N workflows from a single process via a root `stokowski.yaml` config; auto-detected when `.stokowski/stokowski.yaml` exists; each workflow has independent start/stop
 - **Multi-runner** — Claude Code, Codex, and Gemini CLI in the same pipeline; different states can use different runners and models (e.g. Opus for investigation, Sonnet for implementation, Gemini for review)
 - **Fallback runner chain** — on rate limit errors, automatically retry with fallback runners (e.g. `fallback_runners: [gemini, codex]`)
 - **Three-layer prompt assembly** — global prompt + per-stage prompt + auto-injected lifecycle context; each layer is a Jinja2 template with full issue variables
 - **Multi-tracker support** — works with Linear and GitHub Issues out of the box (`tracker.kind: linear` or `tracker.kind: github`)
-- **Tracker-driven dispatch** — polls for issues in configured states, dispatches agents with bounded concurrency
-- **Session continuity** — multi-turn agent sessions via `--resume` (Claude Code); agents pick up where they left off
+- **PR-based dispatch** — `source: github-prs` processes pull requests directly without a tracker, using `gh pr list`
+- **Tracker-driven dispatch** — polls for issues in configured states, dispatches agents with bounded concurrency; dispatch queue survives failed API ticks
+- **Crash recovery** — per-issue state persisted to disk via `PersistedIssueState` in `state.py`; manager state recovery on restart
+- **Run history** — completed runs recorded to `history.json` and displayed in the dashboard
+- **Session continuity** — multi-turn agent sessions via `--resume` (Claude Code and Gemini CLI); agents pick up where they left off
 - **Isolated workspaces** — per-issue git clones or **git worktrees** so parallel agents never conflict
+- **Workspace-free workflows** — `workspace_enabled: false` for workflows that don't need a git workspace (e.g. schedule-only or triage workflows)
 - **Lifecycle hooks** — `after_create`, `before_run`, `after_run`, `before_remove`, `on_stage_enter` shell scripts for setup, quality gates, and cleanup
 - **Retry with backoff** — failed turns retry automatically with exponential backoff
 - **State reconciliation** — running agents are stopped if their Linear issue moves to a terminal state mid-run
-- **Web dashboard** — live view of agent status, token usage, and last activity at `localhost:<port>`
+- **Web dashboard** — live view of agent status, token usage, run history, and last activity at `localhost:<port>`; light/dark mode with system preference detection and manual toggle; responsive layout with ARIA accessibility; workflow tabs for multi-workflow setups
 - **MCP-aware** — agents inherit `.mcp.json` from the workspace (Figma, Linear, iOS Simulator, Playwright, etc.)
 - **Persistent terminal UI** — live status bar, single-key controls (`q` quit · `s` status · `r` refresh · `h` help)
 - **Git worktree mode** — use `workspace.mode: worktree` for lightweight isolation from a single repo instead of full clones
 - **Team-based filtering** — use `tracker.team_key` to fetch all issues from a team, regardless of which project they belong to
+- **Per-workflow filtering** — `filter_labels`, `exclude_labels`, and `pickup_states` per workflow YAML for fine-grained issue selection
+- **Per-workflow linear_states** — each workflow can override the shared `linear_states` from the root config
 - **Triage state** — lightweight pre-check (Haiku, 3 turns) evaluates actionability before burning implementation tokens
-- **Blocked status** — agents signal `<!-- stokowski:blocked -->` to move non-actionable issues to Blocked with a comment
+- **Blocked status** — agents signal `STOKOWSKI:BLOCKED` to move non-actionable issues to Blocked with a comment; workspace is preserved on block
 - **Label-based routing** — route issues to different pipeline entry points based on Linear labels (e.g., `feature` → PM pipeline, `bug` → implementation)
 - **Per-project concurrency** — parallelize across projects while limiting agents per project (e.g., 3 implements globally but max 1 per project to avoid merge conflicts)
 - **Webhook support** — instant reactions to Linear and GitHub state changes via `POST /api/v1/webhook/{linear,github}`, with HMAC signature verification
 - **Scheduled issue creation** — cron-based auto-creation via external commands (`create_command`); works with any tracker CLI
+- **Schedule-only workflows** — `tracker_enabled: false` combined with `schedule.cron` for workflows that only create issues on a schedule
 - **PR-driven gate transitions** — GitHub PR reviews (approved/changes_requested/merged) trigger gate transitions via `pr_triggers` config
 - **Persistent state** — token metrics and schedule timestamps survive restarts (JSON file next to workflow YAML)
-- **Multi-workflow daemon** — manage N workflows from a single process via a root `stokowski.yaml` config
+- **Orphan agent cleanup** — kills stale `claude -p` processes on startup to prevent token bleed from prior crashes
+- **Shared Linear rate limiter** — all workflows share one `LinearClient` with semaphore(1) + 1s minimum between requests to avoid rate limits
 - **Config editor** — web-based YAML editor at `/config` with validation before save
-- **`stokowski init`** — interactive scaffolding command to set up a new workflow
+- **`stokowski init`** — interactive scaffolding command to set up a new workflow; configures webhook secrets for both Linear and GitHub
 - **Ready-to-use example workflows** — autonomous implementation pipeline and AI-collaborative feature definition (see `examples/`)
 
 ---
@@ -245,9 +254,12 @@ Prompt authors never need to write "move the issue to Human Review when done" �
 <details>
 <summary><strong>Reliability</strong></summary>
 
-- **Stall detection** — kills agents that produce no output for a configurable period (both Claude Code and Codex runners)
+- **Crash recovery** — per-issue state persisted to disk via `PersistedIssueState`; manager and orchestrator state survives restarts
+- **Orphan agent cleanup** — kills stale `claude -p` processes on startup to prevent token bleed from prior crashes
+- **Stall detection** — kills agents that produce no output for a configurable period (Claude Code, Codex, and Gemini runners)
 - **Process group tracking** — child PIDs registered on spawn and killed via `os.killpg`, catching grandchild processes too
 - **Interruptible poll sleep** — shutdown wakes the poll loop immediately; doesn't wait for the current interval to expire
+- **Dispatch queue** — candidate issues survive failed API ticks and are retried on the next poll
 - **Headless system prompt** — agents receive an appended system prompt disabling interactive skills, plan mode, and slash commands
 
 </details>
@@ -691,6 +703,18 @@ routing:
 #   create_command: |                  # shell command — {date} and {datetime} are replaced
 #     gh issue create --title "docs: daily sync — {date}" --label docs
 
+# Per-workflow filtering (used in multi-workflow setups).
+# filter_labels: [feature, enhancement]  # only pick up issues with these labels
+# exclude_labels: [manual, skip]         # skip issues with these labels
+# pickup_states: [Todo, Ready]           # override which states to pick up from
+
+# Workflow modes.
+# tracker_enabled: false                 # disable tracker polling (useful for schedule-only workflows)
+# workspace_enabled: false               # skip workspace creation (useful for lightweight/triage workflows)
+
+# Source mode for PR-based dispatch (no tracker needed).
+# source: github-prs                    # process PRs directly via gh pr list
+
 # Webhook listener for instant reactions to tracker events.
 # Reduces latency vs polling alone. Requires the web server (server.port).
 # webhook:
@@ -760,7 +784,7 @@ states:                                # the state machine pipeline
 |------|-----------|---------------------|
 | `agent` (default) | Yes | Dispatches a runner (Claude Code or Codex), runs turns, follows `transitions.complete` on success |
 | `gate` | No | Moves issue to review Linear state, waits for human. Follows `transitions.approve` on Gate Approved, `rework_to` on Rework |
-| `terminal` | No | Moves issue to terminal Linear state, deletes workspace |
+| `terminal` | No | Moves issue to terminal Linear state, deletes workspace. Supports `linear_state: none` (no state change) or literal state names |
 
 ### Per-state runner config
 
@@ -768,7 +792,7 @@ Each state can override these fields from the root `claude` / `hooks` defaults. 
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `runner` | `claude` | `claude` (Claude Code CLI) or `codex` (Codex CLI) |
+| `runner` | `claude` | `claude` (Claude Code CLI), `codex` (Codex CLI), or `gemini` (Gemini CLI) |
 | `model` | root `claude.model` | Model override for this state |
 | `max_turns` | root `claude.max_turns` | Max turns for this state |
 | `turn_timeout_ms` | root value | Per-turn timeout |
@@ -914,8 +938,18 @@ This is formalised in OpenAI's [Harness Engineering](https://openai.com/index/ha
 ## Architecture
 
 ```
-workflow.yaml  →  ServiceConfig (states, linear_states, hooks, claude, etc.)
+stokowski.yaml  →  RootConfig (multi-workflow manager)
+          │
+          ├── workflow-a.yaml  →  ServiceConfig (states, linear_states, hooks, claude, etc.)
+          ├── workflow-b.yaml  →  ServiceConfig
+          └── ...
 prompts/       →  Jinja2 stage prompt files
+          │
+          ▼
+    Manager (manager.py)
+    ├── holds N Orchestrators
+    ├── shared LinearClient (rate-limited: semaphore(1) + 1s min between requests)
+    └── crash recovery from persisted state (state.py)
           │
           ▼
     Prompt Assembly (prompt.py)
@@ -924,10 +958,10 @@ prompts/       →  Jinja2 stage prompt files
     └── lifecycle       →  auto-injected issue context
           │
           ▼
-    Orchestrator  ──────────────────────▶  Linear GraphQL API
-    (asyncio loop, state machine)          fetch candidates
-          │                                reconcile state
-          │  dispatch (bounded concurrency)
+    Orchestrator  ──────────────────────▶  Tracker API
+    (asyncio loop, state machine)          Linear GraphQL / GitHub Issues REST
+          │                                fetch candidates, reconcile state
+          │  dispatch (bounded concurrency, dispatch queue)
           ▼
     Workspace Manager
     ├── after_create hook  →  git clone, npm install, etc.
@@ -939,27 +973,36 @@ prompts/       →  Jinja2 stage prompt files
     ├── Claude Code: claude -p --output-format stream-json
     │   └── --resume <session_id>  (multi-turn continuity)
     ├── Codex: codex --quiet --prompt
+    ├── Gemini: gemini --output-format stream-json
+    │   └── --resume <session_id>  (multi-turn continuity)
     ├── stall detection + turn timeout
     └── PID tracking for clean shutdown
           │
           ▼
     Agent (headless)
     reads code · writes code · runs tests · opens PRs
+          │
+          ▼
+    Run History (history.py)
+    └── completed runs recorded to history.json
 ```
 
 | File | Purpose |
 |------|---------|
-| `stokowski/config.py` | `workflow.yaml` parser, typed config dataclasses, state machine validation |
+| `stokowski/manager.py` | Multi-workflow manager (holds N orchestrators, shared Linear client) |
+| `stokowski/config.py` | `workflow.yaml` and `stokowski.yaml` parser, typed config dataclasses, state machine validation |
 | `stokowski/tracker.py` | `TrackerClient` protocol (interface for all tracker backends) |
-| `stokowski/linear.py` | Linear GraphQL client (httpx async) |
+| `stokowski/linear.py` | Linear GraphQL client (httpx async, shared rate limiter) |
 | `stokowski/github_issues.py` | GitHub Issues REST API client (httpx async) |
+| `stokowski/state.py` | Per-issue persistent state (`PersistedIssueState`), crash recovery |
+| `stokowski/history.py` | Run history recording to `history.json`, displayed in dashboard |
 | `stokowski/prompt.py` | Three-layer prompt assembly (global + stage + lifecycle) |
 | `stokowski/tracking.py` | State machine tracking via structured comments |
 | `stokowski/models.py` | Domain models: `Issue`, `RunAttempt`, `RetryEntry` |
-| `stokowski/orchestrator.py` | Poll loop, state machine dispatch, reconciliation, retry |
-| `stokowski/runner.py` | Multi-runner CLI integration (Claude Code + Codex), stream-json parser |
+| `stokowski/orchestrator.py` | Poll loop, state machine dispatch, reconciliation, retry, orphan cleanup |
+| `stokowski/runner.py` | Multi-runner CLI integration (Claude Code, Codex, Gemini CLI), stream-json parser |
 | `stokowski/workspace.py` | Per-issue workspace lifecycle and hooks |
-| `stokowski/web.py` | Optional FastAPI dashboard + webhook endpoints |
+| `stokowski/web.py` | Optional FastAPI dashboard + webhook endpoints (light/dark mode, run history) |
 | `stokowski/main.py` | CLI entry point, keyboard handler |
 
 ---
@@ -1017,3 +1060,4 @@ git diff HEAD@{1} workflow.example.yaml
 - [OpenAI Symphony](https://github.com/openai/symphony) — the spec and architecture Stokowski implements
 - [Anthropic Claude Code](https://claude.ai/claude-code) — agent runtime
 - [OpenAI Codex](https://openai.com/index/introducing-codex/) — agent runtime
+- [Google Gemini CLI](https://blog.google/technology/developers/gemini-cli/) — agent runtime

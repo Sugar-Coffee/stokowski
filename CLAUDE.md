@@ -1,6 +1,6 @@
 # Stokowski
 
-Claude Code adaptation of [OpenAI's Symphony](https://github.com/openai/symphony). Orchestrates Claude Code agents via Linear issues.
+Claude Code adaptation of [OpenAI's Symphony](https://github.com/openai/symphony). Orchestrates coding agents via issue trackers (Linear and GitHub Issues).
 
 This file is the single source of truth for contributors. It covers architecture, design decisions, key behaviours, and how to work on the codebase.
 
@@ -9,13 +9,16 @@ This file is the single source of truth for contributors. It covers architecture
 ## What it does
 
 Stokowski is a long-running Python daemon that:
-1. Polls Linear for issues in configured active states
-2. Creates an isolated git-cloned workspace per issue
-3. Launches Claude Code (`claude -p`) in that workspace
-4. Manages multi-turn sessions via `--resume <session_id>`
-5. Retries failures with exponential backoff
-6. Reconciles running agents against Linear state changes
-7. Exposes a live web dashboard and terminal UI
+1. Manages N workflows from a root `stokowski.yaml` config (multi-workflow manager)
+2. Polls Linear or GitHub Issues for issues in configured active states
+3. Creates an isolated git-cloned workspace per issue (or runs workspace-free)
+4. Launches Claude Code, Codex, or Gemini CLI in that workspace
+5. Manages multi-turn sessions via `--resume <session_id>`
+6. Retries failures with exponential backoff
+7. Reconciles running agents against tracker state changes
+8. Persists per-issue state to disk for crash recovery
+9. Records completed runs to `history.json`
+10. Exposes a live web dashboard (light/dark mode) and terminal UI
 
 The agent prompt, runtime config, and workspace setup all live in `workflow.yaml` in the operator's directory — not in this codebase.
 
@@ -25,18 +28,20 @@ The agent prompt, runtime config, and workspace setup all live in `workflow.yaml
 
 ```
 stokowski/
-  manager.py         Multi-workflow manager (holds N orchestrators)
-  config.py          workflow.yaml parser + typed config dataclasses
+  manager.py         Multi-workflow manager (holds N orchestrators, shared Linear client)
+  config.py          workflow.yaml + stokowski.yaml parser, typed config dataclasses
   tracker.py         TrackerClient protocol (interface for all tracker backends)
-  linear.py          Linear GraphQL client (httpx async)
+  linear.py          Linear GraphQL client (httpx async, shared rate limiter)
   github_issues.py   GitHub Issues REST API client (httpx async)
+  state.py           Per-issue persistent state (PersistedIssueState), crash recovery
+  history.py         Run history recording to history.json
   models.py          Domain models: Issue, RunAttempt, RetryEntry
-  orchestrator.py    Main poll loop, dispatch, reconciliation, retry
+  orchestrator.py    Main poll loop, dispatch, reconciliation, retry, orphan cleanup
   prompt.py          Three-layer prompt assembly for state machine workflows
-  runner.py          Claude Code CLI integration, stream-json parser
+  runner.py          Multi-runner CLI integration (Claude Code, Codex, Gemini), stream-json parser
   tracking.py        State machine tracking via structured comments
   workspace.py       Per-issue workspace lifecycle and hooks
-  web.py             Optional FastAPI dashboard + webhook endpoints
+  web.py             Optional FastAPI dashboard + webhook endpoints (light/dark mode, history)
   main.py            CLI entry point, keyboard handler
   __main__.py        Enables python -m stokowski
 ```
@@ -55,8 +60,14 @@ Symphony uses Codex's JSON-RPC `app-server` protocol over stdio. Stokowski uses 
 ### Python + asyncio instead of Elixir/OTP
 Simpler operational story — single process, no BEAM runtime, no distributed concerns. Concurrency via `asyncio.create_task`. Each agent turn is a subprocess launched with `asyncio.create_subprocess_exec`.
 
-### No persistent database
-All state lives in memory. The orchestrator recovers from restart by re-polling Linear and re-discovering active issues. Workspace directories on disk act as durable state.
+### Persistent state without a database
+Runtime state lives in memory, but per-issue state is persisted to disk via `state.py` (`PersistedIssueState`) for crash recovery. The orchestrator recovers from restart by loading persisted state, re-polling the tracker, and re-discovering active issues. Completed runs are recorded to `history.json` by `history.py`. Workspace directories on disk also act as durable state. No external database is required.
+
+### Multi-workflow manager
+The `manager.py` module holds N orchestrators, each driven by its own `workflow.yaml`. A root `stokowski.yaml` config declares the workflows. The manager provides independent start/stop for each workflow and shares a single `LinearClient` instance across all workflows to stay within rate limits.
+
+### Shared Linear rate limiter
+All workflows share one `LinearClient` instance with a semaphore(1) and a minimum 1-second delay between requests. This prevents concurrent workflows from hitting Linear's rate limits.
 
 ### workflow.yaml as the operator contract
 The operator's `workflow.yaml` defines the runtime config and state machine. Stokowski re-parses it on every poll tick — config changes take effect without restart. Both `.yaml` and legacy `.md` (YAML front matter + Jinja2 body) formats are supported. Prompt templates are now separate `.md` files referenced by path from the config.
@@ -85,7 +96,7 @@ Agents run with `cwd` set to the workspace directory. Workspaces persist across 
 ## Component deep-dives
 
 ### config.py
-Parses `workflow.yaml` (or legacy `.md` with front matter) into typed dataclasses:
+Parses `workflow.yaml`, `stokowski.yaml` (root config for multi-workflow), and legacy `.md` (with front matter) into typed dataclasses. `RootConfig` holds the top-level `stokowski.yaml` structure: list of workflow paths, shared server config, shared `linear_states`.
 - `TrackerConfig` — tracker kind (`linear` or `github`), connection details (endpoint/API key for Linear; owner/repo/token for GitHub)
 - `PollingConfig` — interval
 - `WorkspaceConfig` — root path (supports `~` and `$VAR` expansion)
@@ -100,6 +111,8 @@ Parses `workflow.yaml` (or legacy `.md` with front matter) into typed dataclasse
 - `StateConfig` — a single state in the state machine: type, prompt path, linear_state key, runner, session mode, transitions, per-state overrides (model, max_turns, timeouts, hooks), gate-specific fields (rework_to, max_rework)
 - `RoutingRule` — maps Linear labels to entry states for label-based routing
 - `ScheduleConfig` — optional cron-based issue creation via external shell command with `{date}`/`{datetime}` placeholders
+
+Per-workflow fields: `filter_labels` (only pick up issues with these labels), `exclude_labels` (skip issues with these labels), `pickup_states` (override which states to pick up from), `tracker_enabled` (disable tracker polling for schedule-only workflows), `workspace_enabled` (skip workspace creation), `source` (`github-prs` for PR-based dispatch without a tracker). Each workflow can also override the shared `linear_states` from the root config.
 
 `ServiceConfig` provides helper methods: `entry_state` (first agent state), `entry_state_for_issue(labels)` (label-routed entry state), `active_linear_states()`, `gate_linear_states()`, `terminal_linear_states()`.
 
@@ -117,8 +130,19 @@ Parses `workflow.yaml` (or legacy `.md` with front matter) into typed dataclasse
 ### tracker.py
 Defines `TrackerClient` — a `Protocol` class that all tracker backends must implement. Methods: `close()`, `fetch_candidate_issues()`, `fetch_issue_states_by_ids()`, `fetch_issues_by_states()`, `post_comment()`, `fetch_comments()`, `update_issue_state()`. The orchestrator uses duck typing — no explicit subclassing needed.
 
+### manager.py
+Multi-workflow manager. Parses the root `stokowski.yaml` (`RootConfig`) and creates one `Orchestrator` per workflow entry. Provides `start()` / `stop()` lifecycle for all workflows. Shares a single `LinearClient` instance across all orchestrators to enforce rate limiting. Supports crash recovery — manager state (which workflows are running, their last-known state) is persisted and restored on restart.
+
+### state.py
+Per-issue persistent state. `PersistedIssueState` is a dataclass serialized to a JSON file alongside the workflow YAML. Stores issue ID, current state, session ID, turn count, token usage, and timestamps. On startup, the orchestrator loads persisted state to recover in-flight issues without re-polling from scratch. State is updated after each turn and cleared when an issue reaches a terminal state.
+
+### history.py
+Run history recording. When an agent worker exits (success, failure, or block), the completed run is appended to `history.json` — a JSON Lines file next to the workflow YAML. Each entry records: issue identifier, state, outcome, token usage, duration, and timestamps. The web dashboard reads this file to display a run history table.
+
 ### linear.py
-Async GraphQL client over httpx implementing `TrackerClient`. Supports two filtering modes: **project-scoped** (`project_slug`) and **team-scoped** (`team_key`). Each mode has its own GraphQL query set — team queries use `team: { key: { eq: $teamKey } }` filter.
+Async GraphQL client over httpx implementing `TrackerClient`. In multi-workflow setups, a single `LinearClient` instance is shared across all orchestrators via the manager. Rate limiting is enforced with an `asyncio.Semaphore(1)` and a minimum 1-second delay between requests to avoid hitting Linear's API limits.
+
+Supports two filtering modes: **project-scoped** (`project_slug`) and **team-scoped** (`team_key`). Each mode has its own GraphQL query set — team queries use `team: { key: { eq: $teamKey } }` filter.
 
 ### github_issues.py
 GitHub Issues REST API client implementing `TrackerClient`. Uses labels prefixed with `stokowski:` to represent workflow states (GitHub only has open/closed natively). Key design: `update_issue_state()` atomically swaps `stokowski:*` labels while preserving user labels. `fetch_candidate_issues()` queries per state label since GitHub API filters by single label. Auto-creates missing labels on first use.
@@ -146,15 +170,21 @@ while running:
     sleep(interval)  # interruptible via asyncio.Event
 ```
 
+**Orphan agent cleanup:** On startup, `_kill_orphan_agents()` finds and kills stale `claude -p` processes left behind by prior crashes, preventing token bleed.
+
+**Dispatch queue:** Candidate issues are queued in a dispatch queue that survives failed API ticks — candidates are not lost if a single poll fails.
+
 **Dispatch logic:**
 1. Issues sorted by priority (lower = higher), then created_at, then identifier
 2. `_is_eligible()` checks: valid fields, active state, not already running/claimed, blockers resolved
 3. Per-state concurrency limits checked against `max_concurrent_agents_by_state` (global) and `max_concurrent_by_project` (per-project, uses `issue.project_slug`)
 4. `_dispatch()` creates a `RunAttempt`, adds to `self.running`, spawns `_run_worker` task
 
+**PR-based dispatch:** When `source: github-prs` is configured, the orchestrator processes pull requests directly via `gh pr list` without a tracker.
+
 **Reconciliation:** on each tick, fetches current states for all running issue IDs. If an issue moved to terminal state → cancel worker + clean workspace. If moved out of active states → cancel worker, release claim.
 
-**Blocked handling:** When a runner detects `<!-- stokowski:blocked -->` in the agent's result text, `attempt.status` is set to `"blocked"`. On worker exit, `_move_to_blocked()` posts a comment with the reason, moves the issue to the Blocked Linear state, cleans up the workspace, and releases all tracking.
+**Blocked handling:** When a runner detects `STOKOWSKI:BLOCKED` in the agent's result text, `attempt.status` is set to `"blocked"`. On worker exit, `_move_to_blocked()` posts a comment with the reason, moves the issue to the Blocked Linear state, and releases all tracking. The workspace is preserved on block (not deleted).
 
 **Label-based routing:** `_resolve_current_state()` calls `cfg.entry_state_for_issue(labels)` for new issues (no tracking comments). If routing rules match the issue's labels, the issue enters the matched state instead of the default entry state.
 
@@ -190,13 +220,15 @@ Two workspace modes:
 - **Clone mode** — `_ensure_clone_workspace()` creates a directory under `workspace.root`, runs `after_create` hook (typically `git clone`). Workspace key is the sanitized identifier.
 - **Worktree mode** — `_ensure_worktree()` runs `git worktree add -b {branch} .worktrees/{issue-number} origin/main` from `workspace.repo_path`. Falls back to attaching existing branch if `-b` fails. `_remove_worktree()` removes the worktree and deletes the branch.
 
-`ensure_workspace()` and `remove_workspace()` dispatch to the correct mode based on `workspace_cfg.mode`. Both accept an optional `workspace_cfg` parameter; when `None`, they use clone mode.
+`ensure_workspace()` and `remove_workspace()` dispatch to the correct mode based on `workspace_cfg.mode`. Both accept an optional `workspace_cfg` parameter; when `None`, they use clone mode. When `workspace_enabled: false` is set in the workflow config, workspace creation is skipped entirely.
+
+Blocked issues preserve their workspace (not deleted on block) so humans can inspect the state.
 
 `run_hook()` executes shell scripts via `asyncio.create_subprocess_shell` with timeout.
 
 ### web.py
 Optional FastAPI app returned by `create_app(orch)`. Routes:
-- `GET /` — HTML dashboard (IBM Plex Mono font, dark theme, amber accents)
+- `GET /` — HTML dashboard (IBM Plex Mono font, light/dark mode with system preference detection and manual toggle, responsive layout, ARIA accessible). Multi-workflow setups show workflow tabs. Includes a run history section displaying completed runs from `history.json`.
 - `GET /api/v1/state` — full JSON snapshot from `orch.get_state_snapshot()`
 - `GET /api/v1/{issue_identifier}` — single issue state
 - `POST /api/v1/refresh` — triggers `orch._tick()` immediately
@@ -248,24 +280,34 @@ State machine tracking via structured Linear comments:
 ## Data flow: issue dispatch to PR
 
 ```
-workflow.yaml parsed → states + config loaded
-    → Linear poll → Issue fetched → state resolved from tracking comments
-    → _dispatch() called
-        → RunAttempt created in self.running
-        → _run_worker() task spawned
-            → ensure_workspace() → after_create hook (git clone, npm install, etc.)
-            → assemble_prompt() → 3 layers: global + stage + lifecycle
-            → run_agent_turn() called in loop (up to max_turns)
-                → build_claude_args() → claude -p subprocess
-                → NDJSON streamed: tool_use events, assistant messages, result
-                → session_id captured for next turn
-            → _on_worker_exit() called
-                → state transition on success → tracking comment posted
-                → tokens/timing aggregated
-                → retry or continuation scheduled
+stokowski.yaml parsed → RootConfig → Manager created with N orchestrators
+    → shared LinearClient instantiated (rate-limited)
+    → persisted state loaded from disk (state.py) for crash recovery
+    → orphan agent processes killed on startup
+
+Per workflow:
+    workflow.yaml parsed → states + config loaded
+        → Tracker poll → Issue fetched → state resolved from tracking comments + persisted state
+        → candidates queued in dispatch queue (survives failed ticks)
+        → _dispatch() called
+            → RunAttempt created in self.running
+            → persisted state updated on disk
+            → _run_worker() task spawned
+                → ensure_workspace() → after_create hook (git clone, npm install, etc.)
+                → assemble_prompt() → 3 layers: global + stage + lifecycle
+                → run_agent_turn() called in loop (up to max_turns)
+                    → build_claude_args() → claude/codex/gemini subprocess
+                    → NDJSON streamed: tool_use events, assistant messages, result
+                    → session_id captured for next turn
+                    → persisted state updated after each turn
+                → _on_worker_exit() called
+                    → state transition on success → tracking comment posted
+                    → tokens/timing aggregated
+                    → run recorded to history.json (history.py)
+                    → retry or continuation scheduled
 ```
 
-The agent itself handles: moving Linear state, posting comments, creating branches, opening PRs via `gh pr create`, linking PR to issue. Stokowski doesn't do any of that — it's the scheduler, not the agent.
+The agent itself handles: moving tracker state, posting comments, creating branches, opening PRs via `gh pr create`, linking PR to issue. Stokowski doesn't do any of that — it's the scheduler, not the agent.
 
 ---
 
@@ -305,8 +347,8 @@ There are no automated tests beyond `--dry-run`. The system is best verified by 
 
 ## Contributing
 
-### Adding a new tracker (not Linear)
-1. Add a client in a new file (e.g., `github_issues.py`) implementing the same three methods as `LinearClient`
+### Adding a new tracker (beyond Linear and GitHub Issues)
+1. Add a client in a new file implementing the `TrackerClient` protocol from `tracker.py`
 2. Add the new tracker kind to `config.py` parsing
 3. Update `orchestrator.py` to instantiate the right client based on `cfg.tracker.kind`
 4. Update `validate_config()` to handle the new kind
@@ -342,3 +384,5 @@ Config: `ScheduleConfig` in `config.py`. Logic: `_check_schedule()` in `orchestr
 - **Uvicorn signal handlers**: Must be monkey-patched (`server.install_signal_handlers = lambda: None`) before calling `serve()`, otherwise uvicorn hijacks SIGINT.
 - **workflow.yaml is pure YAML**: No markdown front matter. The legacy `.md` format with `---` delimiters is still supported but `.yaml` is the canonical format.
 - **Prompt files use Jinja2 with silent undefined**: Missing variables become empty strings rather than raising errors. This is intentional — not all variables are available in every context.
+- **`STOKOWSKI:BLOCKED` marker**: Agents signal blocked status with the literal text `STOKOWSKI:BLOCKED` in their result output — not HTML comments (`<!-- stokowski:blocked -->`). The marker format changed in v0.5.0.
+- **Shared Linear client rate limiting**: In multi-workflow setups, all orchestrators share a single `LinearClient` with semaphore(1) + 1s minimum delay. Do not instantiate separate clients per workflow — this bypasses rate limiting and causes 429 errors.

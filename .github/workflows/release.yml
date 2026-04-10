@@ -6,54 +6,30 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
-  release:
+  release-please:
     runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      pr: ${{ steps.release.outputs.pr }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  auto-merge:
+    runs-on: ubuntu-latest
+    needs: release-please
+    if: needs.release-please.outputs.pr && !needs.release-please.outputs.release_created
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # needed to push tags
 
-      - name: Check if this is a release merge
-        id: check
-        run: |
-          COMMIT_MSG=$(git log -1 --pretty=%s)
-          if [[ "$COMMIT_MSG" =~ ^Release\ v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-            echo "is_release=true" >> "$GITHUB_OUTPUT"
-            echo "version=v${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
-          else
-            echo "is_release=false" >> "$GITHUB_OUTPUT"
-            echo "Not a release commit, skipping."
-          fi
-
-      - name: Fetch release PR body
-        id: pr
-        if: steps.check.outputs.is_release == 'true'
+      - name: Auto-merge release PR
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${{ steps.check.outputs.version }}"
-          # Find the most recently merged release PR by title
-          BODY=$(gh pr list \
-            --base main \
-            --state merged \
-            --limit 1 \
-            --search "Release ${VERSION} in:title" \
-            --json body \
-            --jq '.[0].body')
-          # Write body to file to avoid shell quoting issues with multiline content
-          echo "$BODY" > /tmp/release-notes.md
-          echo "notes_file=/tmp/release-notes.md" >> "$GITHUB_OUTPUT"
-
-      - name: Create tag and GitHub release
-        if: steps.check.outputs.is_release == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          VERSION="${{ steps.check.outputs.version }}"
-          git tag "$VERSION"
-          git push origin "$VERSION"
-          gh release create "$VERSION" \
-            --title "$VERSION" \
-            --notes-file "${{ steps.pr.outputs.notes_file }}"
+          PR_NUMBER=$(echo '${{ needs.release-please.outputs.pr }}' | jq -r '.number')
+          gh pr merge "$PR_NUMBER" --squash --auto
