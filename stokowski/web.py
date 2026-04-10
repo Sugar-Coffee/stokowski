@@ -33,20 +33,45 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-  :root {
+  /* Dark theme (default) */
+  :root, [data-theme="dark"] {
     --bg:        #0a0a0a;
     --surface:   #141414;
     --border:    #262626;
     --border-hi: #3a3a3a;
     --text:      #f0f0ec;
-    --muted:     #8a8a80;
-    --dim:       #525250;
+    --muted:     #9a9a90;
+    --dim:       #626260;
     --amber:     #f0c050;
     --amber-dim: #7a6030;
     --green:     #5cd88a;
     --red:       #ef6b5e;
-    --blue:      #5b9cf6;
+    --blue:      #6ba8f8;
     --font:      'IBM Plex Mono', monospace;
+    --grid-opacity: 0.35;
+    --btn-bg:    #2a2a2a;
+    --btn-text:  #f0f0ec;
+    --btn-hover: #3a3a3a;
+  }
+
+  /* Light theme */
+  [data-theme="light"] {
+    --bg:        #f8f8f6;
+    --surface:   #ffffff;
+    --border:    #e0e0dc;
+    --border-hi: #c8c8c4;
+    --text:      #1a1a18;
+    --muted:     #6a6a64;
+    --dim:       #a0a098;
+    --amber:     #c8960a;
+    --amber-dim: #f0dca0;
+    --green:     #1a8a40;
+    --red:       #c0392b;
+    --blue:      #2563eb;
+    --grid-opacity: 0.15;
+    --btn-bg:    #e8e8e4;
+    --btn-text:  #1a1a18;
+    --btn-hover: #d8d8d4;
   }
 
   html, body {
@@ -68,7 +93,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       linear-gradient(var(--border) 1px, transparent 1px),
       linear-gradient(90deg, var(--border) 1px, transparent 1px);
     background-size: 40px 40px;
-    opacity: 0.35;
+    opacity: var(--grid-opacity);
     pointer-events: none;
     z-index: 0;
   }
@@ -280,9 +305,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .status-pill.streaming {
-    background: rgba(232, 184, 75, 0.12);
+    background: rgba(240, 192, 80, 0.15);
     color: var(--amber);
-    border: 1px solid var(--amber-dim);
+    border: 1px solid var(--amber);
   }
 
   .status-pill.streaming::before {
@@ -295,11 +320,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     50%       { opacity: 0; }
   }
 
-  .status-pill.succeeded  { background: rgba(76,186,110,.1); color: var(--green); border: 1px solid rgba(76,186,110,.25); }
-  .status-pill.failed     { background: rgba(217,95,82,.1);  color: var(--red);   border: 1px solid rgba(217,95,82,.25); }
-  .status-pill.retrying   { background: rgba(91,156,246,.1); color: var(--blue);  border: 1px solid rgba(91,156,246,.25); }
-  .status-pill.pending    { background: transparent;          color: var(--muted); border: 1px solid var(--border-hi); }
-  .status-pill.gate { background: rgba(232, 184, 75, 0.08); color: var(--amber-dim); border: 1px solid var(--amber-dim); }
+  .status-pill.succeeded  { background: rgba(92,216,138,.12); color: var(--green); border: 1px solid var(--green); }
+  .status-pill.failed     { background: rgba(239,107,94,.12); color: var(--red);   border: 1px solid var(--red); }
+  .status-pill.retrying   { background: rgba(107,168,248,.12); color: var(--blue);  border: 1px solid var(--blue); }
+  .status-pill.pending    { background: transparent;           color: var(--muted); border: 1px solid var(--border-hi); }
+  .status-pill.gate       { background: rgba(240,192,80,.12); color: var(--amber); border: 1px solid var(--amber); }
 
   .agent-msg {
     font-size: 12px;
@@ -464,6 +489,27 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     outline-offset: 2px;
   }
 
+  /* Theme toggle */
+  .theme-btn {
+    background: var(--btn-bg);
+    color: var(--btn-text);
+    border: 1px solid var(--border-hi);
+    border-radius: 6px;
+    width: 36px;
+    height: 36px;
+    font-size: 16px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s;
+    font-family: system-ui;
+  }
+
+  .theme-btn:hover {
+    background: var(--btn-hover);
+  }
+
   .wf-tab:hover {
     background: #141414;
     color: var(--text);
@@ -515,6 +561,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <span class="logo-tag">Claude Code Orchestrator</span>
     </div>
     <div class="header-right">
+      <button id="theme-toggle" class="theme-btn" onclick="toggleTheme()" aria-label="Toggle light/dark mode" title="Toggle theme">
+        <span id="theme-icon">☀</span>
+      </button>
       <div id="status-dot" class="status-dot idle"></div>
       <span id="ts" class="timestamp">—</span>
     </div>
@@ -770,6 +819,34 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       document.getElementById('status-dot').className = 'status-dot idle';
     }
   }
+
+  // ── Theme toggle ──
+  function getPreferredTheme() {
+    const saved = localStorage.getItem('stokowski-theme');
+    if (saved) return saved;
+    return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  }
+
+  function applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    document.getElementById('theme-icon').textContent = theme === 'light' ? '☾' : '☀';
+    localStorage.setItem('stokowski-theme', theme);
+  }
+
+  function toggleTheme() {
+    const current = document.documentElement.getAttribute('data-theme') || 'dark';
+    applyTheme(current === 'dark' ? 'light' : 'dark');
+  }
+
+  // Listen for system preference changes
+  window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', (e) => {
+    if (!localStorage.getItem('stokowski-theme')) {
+      applyTheme(e.matches ? 'light' : 'dark');
+    }
+  });
+
+  // Apply on load
+  applyTheme(getPreferredTheme());
 
   refresh();
   setInterval(refresh, 3000);
