@@ -993,6 +993,8 @@ class Orchestrator:
         """Check if an issue is eligible for dispatch."""
         if not issue.id or not issue.identifier or not issue.title or not issue.state:
             return False
+        if issue.id in self.completed:
+            return False
 
         state_lower = issue.state.strip().lower()
         terminal_lower = [s.strip().lower() for s in self.cfg.terminal_linear_states()]

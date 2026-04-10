@@ -8,6 +8,9 @@ Supports two modes:
 from __future__ import annotations
 
 import asyncio
+
+# Lock to serialize git worktree operations (git can't handle concurrent worktree add)
+_worktree_lock = asyncio.Lock()
 import logging
 import re
 import shutil
@@ -119,7 +122,18 @@ async def _ensure_worktree(
     hooks: HooksConfig,
     branch_name: str | None = None,
 ) -> WorkspaceResult:
-    """Create a git worktree for an issue."""
+    """Create a git worktree for an issue. Serialized to avoid git lock conflicts."""
+    async with _worktree_lock:
+        return await _ensure_worktree_inner(workspace_cfg, issue_identifier, hooks, branch_name)
+
+
+async def _ensure_worktree_inner(
+    workspace_cfg: WorkspaceConfig,
+    issue_identifier: str,
+    hooks: HooksConfig,
+    branch_name: str | None = None,
+) -> WorkspaceResult:
+    """Inner worktree creation (called under lock)."""
     repo_path = workspace_cfg.resolved_repo_path()
     if not repo_path or not repo_path.exists():
         raise RuntimeError(
