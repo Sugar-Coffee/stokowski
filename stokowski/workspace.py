@@ -174,10 +174,10 @@ async def _ensure_worktree_inner(
     stdout, stderr = await proc.communicate()
 
     if proc.returncode != 0:
+        import re
         error_msg = stderr.decode()[:500]
         if "already used by worktree" in error_msg:
             # Branch is checked out at another worktree — reuse it
-            import re
             match = re.search(r"worktree at '([^']+)'", error_msg)
             if match:
                 existing_path = Path(match.group(1))
@@ -205,9 +205,25 @@ async def _ensure_worktree_inner(
             )
             stdout2, stderr2 = await proc2.communicate()
             if proc2.returncode != 0:
+                error_msg2 = stderr2.decode()[:500]
+                # Second attempt might also hit "already used by worktree"
+                if "already used by worktree" in error_msg2:
+                    match2 = re.search(r"worktree at '([^']+)'", error_msg2)
+                    if match2:
+                        existing_path = Path(match2.group(1))
+                        if existing_path.exists():
+                            logger.info(
+                                f"Reusing existing worktree for {issue_identifier} "
+                                f"at {existing_path}"
+                            )
+                            return WorkspaceResult(
+                                path=existing_path,
+                                branch=branch_name,
+                                created=False,
+                            )
                 raise RuntimeError(
                     f"Failed to create worktree for {issue_identifier}: "
-                    f"{stderr2.decode()[:500]}"
+                    f"{error_msg2}"
                 )
         else:
             raise RuntimeError(
