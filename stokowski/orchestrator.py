@@ -501,17 +501,30 @@ class Orchestrator:
         run = self._issue_state_runs.get(issue.id, 1)
 
         if target_cfg.type == "terminal":
-            # Move issue to terminal state
-            terminal_state = self.cfg.terminal_linear_states()[0] if self.cfg.terminal_linear_states() else "Done"
-            try:
-                client = self._ensure_tracker_client()
-                moved = await client.update_issue_state(issue.id, terminal_state)
-                if moved:
-                    logger.info(f"Moved {issue.identifier} to terminal state '{terminal_state}'")
-                else:
-                    logger.warning(f"Failed to move {issue.identifier} to terminal state '{terminal_state}'")
-            except Exception as e:
-                logger.warning(f"Failed to move {issue.identifier} to terminal: {e}")
+            # Move issue to the terminal's configured linear_state
+            # "none" = agent handled it, skip. "terminal" = use global terminal state.
+            if _is_synthetic or target_cfg.linear_state == "none":
+                pass  # skip state change
+            elif target_cfg.linear_state == "terminal":
+                terminal_state = self.cfg.terminal_linear_states()[0] if self.cfg.terminal_linear_states() else "Done"
+                try:
+                    client = self._ensure_tracker_client()
+                    moved = await client.update_issue_state(issue.id, terminal_state)
+                    if moved:
+                        logger.info(f"Moved {issue.identifier} to '{terminal_state}'")
+                except Exception as e:
+                    logger.warning(f"Failed to move {issue.identifier} to terminal: {e}")
+            else:
+                # Custom linear_state on terminal (e.g. "todo" for backlog-review)
+                from .config import _resolve_state_name
+                target_linear = _resolve_state_name(target_cfg.linear_state, self.cfg._states_cfg)
+                try:
+                    client = self._ensure_tracker_client()
+                    moved = await client.update_issue_state(issue.id, target_linear)
+                    if moved:
+                        logger.info(f"Moved {issue.identifier} to '{target_linear}'")
+                except Exception as e:
+                    logger.warning(f"Failed to move {issue.identifier} to '{target_linear}': {e}")
             # Clean up workspace
             try:
                 ws_root = self.cfg.workspace.resolved_root()
