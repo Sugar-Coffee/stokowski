@@ -72,6 +72,7 @@ class ClaudeConfig:
     turn_timeout_ms: int = 3_600_000
     stall_timeout_ms: int = 300_000
     append_system_prompt: str | None = None
+    mcp_config: list[str] = field(default_factory=list)  # --mcp-config files/JSON strings
 
 
 @dataclass
@@ -391,6 +392,7 @@ def merge_state_config(
         turn_timeout_ms=state.turn_timeout_ms if state.turn_timeout_ms is not None else root_claude.turn_timeout_ms,
         stall_timeout_ms=state.stall_timeout_ms if state.stall_timeout_ms is not None else root_claude.stall_timeout_ms,
         append_system_prompt=root_claude.append_system_prompt,
+        mcp_config=root_claude.mcp_config,
     )
     hooks = state.hooks if state.hooks is not None else root_hooks
     return claude, hooks
@@ -559,6 +561,7 @@ def parse_workflow_file(
         turn_timeout_ms=_coerce_int(c.get("turn_timeout_ms"), 3_600_000),
         stall_timeout_ms=_coerce_int(c.get("stall_timeout_ms"), 300_000),
         append_system_prompt=c.get("append_system_prompt"),
+        mcp_config=_coerce_list(c.get("mcp_config")) or [],
     )
 
     # Parse agent

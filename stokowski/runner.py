@@ -52,6 +52,11 @@ def build_claude_args(
     if not session_id and claude_cfg.append_system_prompt:
         args.extend(["--append-system-prompt", claude_cfg.append_system_prompt])
 
+    # MCP server configs (files or JSON strings)
+    if claude_cfg.mcp_config:
+        for cfg in claude_cfg.mcp_config:
+            args.extend(["--mcp-config", cfg])
+
     return args
 
 
