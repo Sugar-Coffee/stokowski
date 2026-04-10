@@ -457,3 +457,27 @@ class LinearClient:
         except Exception as e:
             logger.error(f"Failed to update state for {issue_id}: {e}")
             return False
+
+    async def fetch_issue_description(self, issue_id: str) -> str:
+        """Fetch the issue description."""
+        try:
+            data = await self._graphql(
+                'query($id: String!) { issue(id: $id) { description } }',
+                {"id": issue_id},
+            )
+            return data.get("issue", {}).get("description", "") or ""
+        except Exception as e:
+            logger.error(f"Failed to fetch description for {issue_id}: {e}")
+            return ""
+
+    async def update_issue_description(self, issue_id: str, description: str) -> bool:
+        """Update the issue description."""
+        try:
+            data = await self._graphql(
+                'mutation($id: String!, $desc: String!) { issueUpdate(id: $id, input: { description: $desc }) { success } }',
+                {"id": issue_id, "desc": description},
+            )
+            return data.get("issueUpdate", {}).get("success", False)
+        except Exception as e:
+            logger.error(f"Failed to update description for {issue_id}: {e}")
+            return False

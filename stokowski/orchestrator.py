@@ -28,7 +28,12 @@ from .state import PersistedState, load_state, save_state, state_file_path
 from .tracker import TrackerClient
 from .prompt import assemble_prompt, build_lifecycle_section
 from .runner import run_agent_turn, run_turn
-from .tracking import make_gate_comment, make_state_comment, parse_latest_tracking
+from .tracking import (
+    make_gate_payload,
+    make_state_payload,
+    parse_latest_tracking,
+    update_description_tracking,
+)
 from .workspace import ensure_workspace, remove_workspace, WorkspaceResult
 
 logger = logging.getLogger("stokowski")
@@ -123,6 +128,13 @@ class Orchestrator:
                     api_key=self.cfg.resolved_api_key(),
                 )
         return self._tracker
+
+    async def _update_tracking(self, issue_id: str, payload: dict) -> bool:
+        """Update tracking data in the issue description."""
+        client = self._ensure_tracker_client()
+        desc = await client.fetch_issue_description(issue_id)
+        new_desc = update_description_tracking(desc, payload)
+        return await client.update_issue_description(issue_id, new_desc)
 
     def _save_state(self):
         """Persist current state to disk."""
@@ -255,10 +267,11 @@ class Orchestrator:
             run = self._issue_state_runs.get(issue.id, 1)
             return state_name, run
 
-        # Fetch comments from Linear and parse latest tracking
+        # Parse tracking from description (falls back to legacy comments)
         client = self._ensure_tracker_client()
+        desc = await client.fetch_issue_description(issue.id)
         comments = await client.fetch_comments(issue.id)
-        tracking = parse_latest_tracking(comments)
+        tracking = parse_latest_tracking(desc, comments)
 
         entry = self.cfg.entry_state_for_issue(issue.labels)
         if entry is None:
@@ -336,13 +349,9 @@ class Orchestrator:
 
         client = self._ensure_tracker_client()
 
-        comment = make_gate_comment(
-            state=state_name,
-            status="waiting",
-            prompt=prompt or "",
-            run=run,
+        await self._update_tracking(
+            issue.id, make_gate_payload(state=state_name, status="waiting", run=run)
         )
-        await client.post_comment(issue.id, comment)
 
         review_state = self.cfg.linear_states.review
         moved = await client.update_issue_state(issue.id, review_state)
@@ -498,11 +507,7 @@ class Orchestrator:
             # Agent state — post state comment, ensure active Linear state, schedule retry
             self._issue_current_state[issue.id] = target_name
             client = self._ensure_tracker_client()
-            comment = make_state_comment(
-                state=target_name,
-                run=run,
-            )
-            await client.post_comment(issue.id, comment)
+            await self._update_tracking(issue.id, make_state_payload(state=target_name, run=run))
 
             # Ensure issue is in active Linear state
             active_state = self.cfg.linear_states.active
@@ -538,17 +543,14 @@ class Orchestrator:
 
             gate_state = self._pending_gates.pop(issue.id, None)
             if not gate_state:
-                comments = await client.fetch_comments(issue.id)
-                tracking = parse_latest_tracking(comments)
+                desc = await client.fetch_issue_description(issue.id)
+                tracking = parse_latest_tracking(desc)
                 if tracking and tracking.get("type") == "gate" and tracking.get("status") == "waiting":
                     gate_state = tracking.get("state", "")
 
             if gate_state:
                 run = self._issue_state_runs.get(issue.id, 1)
-                comment = make_gate_comment(
-                    state=gate_state, status="approved", run=run,
-                )
-                await client.post_comment(issue.id, comment)
+                await self._update_tracking(issue.id, make_gate_payload(state=gate_state, status="approved", run=run))
 
                 # Follow approve transition
                 self._issue_current_state[issue.id] = gate_state
@@ -583,8 +585,8 @@ class Orchestrator:
 
             gate_state = self._pending_gates.pop(issue.id, None)
             if not gate_state:
-                comments = await client.fetch_comments(issue.id)
-                tracking = parse_latest_tracking(comments)
+                desc = await client.fetch_issue_description(issue.id)
+                tracking = parse_latest_tracking(desc)
                 if tracking and tracking.get("type") == "gate" and tracking.get("status") == "waiting":
                     gate_state = tracking.get("state", "")
 
@@ -600,10 +602,7 @@ class Orchestrator:
                 max_rework = gate_cfg.max_rework if gate_cfg else None
                 if max_rework is not None and run >= max_rework:
                     # Exceeded max rework — post escalated comment, don't transition
-                    comment = make_gate_comment(
-                        state=gate_state, status="escalated", run=run,
-                    )
-                    await client.post_comment(issue.id, comment)
+                    await self._update_tracking(issue.id, make_gate_payload(state=gate_state, status="escalated", run=run))
                     logger.warning(
                         f"Max rework exceeded issue={issue.identifier} "
                         f"gate={gate_state} run={run} max={max_rework}"
@@ -612,12 +611,7 @@ class Orchestrator:
 
                 new_run = run + 1
                 self._issue_state_runs[issue.id] = new_run
-
-                comment = make_gate_comment(
-                    state=gate_state, status="rework",
-                    rework_to=rework_to, run=new_run,
-                )
-                await client.post_comment(issue.id, comment)
+                await self._update_tracking(issue.id, make_gate_payload(state=gate_state, status="rework", rework_to=rework_to, run=new_run))
 
                 self._issue_current_state[issue.id] = rework_to
 
@@ -669,12 +663,7 @@ class Orchestrator:
         run = self._issue_state_runs.get(issue.id, 1)
 
         if trigger_action == "approve":
-            comment = make_gate_comment(
-                state=gate_state, status="approved", run=run,
-            )
-            await client.post_comment(issue.id, comment)
-            if pr_url:
-                await client.post_comment(issue.id, f"PR approved: {pr_url}")
+            await self._update_tracking(issue.id, make_gate_payload(state=gate_state, status="approved", run=run))
 
             self._pending_gates.pop(issue.id, None)
             self._issue_current_state[issue.id] = gate_state
@@ -694,17 +683,13 @@ class Orchestrator:
                 return
 
             if gate_cfg.max_rework is not None and run >= gate_cfg.max_rework:
-                comment = make_gate_comment(state=gate_state, status="escalated", run=run)
-                await client.post_comment(issue.id, comment)
+                await self._update_tracking(issue.id, make_gate_payload(state=gate_state, status="escalated", run=run))
                 logger.warning(f"Max rework exceeded issue={issue.identifier}")
                 return
 
             new_run = run + 1
             self._issue_state_runs[issue.id] = new_run
-            comment = make_gate_comment(
-                state=gate_state, status="rework", rework_to=rework_to, run=new_run,
-            )
-            await client.post_comment(issue.id, comment)
+            await self._update_tracking(issue.id, make_gate_payload(state=gate_state, status="rework", rework_to=rework_to, run=new_run))
 
             self._pending_gates.pop(issue.id, None)
             self._issue_current_state[issue.id] = rework_to
@@ -1058,12 +1043,7 @@ class Orchestrator:
             if state_name:
                 run = self._issue_state_runs.get(issue.id, 1)
                 if run == 1 and (attempt.attempt is None or attempt.attempt == 0):
-                    client = self._ensure_tracker_client()
-                    comment = make_state_comment(
-                        state=state_name,
-                        run=run,
-                    )
-                    await client.post_comment(issue.id, comment)
+                    await self._update_tracking(issue.id, make_state_payload(state=state_name, run=run))
 
             # Run on_stage_enter hook if defined
             if state_cfg and state_cfg.hooks and state_cfg.hooks.on_stage_enter:

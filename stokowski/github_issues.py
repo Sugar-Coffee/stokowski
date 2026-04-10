@@ -286,3 +286,26 @@ class GitHubIssuesClient:
         except Exception as e:
             logger.error(f"Failed to update state for #{issue_id}: {e}")
             return False
+
+    async def fetch_issue_description(self, issue_id: str) -> str:
+        """Fetch the issue body."""
+        try:
+            resp = await self._client.get(f"{self.base_url}/issues/{issue_id}")
+            resp.raise_for_status()
+            return resp.json().get("body", "") or ""
+        except Exception as e:
+            logger.error(f"Failed to fetch description for #{issue_id}: {e}")
+            return ""
+
+    async def update_issue_description(self, issue_id: str, description: str) -> bool:
+        """Update the issue body."""
+        try:
+            resp = await self._client.patch(
+                f"{self.base_url}/issues/{issue_id}",
+                json={"body": description},
+            )
+            resp.raise_for_status()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to update description for #{issue_id}: {e}")
+            return False

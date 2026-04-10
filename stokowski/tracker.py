@@ -50,3 +50,11 @@ class TrackerClient(Protocol):
     async def update_issue_state(self, issue_id: str, state_name: str) -> bool:
         """Move an issue to a new state by name. Returns True on success."""
         ...
+
+    async def fetch_issue_description(self, issue_id: str) -> str:
+        """Fetch the issue description/body text."""
+        ...
+
+    async def update_issue_description(self, issue_id: str, description: str) -> bool:
+        """Update the issue description/body. Returns True on success."""
+        ...

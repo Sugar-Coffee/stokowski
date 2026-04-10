@@ -1,4 +1,15 @@
-"""State machine tracking via structured Linear comments."""
+"""State machine tracking via issue description.
+
+Tracking data is stored as a hidden block at the bottom of the issue
+description, not as comments. This keeps the comment stream clean.
+
+The block format:
+  <!-- stokowski:tracking
+  {"state": "implement", "run": 1, "timestamp": "..."}
+  -->
+
+This is invisible in both Linear and GitHub renderers.
+"""
 
 from __future__ import annotations
 
@@ -10,31 +21,64 @@ from typing import Any
 
 logger = logging.getLogger("stokowski.tracking")
 
-STATE_PATTERN = re.compile(r"<!-- stokowski:state ({.*?}) -->")
-GATE_PATTERN = re.compile(r"<!-- stokowski:gate ({.*?}) -->")
+_TRACKING_MARKER = "<!-- stokowski:tracking"
+_TRACKING_PATTERN = re.compile(
+    r"<!-- stokowski:tracking\s*\n(.*?)\n-->", re.DOTALL
+)
+
+# Legacy comment patterns (for backwards compat during migration)
+_LEGACY_STATE = re.compile(r"<!-- stokowski:state ({.*?}) -->")
+_LEGACY_GATE = re.compile(r"<!-- stokowski:gate ({.*?}) -->")
 
 
-def make_state_comment(state: str, run: int = 1) -> str:
-    """Build a structured state-tracking comment."""
-    payload = {
+def build_tracking_block(payload: dict[str, Any]) -> str:
+    """Build the hidden tracking block for the issue description."""
+    return f"<!-- stokowski:tracking\n{json.dumps(payload)}\n-->"
+
+
+def parse_tracking_from_description(description: str) -> dict[str, Any] | None:
+    """Extract tracking data from issue description."""
+    match = _TRACKING_PATTERN.search(description)
+    if match:
+        try:
+            return json.loads(match.group(1))
+        except json.JSONDecodeError:
+            pass
+    return None
+
+
+def update_description_tracking(
+    description: str, payload: dict[str, Any]
+) -> str:
+    """Update or append tracking block in issue description."""
+    block = build_tracking_block(payload)
+    if _TRACKING_MARKER in description:
+        # Replace existing block
+        return _TRACKING_PATTERN.sub(block, description)
+    else:
+        # Append to end
+        return description.rstrip() + "\n\n" + block
+
+
+def make_state_payload(state: str, run: int = 1) -> dict[str, Any]:
+    """Build tracking payload for a state entry."""
+    return {
+        "type": "state",
         "state": state,
         "run": run,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
-    machine = f"<!-- stokowski:state {json.dumps(payload)} -->"
-    human = f"**[Stokowski]** Entering state: **{state}** (run {run})"
-    return f"{machine}\n\n{human}"
 
 
-def make_gate_comment(
+def make_gate_payload(
     state: str,
     status: str,
-    prompt: str = "",
     rework_to: str | None = None,
     run: int = 1,
-) -> str:
-    """Build a structured gate-tracking comment."""
+) -> dict[str, Any]:
+    """Build tracking payload for a gate event."""
     payload: dict[str, Any] = {
+        "type": "gate",
         "state": state,
         "status": status,
         "run": run,
@@ -42,96 +86,59 @@ def make_gate_comment(
     }
     if rework_to:
         payload["rework_to"] = rework_to
-
-    machine = f"<!-- stokowski:gate {json.dumps(payload)} -->"
-
-    if status == "waiting":
-        human = f"**[Stokowski]** Awaiting human review: **{state}**"
-        if prompt:
-            human += f" — {prompt}"
-    elif status == "approved":
-        human = f"**[Stokowski]** Gate **{state}** approved."
-    elif status == "rework":
-        human = (
-            f"**[Stokowski]** Rework requested at **{state}**. "
-            f"Returning to: **{rework_to}**"
-        )
-        if run > 1:
-            human += f" (run {run})"
-    elif status == "escalated":
-        human = (
-            f"**[Stokowski]** Max rework exceeded at **{state}**. "
-            f"Escalating for human intervention."
-        )
-    else:
-        human = f"**[Stokowski]** Gate **{state}** status: {status}"
-
-    return f"{machine}\n\n{human}"
+    return payload
 
 
-def parse_latest_tracking(comments: list[dict]) -> dict[str, Any] | None:
-    """Parse comments (oldest-first) to find the latest state or gate tracking entry.
+def parse_latest_tracking(
+    description: str, comments: list[dict] | None = None
+) -> dict[str, Any] | None:
+    """Parse tracking data from description, falling back to legacy comments.
 
-    Returns a dict with keys:
-        - "type": "state" or "gate"
-        - Plus all fields from the JSON payload
-
-    Returns None if no tracking comments found.
+    Checks description first (new format), then comments (old format).
     """
-    latest: dict[str, Any] | None = None
+    # New format: tracking block in description
+    result = parse_tracking_from_description(description)
+    if result:
+        return result
 
-    for comment in comments:
-        body = comment.get("body", "")
-
-        state_match = STATE_PATTERN.search(body)
-        if state_match:
-            try:
-                data = json.loads(state_match.group(1))
-                data["type"] = "state"
-                latest = data
-            except json.JSONDecodeError:
-                pass
-
-        gate_match = GATE_PATTERN.search(body)
-        if gate_match:
-            try:
-                data = json.loads(gate_match.group(1))
-                data["type"] = "gate"
-                latest = data
-            except json.JSONDecodeError:
-                pass
-
-    return latest
-
-
-def get_last_tracking_timestamp(comments: list[dict]) -> str | None:
-    """Find the timestamp of the latest tracking comment."""
-    latest_ts: str | None = None
-
-    for comment in comments:
-        body = comment.get("body", "")
-        for pattern in (STATE_PATTERN, GATE_PATTERN):
-            match = pattern.search(body)
-            if match:
+    # Legacy: scan comments for old <!-- stokowski:state/gate --> format
+    if comments:
+        latest: dict[str, Any] | None = None
+        for comment in comments:
+            body = comment.get("body", "")
+            state_match = _LEGACY_STATE.search(body)
+            if state_match:
                 try:
-                    data = json.loads(match.group(1))
-                    ts = data.get("timestamp")
-                    if ts:
-                        latest_ts = ts
+                    data = json.loads(state_match.group(1))
+                    data["type"] = "state"
+                    latest = data
                 except json.JSONDecodeError:
                     pass
+            gate_match = _LEGACY_GATE.search(body)
+            if gate_match:
+                try:
+                    data = json.loads(gate_match.group(1))
+                    data["type"] = "gate"
+                    latest = data
+                except json.JSONDecodeError:
+                    pass
+        return latest
 
-    return latest_ts
+    return None
+
+
+def get_last_tracking_timestamp(
+    description: str, comments: list[dict] | None = None
+) -> str | None:
+    """Get timestamp of the latest tracking entry."""
+    tracking = parse_latest_tracking(description, comments)
+    return tracking.get("timestamp") if tracking else None
 
 
 def get_comments_since(
     comments: list[dict], since_timestamp: str | None
 ) -> list[dict]:
-    """Filter comments to only those after a given timestamp.
-
-    Returns comments that are NOT stokowski tracking comments and
-    were created after the given timestamp.
-    """
+    """Filter comments to non-tracking comments after a timestamp."""
     result = []
     since_dt = None
     if since_timestamp:
@@ -144,6 +151,7 @@ def get_comments_since(
 
     for comment in comments:
         body = comment.get("body", "")
+        # Skip legacy tracking comments
         if "<!-- stokowski:" in body:
             continue
 
