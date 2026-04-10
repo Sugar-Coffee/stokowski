@@ -632,112 +632,106 @@ def _run_init():
             env_key_value = input("Linear API key (or press Enter to set later): ").strip()
 
     # Webhook configuration
-    webhook_secret = ""
-    webhook_configured = False
-    if root_config_path.exists():
-        try:
-            root_raw = _yaml.safe_load(root_config_path.read_text()) or {}
-            existing_wh = root_raw.get("webhook", {})
-            if isinstance(existing_wh, dict) and existing_wh.get("secret"):
-                webhook_configured = True
-                console.print(f"[dim]Webhook already configured[/dim]")
-        except Exception:
-            pass
+    console.print("\n[bold]Webhooks:[/bold]")
+    console.print("  Configure webhooks for instant reactions (Linear for issues, GitHub for PRs).")
+    console.print("  You can configure both, one, or neither (polling-only).\n")
 
-    if not webhook_configured:
-        console.print("\n[bold]Event delivery:[/bold]")
-        console.print("  1. Polling only [dim](simpler, checks every N seconds)[/dim]")
-        console.print("  2. Webhook + polling [dim](instant reactions, polling as fallback)[/dim]")
-        wh_choice = input("\nSelect mode [1]: ").strip() or "1"
+    import shutil as _shutil
+    public_url = ""
 
-        if wh_choice == "2":
-            import shutil as _shutil
+    # Ask which webhooks to set up
+    setup_linear_wh = input("  Set up Linear webhook? [y/N]: ").strip().lower() == "y"
+    setup_github_wh = input("  Set up GitHub webhook? [y/N]: ").strip().lower() == "y"
 
-            # Determine webhook URL
-            webhook_endpoint = "/api/v1/webhook/github" if tracker_kind == "github" else "/api/v1/webhook/linear"
-            webhook_url = f"http://127.0.0.1:4200{webhook_endpoint}"
+    if setup_linear_wh or setup_github_wh:
+        # Step 1: Tunnel (shared for both)
+        console.print(f"\n  [bold]Step 1: Set up a tunnel[/bold]")
+        console.print(f"  Webhooks need a public URL — your tracker can't reach localhost.")
+        if _shutil.which("ngrok"):
+            console.print(f"  [green]ngrok found![/green] Run in a separate terminal:")
+            console.print(f"    [bold]ngrok http 4200[/bold]")
+        else:
+            console.print(f"  Install ngrok: [bold]brew install ngrok[/bold]")
+            console.print(f"  Then run: [bold]ngrok http 4200[/bold]")
 
-            # Step 1: Tunnel setup
-            console.print(f"\n  [bold]Step 1: Set up a tunnel[/bold]")
-            console.print(f"  Webhooks need a public URL — your tracker can't reach localhost.")
-            if _shutil.which("ngrok"):
-                console.print(f"  [green]ngrok found![/green] Run this in a separate terminal:")
-                console.print(f"    [bold]ngrok http 4200[/bold]")
+        input("\n  Press Enter when your tunnel is running...")
+        public_url = input(f"  Paste your public tunnel URL: ").strip().rstrip("/")
+        if not public_url:
+            public_url = "http://127.0.0.1:4200"
+
+    webhook_secrets = {}
+
+    if setup_linear_wh:
+        linear_url = f"{public_url}/api/v1/webhook/linear"
+        console.print(f"\n  [bold]Linear webhook:[/bold]")
+        console.print(f"  1. Go to Linear → Settings → API → Webhooks → New webhook")
+        console.print(f"  2. Label: Stokowski")
+        console.print(f"  3. URL: {linear_url}")
+        console.print(f"  4. Data change events: select 'Issues' and 'Issue labels'")
+        console.print(f"  5. Click 'Create webhook'")
+        console.print(f"  [dim]Docs: https://developers.linear.app/docs/graphql/webhooks[/dim]")
+        input("\n  Press Enter when created...")
+        secret = input("  Paste the Linear signing secret: ").strip()
+        if secret:
+            webhook_secrets["LINEAR_WEBHOOK_SECRET"] = secret
+            console.print(f"  [green]Linear webhook configured[/green]")
+
+    if setup_github_wh:
+        github_url = f"{public_url}/api/v1/webhook/github"
+        console.print(f"\n  [bold]GitHub webhook:[/bold]")
+        console.print(f"  1. Go to your repo → Settings → Webhooks → Add webhook")
+        console.print(f"  2. Payload URL: {github_url}")
+        console.print(f"  3. Content type: application/json")
+        console.print(f"  4. Set a secret and copy it")
+        console.print(f"  5. Events: select 'Issues', 'Pull requests', 'Pull request reviews'")
+        console.print(f"  6. Click 'Add webhook'")
+        console.print(f"  [dim]Docs: https://docs.github.com/en/webhooks/using-webhooks/creating-webhooks[/dim]")
+        input("\n  Press Enter when created...")
+        secret = input("  Paste the GitHub signing secret: ").strip()
+        if secret:
+            webhook_secrets["GITHUB_WEBHOOK_SECRET"] = secret
+            console.print(f"  [green]GitHub webhook configured[/green]")
+
+    # Save secrets to .env and config to stokowski.yaml
+    if webhook_secrets:
+        env_file = out_dir / ".env"
+        env_content = env_file.read_text() if env_file.exists() else ""
+        for key, val in webhook_secrets.items():
+            if f"{key}=" in env_content:
+                lines = env_content.splitlines(keepends=True)
+                for i, line in enumerate(lines):
+                    if line.strip().startswith(f"{key}="):
+                        lines[i] = f"{key}={val}\n"
+                        break
+                env_content = "".join(lines)
             else:
-                console.print(f"  Install ngrok:")
-                console.print(f"    [bold]brew install ngrok[/bold]")
-                console.print(f"  Then run in a separate terminal:")
-                console.print(f"    [bold]ngrok http 4200[/bold]")
-                console.print(f"  [dim]Alternative: brew install cloudflared && cloudflared tunnel --url http://localhost:4200[/dim]")
+                env_content = env_content.rstrip() + f"\n{key}={val}\n"
+        env_file.write_text(env_content)
 
-            input("\n  Press Enter when your tunnel is running...")
+        # Use the first secret as the shared webhook.secret (Linear takes priority)
+        primary_secret_var = "LINEAR_WEBHOOK_SECRET" if "LINEAR_WEBHOOK_SECRET" in webhook_secrets else "GITHUB_WEBHOOK_SECRET"
 
-            public_url = input(f"  Paste your public tunnel URL (e.g. https://abc123.ngrok.io): ").strip()
-            if public_url:
-                public_url = public_url.rstrip("/")
-                webhook_url = f"{public_url}{webhook_endpoint}"
-            console.print(f"  [dim]Webhook URL: {webhook_url}[/dim]")
-
-            # Step 2: Create webhook in tracker
-            console.print(f"\n  [bold]Step 2: Create the webhook in {'GitHub' if tracker_kind == 'github' else 'Linear'}[/bold]")
-            if tracker_kind == "github":
-                console.print(f"  1. Go to your repo → Settings → Webhooks → Add webhook")
-                console.print(f"  2. Payload URL: {webhook_url}")
-                console.print(f"  3. Content type: application/json")
-                console.print(f"  4. Set a secret and copy it")
-                console.print(f"  5. Events: select 'Issues', 'Pull requests', 'Pull request reviews'")
-                console.print(f"  6. Click 'Add webhook'")
-                console.print(f"  [dim]Docs: https://docs.github.com/en/webhooks/using-webhooks/creating-webhooks[/dim]")
+        root_cfg_path = out_dir / "stokowski.yaml"
+        if root_cfg_path.exists():
+            root_content = root_cfg_path.read_text()
+            webhook_block = (
+                f"webhook:\n"
+                f"  secret: ${primary_secret_var}\n"
+                + (f"  url: {public_url}\n" if public_url else "")
+            )
+            if "webhook:" not in root_content:
+                root_cfg_path.write_text(root_content.rstrip() + f"\n\n{webhook_block}")
             else:
-                console.print(f"  1. Go to Linear → Settings → API → Webhooks → New webhook")
-                console.print(f"  2. Label: Stokowski")
-                console.print(f"  3. URL: {webhook_url}")
-                console.print(f"  4. Data change events: select 'Issues' and 'Issue labels'")
-                console.print(f"  5. Click 'Create webhook'")
-                console.print(f"  [dim]Docs: https://developers.linear.app/docs/graphql/webhooks[/dim]")
+                import re
+                root_content = re.sub(
+                    r'webhook:.*?(?=\n\S|\Z)',
+                    webhook_block.rstrip(),
+                    root_content,
+                    flags=re.DOTALL,
+                )
+                root_cfg_path.write_text(root_content)
 
-            input("\n  Press Enter when the webhook is created...")
-
-            # Step 3: Get the signing secret
-            console.print(f"\n  [bold]Step 3: Copy the signing secret[/bold]")
-            webhook_secret = input("  Paste the signing secret: ").strip()
-            if webhook_secret:
-                # Save secret to .env
-                env_file = out_dir / ".env"
-                if env_file.exists():
-                    env_content = env_file.read_text()
-                    if "WEBHOOK_SECRET=" in env_content:
-                        lines = env_content.splitlines(keepends=True)
-                        for i, line in enumerate(lines):
-                            if line.strip().startswith("WEBHOOK_SECRET="):
-                                lines[i] = f"WEBHOOK_SECRET={webhook_secret}\n"
-                                break
-                        env_file.write_text("".join(lines))
-                    else:
-                        env_file.write_text(env_content.rstrip() + f"\nWEBHOOK_SECRET={webhook_secret}\n")
-                else:
-                    env_file.write_text(f"WEBHOOK_SECRET={webhook_secret}\n")
-
-                # Save webhook config (secret ref + URL) to stokowski.yaml
-                root_cfg_path = out_dir / "stokowski.yaml"
-                if root_cfg_path.exists():
-                    root_content = root_cfg_path.read_text()
-                    webhook_block = f"webhook:\n  secret: $WEBHOOK_SECRET\n  url: {webhook_url}\n"
-                    if "webhook:" not in root_content:
-                        root_cfg_path.write_text(root_content.rstrip() + f"\n\n{webhook_block}")
-                    else:
-                        import re
-                        root_content = re.sub(
-                            r'webhook:.*?(?=\n\S|\Z)',
-                            webhook_block.rstrip(),
-                            root_content,
-                            flags=re.DOTALL,
-                        )
-                        root_cfg_path.write_text(root_content)
-
-                console.print(f"  [green]Webhook secret saved to .env, config saved to stokowski.yaml[/green]")
-            else:
-                console.print(f"  [yellow]No secret — webhook signature verification will be skipped[/yellow]")
+        console.print(f"\n  [green]Webhook secrets saved to .env, config saved to stokowski.yaml[/green]")
 
     console.print(f"\n[dim]Repo path:[/dim] {repo_path}")
     out_dir.mkdir(parents=True, exist_ok=True)
