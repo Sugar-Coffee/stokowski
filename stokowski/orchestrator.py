@@ -1504,13 +1504,9 @@ class Orchestrator:
             self.cfg.agent.max_concurrent_agents - len(self.running), 0
         )
         if available <= 0:
-            # Re-queue
-            self._schedule_retry(
-                issue,
-                attempt_num=entry.attempt,
-                delay_ms=10_000,
-                error="no available orchestrator slots",
-            )
+            # No slots — don't retry, let the next poll tick re-discover and dispatch
+            logger.debug(f"No slots for {issue.identifier}, will retry on next tick")
+            self.claimed.discard(issue.id)
             return
 
         self._dispatch(issue, attempt_num=entry.attempt)
