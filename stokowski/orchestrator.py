@@ -1502,9 +1502,15 @@ class Orchestrator:
         terminal_lower = [
             s.strip().lower() for s in self.cfg.terminal_linear_states()
         ]
-        active_lower = [
-            s.strip().lower() for s in self.cfg.active_linear_states()
-        ]
+        # Include pickup_states in the "active" set for reconciliation
+        if self.cfg.pickup_states:
+            active_lower = [s.strip().lower() for s in self.cfg.pickup_states]
+            active_lower += [s.strip().lower() for s in self.cfg.active_linear_states()]
+            active_lower = list(set(active_lower))
+        else:
+            active_lower = [
+                s.strip().lower() for s in self.cfg.active_linear_states()
+            ]
         review_lower = self.cfg.linear_states.review.strip().lower()
 
         for issue_id in running_ids:
