@@ -772,7 +772,7 @@ def validate_config(cfg: ServiceConfig) -> list[str]:
                 )
             except (ValueError, KeyError) as e:
                 errors.append(f"Invalid cron expression '{cfg.schedule.cron}': {e}")
-        if not cfg.schedule.create_command:
+        if not cfg.schedule.create_command and cfg.tracker_enabled:
             errors.append("Schedule defined but missing 'create_command' field")
 
     # Warn about unreachable states (non-entry states that no transition points to)

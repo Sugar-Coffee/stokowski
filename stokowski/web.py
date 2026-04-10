@@ -278,7 +278,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .agent-card:hover {
-    background: #141414;
+    background: var(--border);
   }
 
   .agent-id {
@@ -511,13 +511,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .wf-tab:hover {
-    background: #141414;
+    background: var(--border);
     color: var(--text);
   }
 
   .wf-tab.active {
     color: var(--amber);
-    background: #141414;
+    background: var(--surface);
     box-shadow: inset 0 -2px 0 var(--amber);
   }
 
