@@ -184,11 +184,15 @@ class Orchestrator:
             except Exception as e:
                 logger.error(f"Tick error: {e}")
 
-            # Interruptible sleep
+            # Interruptible sleep — use longer interval when webhooks are active
+            poll_ms = self.cfg.polling.interval_ms
+            if self.cfg.webhook.secret:
+                poll_ms = max(poll_ms, 300_000)  # 5 min minimum when webhooks active
+
             try:
                 await asyncio.wait_for(
                     self._stop_event.wait(),
-                    timeout=self.cfg.polling.interval_ms / 1000,
+                    timeout=poll_ms / 1000,
                 )
                 break  # stop_event was set
             except asyncio.TimeoutError:
@@ -815,6 +819,10 @@ class Orchestrator:
         except Exception as e:
             logger.warning(f"Schedule check failed: {e}")
 
+        # Skip tracker operations if tracker is disabled (schedule-only workflows)
+        if not self.cfg.tracker_enabled:
+            return
+
         # Part 1: Reconcile running issues
         await self._reconcile()
 
@@ -922,6 +930,19 @@ class Orchestrator:
             return False
         if issue.id in self.claimed:
             return False
+
+        # Per-workflow pickup state filter
+        if self.cfg.pickup_states:
+            pickup_lower = [s.strip().lower() for s in self.cfg.pickup_states]
+            if state_lower not in pickup_lower:
+                return False
+
+        # Per-workflow label filter
+        if self.cfg.filter_labels:
+            required = {l.lower() for l in self.cfg.filter_labels}
+            issue_labels = {l.lower() for l in issue.labels}
+            if not required & issue_labels:
+                return False
 
         # Blocker check for Todo
         if state_lower == "todo":

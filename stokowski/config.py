@@ -189,6 +189,10 @@ class ServiceConfig:
     schedule: ScheduleConfig | None = None
     webhook: WebhookConfig = field(default_factory=WebhookConfig)
     github_states: GitHubStatesConfig = field(default_factory=GitHubStatesConfig)
+    # Per-workflow filtering
+    tracker_enabled: bool = True        # false = no tracker polling (schedule-only workflows)
+    filter_labels: list[str] = field(default_factory=list)  # only pick up issues with these labels
+    pickup_states: list[str] = field(default_factory=list)  # only pick up issues in these states (default: all active)
 
     def resolved_api_key(self) -> str:
         """Resolve tracker API key/token from config or environment."""
@@ -632,6 +636,13 @@ def parse_workflow_file(
             create_command=str(sched_raw.get("create_command", "")),
         )
 
+    # Parse per-workflow filtering
+    tracker_enabled = config_raw.get("tracker_enabled", True)
+    if tracker_enabled is None:
+        tracker_enabled = True
+    filter_labels = _coerce_list(config_raw.get("filter_labels"))
+    pickup_states = _coerce_list(config_raw.get("pickup_states"))
+
     cfg = ServiceConfig(
         tracker=tracker,
         polling=polling,
@@ -647,6 +658,9 @@ def parse_workflow_file(
         schedule=schedule,
         webhook=webhook,
         github_states=github_states,
+        tracker_enabled=bool(tracker_enabled),
+        filter_labels=filter_labels,
+        pickup_states=pickup_states,
     )
 
     return WorkflowDefinition(config=cfg, prompt_template=prompt_template)
@@ -656,19 +670,20 @@ def validate_config(cfg: ServiceConfig) -> list[str]:
     """Validate state machine config for dispatch readiness. Returns list of errors."""
     errors: list[str] = []
 
-    # Basic tracker checks
-    if cfg.tracker.kind not in ("linear", "github"):
-        errors.append(f"Unsupported tracker kind: {cfg.tracker.kind}")
-    if not cfg.resolved_api_key():
+    # Basic tracker checks (skip if tracker is disabled)
+    if cfg.tracker_enabled:
+        if cfg.tracker.kind not in ("linear", "github"):
+            errors.append(f"Unsupported tracker kind: {cfg.tracker.kind}")
+        if not cfg.resolved_api_key():
+            if cfg.tracker.kind == "github":
+                errors.append("Missing tracker token (set GITHUB_TOKEN or tracker.github_token)")
+            else:
+                errors.append("Missing tracker API key (set LINEAR_API_KEY or tracker.api_key)")
         if cfg.tracker.kind == "github":
-            errors.append("Missing tracker token (set GITHUB_TOKEN or tracker.github_token)")
-        else:
-            errors.append("Missing tracker API key (set LINEAR_API_KEY or tracker.api_key)")
-    if cfg.tracker.kind == "github":
-        if not cfg.tracker.github_owner or not cfg.tracker.github_repo:
-            errors.append("GitHub tracker requires tracker.github_owner and tracker.github_repo")
-    elif not cfg.tracker.project_slug and not cfg.tracker.team_key:
-        errors.append("Missing tracker.project_slug or tracker.team_key (at least one required)")
+            if not cfg.tracker.github_owner or not cfg.tracker.github_repo:
+                errors.append("GitHub tracker requires tracker.github_owner and tracker.github_repo")
+        elif not cfg.tracker.project_slug and not cfg.tracker.team_key:
+            errors.append("Missing tracker.project_slug or tracker.team_key (at least one required)")
 
     if not cfg.states:
         errors.append("No states defined")
