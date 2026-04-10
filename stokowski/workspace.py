@@ -325,8 +325,9 @@ async def _remove_worktree(
     if worktree_dir.exists():
         shutil.rmtree(worktree_dir, ignore_errors=True)
 
-    # Delete the branch
-    if branch_name:
+    # Delete the branch (never delete main/master/develop)
+    protected = {"main", "master", "develop", "dev"}
+    if branch_name and branch_name not in protected:
         proc = await asyncio.create_subprocess_exec(
             "git", "branch", "-D", branch_name,
             cwd=str(repo_path),
@@ -334,6 +335,8 @@ async def _remove_worktree(
             stderr=asyncio.subprocess.PIPE,
         )
         await proc.communicate()
+    elif branch_name in protected:
+        logger.warning(f"Skipping branch deletion for protected branch '{branch_name}'")
 
     logger.info(
         f"Removed worktree path={worktree_dir} branch={branch_name}"

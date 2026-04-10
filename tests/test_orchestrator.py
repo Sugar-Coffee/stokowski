@@ -180,3 +180,44 @@ class TestIsRateLimitError:
 
     def test_empty_string(self):
         assert _is_rate_limit_error("") is False
+
+
+class TestReconciliationFiltersSyntheticIds:
+    @pytest.mark.asyncio
+    async def test_synthetic_ids_excluded_from_reconciliation(self, workflow_yaml):
+        orch = _make_orch(workflow_yaml)
+        orch._running = True
+
+        # Add synthetic and real issues to running
+        orch.running["schedule:learn:2026-04-10"] = MagicMock()
+        orch.running["pr:3366"] = MagicMock()
+        orch.running["real-uuid-123"] = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.fetch_issue_states_by_ids = AsyncMock(return_value={})
+        orch._tracker = mock_client
+
+        await orch._reconcile()
+
+        # Only the real UUID should be passed to the API
+        mock_client.fetch_issue_states_by_ids.assert_called_once()
+        call_args = mock_client.fetch_issue_states_by_ids.call_args[0][0]
+        assert "schedule:learn:2026-04-10" not in call_args
+        assert "pr:3366" not in call_args
+        assert "real-uuid-123" in call_args
+
+    @pytest.mark.asyncio
+    async def test_all_synthetic_skips_reconciliation(self, workflow_yaml):
+        orch = _make_orch(workflow_yaml)
+        orch._running = True
+
+        orch.running["schedule:learn:2026-04-10"] = MagicMock()
+        orch.running["pr:3366"] = MagicMock()
+
+        mock_client = AsyncMock()
+        orch._tracker = mock_client
+
+        await orch._reconcile()
+
+        # Should not call API at all
+        mock_client.fetch_issue_states_by_ids.assert_not_called()

@@ -1605,7 +1605,13 @@ class Orchestrator:
         if not self.running:
             return
 
-        running_ids = list(self.running.keys())
+        # Filter out synthetic IDs (schedule:, pr:) — they don't exist in Linear
+        running_ids = [
+            k for k in self.running.keys()
+            if not k.startswith("schedule:") and not k.startswith("pr:")
+        ]
+        if not running_ids:
+            return
 
         try:
             client = self._ensure_tracker_client()

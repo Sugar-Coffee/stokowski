@@ -1,6 +1,12 @@
-"""Tests for workspace utilities (sanitize_key, _extract_issue_number)."""
+"""Tests for workspace utilities (sanitize_key, _extract_issue_number, _remove_worktree)."""
 
-from stokowski.workspace import _extract_issue_number, sanitize_key
+import asyncio
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from stokowski.workspace import _extract_issue_number, _remove_worktree, sanitize_key
 
 
 class TestSanitizeKey:
@@ -56,3 +62,55 @@ class TestExtractIssueNumber:
 
     def test_complex_identifier(self):
         assert _extract_issue_number("feature/DEV-456") == "456"
+
+
+class TestRemoveWorktreeProtectedBranches:
+    @pytest.mark.asyncio
+    async def test_main_branch_not_deleted(self, tmp_path):
+        """Ensure git branch -D is never called for main."""
+        with patch("stokowski.workspace.asyncio.create_subprocess_exec") as mock_exec:
+            mock_proc = AsyncMock()
+            mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+            mock_proc.returncode = 0
+            mock_exec.return_value = mock_proc
+
+            await _remove_worktree(tmp_path, tmp_path / "wt", "main")
+
+            # Should have called worktree remove but NOT branch -D
+            calls = [c[0] for c in mock_exec.call_args_list]
+            branch_delete_calls = [
+                c for c in calls if "branch" in c and "-D" in c
+            ]
+            assert len(branch_delete_calls) == 0
+
+    @pytest.mark.asyncio
+    async def test_master_branch_not_deleted(self, tmp_path):
+        with patch("stokowski.workspace.asyncio.create_subprocess_exec") as mock_exec:
+            mock_proc = AsyncMock()
+            mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+            mock_proc.returncode = 0
+            mock_exec.return_value = mock_proc
+
+            await _remove_worktree(tmp_path, tmp_path / "wt", "master")
+
+            calls = [c[0] for c in mock_exec.call_args_list]
+            branch_delete_calls = [
+                c for c in calls if "branch" in c and "-D" in c
+            ]
+            assert len(branch_delete_calls) == 0
+
+    @pytest.mark.asyncio
+    async def test_feature_branch_deleted(self, tmp_path):
+        with patch("stokowski.workspace.asyncio.create_subprocess_exec") as mock_exec:
+            mock_proc = AsyncMock()
+            mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+            mock_proc.returncode = 0
+            mock_exec.return_value = mock_proc
+
+            await _remove_worktree(tmp_path, tmp_path / "wt", "fix/my-branch")
+
+            calls = [c[0] for c in mock_exec.call_args_list]
+            branch_delete_calls = [
+                c for c in calls if "branch" in c and "-D" in c
+            ]
+            assert len(branch_delete_calls) == 1
