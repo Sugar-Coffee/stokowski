@@ -91,6 +91,7 @@ class Orchestrator:
         self._retry_timers: dict[str, asyncio.TimerHandle] = {}
         self._child_pids: set[int] = set()  # Track claude subprocess PIDs
         self._last_session_ids: dict[str, str] = {}  # issue_id -> last known session_id
+        self._issue_needs_review: dict[str, bool] = {}  # issue_id -> STOKOWSKI:NEEDS_REVIEW flag
         self._jinja = Environment(undefined=StrictUndefined)
         self._running = False
         self._last_issues: dict[str, Issue] = {}
@@ -395,6 +396,67 @@ class Orchestrator:
         logger.info(
             f"Gate entered issue={issue.identifier} gate={state_name} "
             f"run={run}"
+        )
+
+        # Check auto-approve
+        if state_cfg and state_cfg.auto_approve != "never":
+            should_auto = False
+            if state_cfg.auto_approve == "always":
+                should_auto = True
+            elif state_cfg.auto_approve == "when_no_questions":
+                should_auto = not self._issue_needs_review.get(issue.id, False)
+            if should_auto:
+                await self._auto_approve_gate(issue, state_name)
+
+        # Clean up needs_review flag
+        self._issue_needs_review.pop(issue.id, None)
+
+    async def _auto_approve_gate(self, issue: Issue, gate_state: str):
+        """Auto-approve a gate and follow the approve transition."""
+        run = self._issue_state_runs.get(issue.id, 1)
+
+        await self._update_tracking(
+            issue.id, make_gate_payload(state=gate_state, status="auto-approved", run=run)
+        )
+
+        gate_cfg = self.cfg.states.get(gate_state)
+        if not gate_cfg or "approve" not in gate_cfg.transitions:
+            logger.warning(f"Cannot auto-approve gate {gate_state}: no approve transition")
+            return
+
+        target = gate_cfg.transitions["approve"]
+        self._pending_gates.pop(issue.id, None)
+        self._issue_current_state[issue.id] = target
+
+        target_cfg = self.cfg.states.get(target)
+        if not target_cfg:
+            logger.warning(f"Auto-approve target '{target}' not found")
+            return
+
+        client = self._ensure_tracker_client()
+
+        if target_cfg.type == "agent":
+            active_state = self.cfg.linear_states.active
+            moved = await client.update_issue_state(issue.id, active_state)
+            if moved:
+                issue.state = active_state
+            await self._update_tracking(
+                issue.id, make_state_payload(state=target, run=run)
+            )
+            self._last_issues[issue.id] = issue
+            self._save_state()
+            # Re-dispatch — issue will be picked up on next tick
+            self._schedule_retry(issue, attempt_num=0, delay_ms=1000)
+        elif target_cfg.type == "gate":
+            await self._enter_gate(issue, target)
+        elif target_cfg.type == "terminal":
+            # _transition reads current state for transitions — set back to gate
+            self._issue_current_state[issue.id] = gate_state
+            await self._transition(issue, "approve")
+
+        logger.info(
+            f"Gate auto-approved issue={issue.identifier} gate={gate_state} "
+            f"target={target} run={run}"
         )
 
     def _spawn_background(self, coro):
@@ -1506,6 +1568,9 @@ class Orchestrator:
 
         self.running.pop(issue.id, None)
         self._tasks.pop(issue.id, None)
+
+        # Store needs_review flag before transitioning (consumed by _enter_gate)
+        self._issue_needs_review[issue.id] = attempt.needs_review
 
         if attempt.status == "blocked":
             # Agent signaled it can't handle this issue — move to Blocked

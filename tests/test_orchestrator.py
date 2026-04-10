@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from stokowski.config import StateConfig
 from stokowski.models import BlockerRef, Issue, RunAttempt
 from stokowski.orchestrator import Orchestrator, _is_rate_limit_error
 
@@ -221,3 +222,128 @@ class TestReconciliationFiltersSyntheticIds:
 
         # Should not call API at all
         mock_client.fetch_issue_states_by_ids.assert_not_called()
+
+
+@pytest.fixture
+def gate_workflow_yaml(tmp_path):
+    """Create a workflow with a gate state for auto-approve tests."""
+    def _make(auto_approve="never"):
+        p = tmp_path / "workflow.yaml"
+        p.write_text(textwrap.dedent(f"""\
+            tracker:
+              kind: linear
+              api_key: test_key
+              team_key: DEV
+            states:
+              implement:
+                type: agent
+                prompt: prompts/impl.md
+                linear_state: active
+                transitions:
+                  complete: review
+              review:
+                type: gate
+                linear_state: review
+                rework_to: implement
+                auto_approve: {auto_approve}
+                transitions:
+                  approve: done
+              done:
+                type: terminal
+                linear_state: terminal
+        """))
+        return p
+    return _make
+
+
+class TestAutoApproveGate:
+    @pytest.mark.asyncio
+    async def test_auto_approve_always(self, gate_workflow_yaml):
+        orch = _make_orch(gate_workflow_yaml("always"))
+        issue = _make_issue()
+
+        mock_client = AsyncMock()
+        mock_client.update_issue_state = AsyncMock(return_value=True)
+        orch._tracker = mock_client
+
+        # Set up state: issue is completing the implement state
+        orch._issue_current_state[issue.id] = "review"
+        orch._issue_state_runs[issue.id] = 1
+
+        await orch._enter_gate(issue, "review")
+
+        # Should NOT be in pending_gates (auto-approved)
+        assert issue.id not in orch._pending_gates
+        # Should have transitioned to terminal
+        assert orch._issue_current_state.get(issue.id) != "review"
+
+    @pytest.mark.asyncio
+    async def test_auto_approve_when_no_questions_no_marker(self, gate_workflow_yaml):
+        orch = _make_orch(gate_workflow_yaml("when_no_questions"))
+        issue = _make_issue()
+
+        mock_client = AsyncMock()
+        mock_client.update_issue_state = AsyncMock(return_value=True)
+        orch._tracker = mock_client
+
+        orch._issue_current_state[issue.id] = "review"
+        orch._issue_state_runs[issue.id] = 1
+        orch._issue_needs_review[issue.id] = False
+
+        await orch._enter_gate(issue, "review")
+
+        # Should auto-approve (no NEEDS_REVIEW marker)
+        assert issue.id not in orch._pending_gates
+
+    @pytest.mark.asyncio
+    async def test_auto_approve_when_no_questions_with_marker(self, gate_workflow_yaml):
+        orch = _make_orch(gate_workflow_yaml("when_no_questions"))
+        issue = _make_issue()
+
+        mock_client = AsyncMock()
+        mock_client.update_issue_state = AsyncMock(return_value=True)
+        orch._tracker = mock_client
+
+        orch._issue_current_state[issue.id] = "review"
+        orch._issue_state_runs[issue.id] = 1
+        orch._issue_needs_review[issue.id] = True  # Agent flagged NEEDS_REVIEW
+
+        await orch._enter_gate(issue, "review")
+
+        # Should stay in pending_gates (needs review)
+        assert issue.id in orch._pending_gates
+
+    @pytest.mark.asyncio
+    async def test_auto_approve_never(self, gate_workflow_yaml):
+        orch = _make_orch(gate_workflow_yaml("never"))
+        issue = _make_issue()
+
+        mock_client = AsyncMock()
+        mock_client.update_issue_state = AsyncMock(return_value=True)
+        orch._tracker = mock_client
+
+        orch._issue_current_state[issue.id] = "review"
+        orch._issue_state_runs[issue.id] = 1
+
+        await orch._enter_gate(issue, "review")
+
+        # Should stay in pending_gates (never auto-approve)
+        assert issue.id in orch._pending_gates
+
+    @pytest.mark.asyncio
+    async def test_needs_review_flag_cleaned_up(self, gate_workflow_yaml):
+        orch = _make_orch(gate_workflow_yaml("when_no_questions"))
+        issue = _make_issue()
+
+        mock_client = AsyncMock()
+        mock_client.update_issue_state = AsyncMock(return_value=True)
+        orch._tracker = mock_client
+
+        orch._issue_current_state[issue.id] = "review"
+        orch._issue_state_runs[issue.id] = 1
+        orch._issue_needs_review[issue.id] = True
+
+        await orch._enter_gate(issue, "review")
+
+        # Flag should be cleaned up regardless
+        assert issue.id not in orch._issue_needs_review

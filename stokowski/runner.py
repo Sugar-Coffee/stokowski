@@ -468,6 +468,8 @@ def _process_event(
             # Detect blocked signal from agent
             if "STOKOWSKI:BLOCKED" in result_text:
                 attempt.status = "blocked"
+            if "STOKOWSKI:NEEDS_REVIEW" in result_text:
+                attempt.needs_review = True
 
     elif event_type == "assistant":
         # Assistant message content
@@ -525,6 +527,8 @@ def _process_gemini_event(
             attempt.last_message = content[:200]
             if "STOKOWSKI:BLOCKED" in content:
                 attempt.status = "blocked"
+            if "STOKOWSKI:NEEDS_REVIEW" in content:
+                attempt.needs_review = True
 
     elif event_type == "tool_use":
         tool_name = event.get("name", event.get("tool", ""))

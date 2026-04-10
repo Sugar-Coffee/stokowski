@@ -146,6 +146,33 @@ class TestParseWorkflow:
         assert wf.config.github_states.terminal == ["shipped"]
         assert wf.config.github_states.close_on_terminal is False
 
+    def test_auto_approve_parsed(self, tmp_yaml):
+        path = tmp_yaml("""
+            tracker:
+              kind: linear
+              api_key: test_key
+              team_key: DEV
+            states:
+              implement:
+                type: agent
+                prompt: prompts/impl.md
+                linear_state: active
+                transitions:
+                  complete: review
+              review:
+                type: gate
+                linear_state: review
+                rework_to: implement
+                auto_approve: when_no_questions
+                transitions:
+                  approve: done
+              done:
+                type: terminal
+                linear_state: terminal
+        """)
+        wf = parse_workflow_file(path)
+        assert wf.config.states["review"].auto_approve == "when_no_questions"
+
     def test_missing_file_raises(self):
         with pytest.raises(FileNotFoundError):
             parse_workflow_file("/nonexistent/path.yaml")
@@ -284,6 +311,55 @@ class TestValidateConfig:
         })
         errors = validate_config(cfg)
         assert not any("invalid linear_state" in e for e in errors)
+
+    def test_gate_auto_approve_defaults_to_never(self):
+        cfg = self._make_cfg(states={
+            "work": StateConfig(
+                name="work", type="agent", prompt="p.md",
+                linear_state="active", transitions={"complete": "review"},
+            ),
+            "review": StateConfig(
+                name="review", type="gate", linear_state="review",
+                rework_to="work", transitions={"approve": "done"},
+            ),
+            "done": StateConfig(name="done", type="terminal", linear_state="terminal"),
+        })
+        errors = validate_config(cfg)
+        assert not any("auto_approve" in e for e in errors)
+        assert cfg.states["review"].auto_approve == "never"
+
+    def test_gate_auto_approve_valid_values(self):
+        for value in ("never", "when_no_questions", "always"):
+            cfg = self._make_cfg(states={
+                "work": StateConfig(
+                    name="work", type="agent", prompt="p.md",
+                    linear_state="active", transitions={"complete": "review"},
+                ),
+                "review": StateConfig(
+                    name="review", type="gate", linear_state="review",
+                    rework_to="work", auto_approve=value,
+                    transitions={"approve": "done"},
+                ),
+                "done": StateConfig(name="done", type="terminal", linear_state="terminal"),
+            })
+            errors = validate_config(cfg)
+            assert not any("auto_approve" in e for e in errors)
+
+    def test_gate_auto_approve_invalid_value(self):
+        cfg = self._make_cfg(states={
+            "work": StateConfig(
+                name="work", type="agent", prompt="p.md",
+                linear_state="active", transitions={"complete": "review"},
+            ),
+            "review": StateConfig(
+                name="review", type="gate", linear_state="review",
+                rework_to="work", auto_approve="invalid",
+                transitions={"approve": "done"},
+            ),
+            "done": StateConfig(name="done", type="terminal", linear_state="terminal"),
+        })
+        errors = validate_config(cfg)
+        assert any("auto_approve" in e for e in errors)
 
 
 class TestActiveStates:

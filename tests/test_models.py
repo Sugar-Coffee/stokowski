@@ -82,6 +82,7 @@ class TestRunAttempt:
         assert ra.workspace_path == ""
         assert ra.state_name is None
         assert ra.attempt is None
+        assert ra.needs_review is False
 
     def test_with_values(self):
         ra = RunAttempt(

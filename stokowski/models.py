@@ -50,6 +50,7 @@ class RunAttempt:
     last_message: str = ""
     completed_at: datetime | None = None
     state_name: str | None = None       # current internal state machine state
+    needs_review: bool = False           # agent output contained STOKOWSKI:NEEDS_REVIEW
 
 
 @dataclass

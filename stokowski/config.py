@@ -161,6 +161,7 @@ class StateConfig:
     allowed_tools: list[str] | None = None
     rework_to: str | None = None     # gate only
     max_rework: int | None = None    # gate only
+    auto_approve: str = "never"      # gate only: "never", "when_no_questions", "always"
     transitions: dict[str, str] = field(default_factory=dict)
     hooks: HooksConfig | None = None
     # PR-driven transitions for gates — maps GitHub PR events to gate actions
@@ -373,6 +374,7 @@ def _parse_state_config(name: str, raw: dict[str, Any]) -> StateConfig:
         allowed_tools=_coerce_list(allowed) if allowed is not None else None,
         rework_to=raw.get("rework_to"),
         max_rework=raw.get("max_rework"),
+        auto_approve=str(raw.get("auto_approve", "never")),
         transitions=raw.get("transitions") or {},
         hooks=_parse_hooks(hooks_raw) if hooks_raw else None,
         pr_triggers=raw.get("pr_triggers") or {},
@@ -734,6 +736,13 @@ def validate_config(cfg: ServiceConfig) -> list[str]:
             # Gates must have approve transition
             if "approve" not in sc.transitions:
                 errors.append(f"Gate state '{name}' is missing 'approve' transition")
+            # Validate auto_approve
+            valid_auto_approve = {"never", "when_no_questions", "always"}
+            if sc.auto_approve not in valid_auto_approve:
+                errors.append(
+                    f"Gate state '{name}' has invalid auto_approve: '{sc.auto_approve}' "
+                    f"(valid: {', '.join(sorted(valid_auto_approve))})"
+                )
 
         elif sc.type == "terminal":
             has_terminal = True
