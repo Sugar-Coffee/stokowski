@@ -288,18 +288,32 @@ class LinearClient:
 
     async def _graphql(self, query: str, variables: dict) -> dict:
         import asyncio
-        for attempt in range(3):
-            resp = await self._client.post(
-                self.endpoint,
-                json={"query": query, "variables": variables},
-            )
-            if resp.status_code in (429, 400) and attempt < 2:
-                wait = (attempt + 1) * 2
-                logger.debug(f"Linear API {resp.status_code}, retrying in {wait}s")
-                await asyncio.sleep(wait)
-                continue
-            resp.raise_for_status()
-            break
+
+        # Global rate limiter — max 1 concurrent request, min 200ms between
+        if not hasattr(self, '_rate_sem'):
+            self._rate_sem = asyncio.Semaphore(1)
+            self._last_request = 0.0
+
+        async with self._rate_sem:
+            import time
+            elapsed = time.monotonic() - self._last_request
+            if elapsed < 0.2:
+                await asyncio.sleep(0.2 - elapsed)
+
+            for attempt in range(3):
+                resp = await self._client.post(
+                    self.endpoint,
+                    json={"query": query, "variables": variables},
+                )
+                self._last_request = time.monotonic()
+                if resp.status_code in (429, 400) and attempt < 2:
+                    wait = (attempt + 1) * 3
+                    logger.warning(f"Linear API {resp.status_code}, waiting {wait}s")
+                    await asyncio.sleep(wait)
+                    continue
+                resp.raise_for_status()
+                break
+
         data = resp.json()
         if "errors" in data:
             raise RuntimeError(f"Linear GraphQL errors: {data['errors']}")

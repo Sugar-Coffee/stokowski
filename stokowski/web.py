@@ -1351,6 +1351,17 @@ def create_app_multi(manager) -> FastAPI:
     async def api_state():
         return JSONResponse(manager.get_aggregate_snapshot())
 
+    @app.get("/api/v1/history")
+    async def api_history():
+        from .history import load_history, history_file_path
+        # Find history file from any orchestrator's workflow path
+        for orch in manager.orchestrators.values():
+            hp = history_file_path(orch.workflow_path.parent)
+            if hp.exists():
+                history = load_history(hp)
+                return JSONResponse(history[-100:][::-1])  # last 100, newest first
+        return JSONResponse([])
+
     @app.get("/api/v1/workflows")
     async def api_workflows():
         return JSONResponse({"workflows": list(manager.orchestrators.keys())})

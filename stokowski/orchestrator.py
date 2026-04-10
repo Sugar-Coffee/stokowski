@@ -24,6 +24,7 @@ from .config import (
     validate_config,
 )
 from .models import Issue, RetryEntry, RunAttempt
+from .history import RunRecord, append_run, history_file_path, load_history
 from .state import PersistedState, load_state, save_state, state_file_path
 from .tracker import TrackerClient
 from .prompt import assemble_prompt, build_lifecycle_section
@@ -1528,10 +1529,37 @@ class Orchestrator:
         self.total_input_tokens += attempt.input_tokens
         self.total_output_tokens += attempt.output_tokens
         self.total_tokens += attempt.total_tokens
+        elapsed = 0.0
         if attempt.started_at:
             elapsed = (datetime.now(timezone.utc) - attempt.started_at).total_seconds()
             self.total_seconds_running += elapsed
         self._save_state()
+
+        # Record to history
+        self._record_history(issue, attempt, elapsed)
+
+    def _record_history(self, issue: Issue, attempt: RunAttempt, elapsed: float):
+        """Record a completed run to the history file."""
+        try:
+            wf_name = self.workflow_path.stem.replace("workflow-", "")
+            history_path = history_file_path(self.workflow_path.parent)
+            record = RunRecord(
+                issue_id=issue.id,
+                identifier=issue.identifier or attempt.issue_identifier,
+                title=issue.title or "",
+                workflow=wf_name,
+                status=attempt.status,
+                started_at=attempt.started_at.isoformat() if attempt.started_at else "",
+                completed_at=datetime.now(timezone.utc).isoformat(),
+                duration_seconds=round(elapsed, 1),
+                tokens=attempt.total_tokens,
+                stages=[attempt.state_name] if attempt.state_name else [],
+                last_message=attempt.last_message[:200] if attempt.last_message else "",
+                error=attempt.error[:200] if attempt.error else None,
+            )
+            append_run(history_path, record)
+        except Exception as e:
+            logger.debug(f"Failed to record history: {e}")
 
         if attempt.session_id:
             self._last_session_ids[issue.id] = attempt.session_id
