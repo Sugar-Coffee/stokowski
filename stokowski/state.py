@@ -60,6 +60,7 @@ def load_state(path: Path) -> PersistedState:
             total_tokens=int(data.get("total_tokens", 0)),
             total_seconds_running=float(data.get("total_seconds_running", 0)),
             retry_attempts=data.get("retry_attempts", {}),
+            issues=data.get("issues", {}),
         )
     except Exception as e:
         logger.warning(f"Failed to load state from {path}, starting fresh: {e}")

@@ -48,6 +48,35 @@ class TestSaveAndLoad:
         assert loaded.total_tokens == 1500
         assert loaded.total_seconds_running == 120.5
 
+    def test_roundtrip_with_issues(self, tmp_path):
+        path = tmp_path / "state.json"
+        state = PersistedState(
+            issues={
+                "issue-1": {
+                    "issue_id": "issue-1",
+                    "identifier": "DEV-1",
+                    "current_state": "implement",
+                    "run": 2,
+                    "session_id": "sess-abc",
+                    "workspace_path": "/tmp/ws/DEV-1",
+                },
+                "issue-2": {
+                    "issue_id": "issue-2",
+                    "identifier": "DEV-2",
+                    "current_state": "review",
+                    "run": 1,
+                    "session_id": None,
+                    "workspace_path": "",
+                },
+            },
+        )
+        save_state(path, state)
+        loaded = load_state(path)
+        assert len(loaded.issues) == 2
+        assert loaded.issues["issue-1"]["current_state"] == "implement"
+        assert loaded.issues["issue-1"]["session_id"] == "sess-abc"
+        assert loaded.issues["issue-2"]["current_state"] == "review"
+
     def test_load_missing_file_returns_defaults(self, tmp_path):
         path = tmp_path / "nonexistent.json"
         state = load_state(path)

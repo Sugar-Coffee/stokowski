@@ -463,7 +463,16 @@ class Orchestrator:
         """Create a background task that won't be garbage collected."""
         task = asyncio.create_task(coro)
         self._background_tasks.add(task)
-        task.add_done_callback(self._background_tasks.discard)
+        task.add_done_callback(self._on_background_done)
+
+    def _on_background_done(self, task: asyncio.Task):
+        """Cleanup callback for background tasks — logs unhandled exceptions."""
+        self._background_tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc:
+            logger.error(f"Background task failed: {exc}", exc_info=exc)
 
     async def _move_to_blocked(self, issue: Issue, attempt: RunAttempt):
         """Move an issue to Blocked state when the agent signals it can't proceed."""
@@ -1200,7 +1209,13 @@ class Orchestrator:
                 attempt.session_id = self._last_session_ids[issue.id]
 
         self.running[issue.id] = attempt
-        task = asyncio.create_task(self._run_worker(issue, attempt))
+        try:
+            task = asyncio.create_task(self._run_worker(issue, attempt))
+        except Exception as e:
+            logger.error(f"Failed to create worker task for {issue.identifier}: {e}")
+            self.running.pop(issue.id, None)
+            self.claimed.discard(issue.id)
+            return
         self._tasks[issue.id] = task
 
         runner = state_cfg.runner if state_cfg else "claude"

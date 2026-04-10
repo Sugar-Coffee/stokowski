@@ -70,6 +70,22 @@ class TestSpawnBackground:
         # done_callback should have removed it
         assert len(orch._background_tasks) == 0
 
+    @pytest.mark.asyncio
+    async def test_failed_task_cleaned_up_and_logged(self, workflow_yaml):
+        orch = _make_orch(workflow_yaml)
+
+        async def failing():
+            raise RuntimeError("test error")
+
+        with patch("stokowski.orchestrator.logger") as mock_logger:
+            orch._spawn_background(failing())
+            await asyncio.sleep(0.05)
+            # Task should be cleaned up
+            assert len(orch._background_tasks) == 0
+            # Error should be logged
+            mock_logger.error.assert_called_once()
+            assert "test error" in str(mock_logger.error.call_args)
+
 
 class TestIsEligible:
     def test_valid_issue_eligible(self, workflow_yaml):
