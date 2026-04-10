@@ -1258,7 +1258,8 @@ class Orchestrator:
             attempt.status = "canceled"
             self._on_worker_exit(issue, attempt)
         except Exception as e:
-            logger.error(f"Worker error issue={issue.identifier}: {e}")
+            import traceback
+            logger.error(f"Worker error issue={issue.identifier}: {e}\n{traceback.format_exc()}")
             attempt.status = "failed"
             attempt.error = str(e)
             self._on_worker_exit(issue, attempt)
