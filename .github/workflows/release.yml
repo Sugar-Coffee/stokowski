@@ -30,6 +30,7 @@ jobs:
       - name: Auto-merge release PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_JSON: ${{ needs.release-please.outputs.pr }}
         run: |
-          PR_NUMBER=$(echo '${{ needs.release-please.outputs.pr }}' | jq -r '.number')
+          PR_NUMBER=$(echo "$PR_JSON" | jq -r '.number')
           gh pr merge "$PR_NUMBER" --squash --auto
