@@ -115,6 +115,8 @@ class Manager:
                     timeout=5.0,
                 )
                 for t in done:
+                    if t.cancelled():
+                        continue
                     exc = t.exception()
                     if exc:
                         wf_name = t.get_name().replace("workflow:", "")
@@ -180,7 +182,9 @@ class Manager:
 
     def _on_workflow_done(self, name: str, task: asyncio.Task):
         """Callback when a workflow task completes."""
-        if task.exception():
+        if task.cancelled():
+            self._workflow_status[name] = "stopped"
+        elif task.exception():
             self._workflow_status[name] = "failed"
         elif self._workflow_status.get(name) != "stopped":
             self._workflow_status[name] = "stopped"

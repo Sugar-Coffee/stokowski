@@ -245,6 +245,10 @@ def _make_footer(orch: Orchestrator) -> Text:
 
 
 async def run_orchestrator(workflow_path: str, port: int | None = None):
+    killed = _kill_orphan_agents()
+    if killed:
+        logger.warning(f"Killed {killed} orphan agent(s) from previous run")
+
     orch = Orchestrator(workflow_path)
     loop = asyncio.get_running_loop()
 
@@ -311,6 +315,10 @@ async def run_orchestrator(workflow_path: str, port: int | None = None):
 
 async def run_manager(root_config_path: str, port: int | None = None):
     """Run multiple workflows from a root config."""
+    killed = _kill_orphan_agents()
+    if killed:
+        logger.warning(f"Killed {killed} orphan agent(s) from previous run")
+
     from .config import parse_root_config
     from .manager import Manager
 
@@ -1106,9 +1114,14 @@ def cli():
             console.print("[green]Done.[/green]")
 
 
-def _force_kill_children():
-    """Kill any lingering claude -p processes."""
+def _kill_orphan_agents():
+    """Kill any orphan claude -p processes left from a previous crash.
+
+    Called on startup to prevent two agents working the same issue.
+    Returns the number of processes killed.
+    """
     import subprocess
+    killed = 0
     try:
         result = subprocess.run(
             ["pgrep", "-f", "claude.*-p.*--output-format.*stream-json"],
@@ -1122,10 +1135,17 @@ def _force_kill_children():
                         os.killpg(os.getpgid(pid), signal.SIGKILL)
                     except (ProcessLookupError, PermissionError, OSError):
                         os.kill(pid, signal.SIGKILL)
+                    killed += 1
                 except (ValueError, ProcessLookupError, PermissionError, OSError):
                     pass
     except Exception:
         pass
+    return killed
+
+
+def _force_kill_children():
+    """Kill any lingering claude -p processes."""
+    _kill_orphan_agents()
 
 
 # ── Dry run ───────────────────────────────────────────────────────────────────
