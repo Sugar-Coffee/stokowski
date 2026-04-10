@@ -34,17 +34,17 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   :root {
-    --bg:        #080808;
-    --surface:   #0f0f0f;
-    --border:    #1c1c1c;
-    --border-hi: #2a2a2a;
-    --text:      #e8e8e0;
-    --muted:     #555550;
-    --dim:       #333330;
-    --amber:     #e8b84b;
-    --amber-dim: #6b5220;
-    --green:     #4cba6e;
-    --red:       #d95f52;
+    --bg:        #0a0a0a;
+    --surface:   #141414;
+    --border:    #262626;
+    --border-hi: #3a3a3a;
+    --text:      #f0f0ec;
+    --muted:     #8a8a80;
+    --dim:       #525250;
+    --amber:     #f0c050;
+    --amber-dim: #7a6030;
+    --green:     #5cd88a;
+    --red:       #ef6b5e;
     --blue:      #5b9cf6;
     --font:      'IBM Plex Mono', monospace;
   }
@@ -105,7 +105,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .logo-tag {
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 300;
     color: var(--muted);
     letter-spacing: 0.08em;
@@ -139,7 +139,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .timestamp {
-    font-size: 11px;
+    font-size: 13px;
     color: var(--muted);
     font-weight: 300;
     letter-spacing: 0.04em;
@@ -176,7 +176,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .metric-label {
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 500;
     letter-spacing: 0.12em;
     text-transform: uppercase;
@@ -198,7 +198,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .metric-sub {
-    font-size: 11px;
+    font-size: 13px;
     color: var(--muted);
     margin-top: 6px;
     font-weight: 300;
@@ -213,7 +213,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .section-title {
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 500;
     letter-spacing: 0.14em;
     text-transform: uppercase;
@@ -227,7 +227,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .section-count {
-    font-size: 10px;
+    font-size: 12px;
     color: var(--dim);
     font-weight: 300;
   }
@@ -271,7 +271,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .status-pill {
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 500;
     letter-spacing: 0.1em;
     text-transform: uppercase;
@@ -324,7 +324,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .agent-turns {
-    font-size: 11px;
+    font-size: 13px;
     color: var(--muted);
     font-weight: 300;
   }
@@ -347,7 +347,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .empty-sub {
-    font-size: 11px;
+    font-size: 13px;
     color: var(--border-hi);
     font-weight: 300;
   }
@@ -369,7 +369,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .stat-label {
-    font-size: 10px;
+    font-size: 12px;
     color: var(--muted);
     font-weight: 300;
     letter-spacing: 0.1em;
@@ -421,13 +421,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .footer-left {
-    font-size: 11px;
+    font-size: 13px;
     color: var(--dim);
     font-weight: 300;
   }
 
   .footer-right {
-    font-size: 11px;
+    font-size: 13px;
     color: var(--dim);
     font-weight: 300;
   }
@@ -448,8 +448,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
   .wf-tab {
     background: var(--surface);
-    padding: 10px 20px;
-    font-size: 11px;
+    padding: 12px 20px;
+    font-size: 13px;
     font-weight: 500;
     letter-spacing: 0.06em;
     color: var(--muted);
@@ -457,6 +457,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     transition: all 0.15s;
     border: none;
     font-family: var(--font);
+  }
+
+  .wf-tab:focus-visible, button:focus-visible {
+    outline: 2px solid var(--amber);
+    outline-offset: 2px;
   }
 
   .wf-tab:hover {
@@ -471,7 +476,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .wf-tab .wf-tab-count {
-    font-size: 10px;
+    font-size: 12px;
     color: var(--dim);
     margin-left: 6px;
   }
@@ -493,7 +498,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .agent-workflow {
-    font-size: 10px;
+    font-size: 12px;
     color: var(--dim);
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -502,9 +507,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 </style>
 </head>
 <body>
-<div class="shell">
+<div class="shell" role="application" aria-label="Stokowski Dashboard">
 
-  <header>
+  <header role="banner">
     <div class="logo">
       <span class="logo-name">STOKOWSKI</span>
       <span class="logo-tag">Claude Code Orchestrator</span>
@@ -515,7 +520,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </div>
   </header>
 
-  <div id="workflow-tabs" class="workflow-tabs"></div>
+  <nav id="workflow-tabs" class="workflow-tabs" role="tablist" aria-label="Workflows"></nav>
 
   <div class="metrics">
     <div class="metric" id="m-running">
@@ -627,7 +632,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       document.getElementById('agents-container').innerHTML = `
         <div class="empty">
           <div class="empty-title">No active agents</div>
-          <div class="empty-sub">Move a Linear issue to Todo or In Progress to start</div>
+          <div class="empty-sub">Start a workflow from the tabs above, or use the RUN button to trigger one</div>
         </div>`;
       return;
     }
@@ -840,17 +845,17 @@ CONFIG_EDITOR_HTML = """<!DOCTYPE html>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   :root {
-    --bg:        #080808;
-    --surface:   #0f0f0f;
-    --border:    #1c1c1c;
-    --border-hi: #2a2a2a;
-    --text:      #e8e8e0;
-    --muted:     #555550;
-    --dim:       #333330;
-    --amber:     #e8b84b;
-    --amber-dim: #6b5220;
-    --green:     #4cba6e;
-    --red:       #d95f52;
+    --bg:        #0a0a0a;
+    --surface:   #141414;
+    --border:    #262626;
+    --border-hi: #3a3a3a;
+    --text:      #f0f0ec;
+    --muted:     #8a8a80;
+    --dim:       #525250;
+    --amber:     #f0c050;
+    --amber-dim: #7a6030;
+    --green:     #5cd88a;
+    --red:       #ef6b5e;
     --font:      'IBM Plex Mono', monospace;
   }
 
@@ -881,7 +886,7 @@ CONFIG_EDITOR_HTML = """<!DOCTYPE html>
 
   .logo { display: flex; align-items: baseline; gap: 12px; }
   .logo-name { font-size: 22px; font-weight: 600; letter-spacing: -0.5px; }
-  .logo-tag { font-size: 11px; font-weight: 300; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
+  .logo-tag { font-size: 13px; font-weight: 300; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
 
   a.back { color: var(--amber); text-decoration: none; font-size: 12px; }
   a.back:hover { text-decoration: underline; }

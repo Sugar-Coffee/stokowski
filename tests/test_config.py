@@ -320,3 +320,207 @@ class TestActiveStates:
             },
         )
         assert cfg.terminal_linear_states() == ["Done", "Cancelled"]
+
+
+class TestPerWorkflowFiltering:
+    def test_parse_filter_labels(self, tmp_yaml):
+        path = tmp_yaml("""
+            tracker:
+              kind: linear
+              team_key: DEV
+            filter_labels: [work, bug]
+            pickup_states: [Todo, Triage]
+            states:
+              work:
+                type: agent
+                prompt: p.md
+                transitions:
+                  complete: done
+              done:
+                type: terminal
+                linear_state: terminal
+        """)
+        wf = parse_workflow_file(path)
+        assert wf.config.filter_labels == ["work", "bug"]
+        assert wf.config.pickup_states == ["Todo", "Triage"]
+
+    def test_tracker_enabled_default_true(self, tmp_yaml):
+        path = tmp_yaml("""
+            tracker:
+              kind: linear
+              team_key: DEV
+            states:
+              work:
+                type: agent
+                prompt: p.md
+                transitions:
+                  complete: done
+              done:
+                type: terminal
+                linear_state: terminal
+        """)
+        wf = parse_workflow_file(path)
+        assert wf.config.tracker_enabled is True
+
+    def test_tracker_enabled_false(self, tmp_yaml):
+        path = tmp_yaml("""
+            tracker_enabled: false
+            states:
+              sync:
+                type: agent
+                prompt: p.md
+                transitions:
+                  complete: done
+              done:
+                type: terminal
+                linear_state: terminal
+        """)
+        wf = parse_workflow_file(path)
+        assert wf.config.tracker_enabled is False
+
+    def test_workspace_enabled_false(self, tmp_yaml):
+        path = tmp_yaml("""
+            tracker:
+              kind: linear
+              team_key: DEV
+            workspace_enabled: false
+            states:
+              work:
+                type: agent
+                prompt: p.md
+                transitions:
+                  complete: done
+              done:
+                type: terminal
+                linear_state: terminal
+        """)
+        wf = parse_workflow_file(path)
+        assert wf.config.workspace_enabled is False
+
+    def test_tracker_disabled_skips_validation(self, tmp_yaml):
+        path = tmp_yaml("""
+            tracker_enabled: false
+            states:
+              work:
+                type: agent
+                prompt: p.md
+                transitions:
+                  complete: done
+              done:
+                type: terminal
+                linear_state: terminal
+        """)
+        wf = parse_workflow_file(path)
+        errors = validate_config(wf.config)
+        # No tracker errors when tracker is disabled
+        assert not any("API key" in e for e in errors)
+        assert not any("project_slug" in e for e in errors)
+
+    def test_terminal_linear_state_none(self, tmp_yaml):
+        path = tmp_yaml("""
+            tracker:
+              kind: linear
+              team_key: DEV
+            states:
+              work:
+                type: agent
+                prompt: p.md
+                linear_state: active
+                transitions:
+                  complete: done
+              done:
+                type: terminal
+                linear_state: none
+        """)
+        wf = parse_workflow_file(path)
+        assert wf.config.states["done"].linear_state == "none"
+        errors = validate_config(wf.config)
+        assert not any("invalid linear_state" in e for e in errors)
+
+    def test_terminal_literal_state_name(self, tmp_yaml):
+        path = tmp_yaml("""
+            tracker:
+              kind: linear
+              team_key: DEV
+            states:
+              work:
+                type: agent
+                prompt: p.md
+                linear_state: active
+                transitions:
+                  complete: done
+              done:
+                type: terminal
+                linear_state: Todo
+        """)
+        wf = parse_workflow_file(path)
+        assert wf.config.states["done"].linear_state == "Todo"
+        errors = validate_config(wf.config)
+        # Capitalized literal names should not be rejected
+        assert not any("invalid linear_state" in e for e in errors)
+
+    def test_fallback_runners(self, tmp_yaml):
+        path = tmp_yaml("""
+            tracker:
+              kind: linear
+              team_key: DEV
+            states:
+              work:
+                type: agent
+                prompt: p.md
+                linear_state: active
+                fallback_runners: [gemini, codex]
+                transitions:
+                  complete: done
+              done:
+                type: terminal
+                linear_state: terminal
+        """)
+        wf = parse_workflow_file(path)
+        assert wf.config.states["work"].fallback_runners == ["gemini", "codex"]
+
+
+class TestSharedConfig:
+    def test_shared_raw_merges_into_workflow(self, tmp_yaml):
+        path = tmp_yaml("""
+            polling:
+              interval_ms: 5000
+            states:
+              work:
+                type: agent
+                prompt: p.md
+                transitions:
+                  complete: done
+              done:
+                type: terminal
+                linear_state: terminal
+        """)
+        shared = {
+            "tracker": {"kind": "linear", "team_key": "DEV", "api_key": "test"},
+            "claude": {"model": "claude-sonnet-4-6"},
+        }
+        wf = parse_workflow_file(path, shared_raw=shared)
+        assert wf.config.tracker.kind == "linear"
+        assert wf.config.tracker.team_key == "DEV"
+        assert wf.config.claude.model == "claude-sonnet-4-6"
+        assert wf.config.polling.interval_ms == 5000
+
+    def test_workflow_overrides_shared(self, tmp_yaml):
+        path = tmp_yaml("""
+            tracker:
+              kind: github
+              github_owner: org
+              github_repo: repo
+            states:
+              work:
+                type: agent
+                prompt: p.md
+                transitions:
+                  complete: done
+              done:
+                type: terminal
+                linear_state: terminal
+        """)
+        shared = {"tracker": {"kind": "linear", "team_key": "DEV"}}
+        wf = parse_workflow_file(path, shared_raw=shared)
+        assert wf.config.tracker.kind == "github"
