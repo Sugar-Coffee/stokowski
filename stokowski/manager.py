@@ -29,10 +29,57 @@ class Manager:
         self.orchestrators: dict[str, Orchestrator] = {}
         self._workflow_tasks: dict[str, asyncio.Task] = {}
         self._workflow_status: dict[str, str] = {}  # "running", "stopped", "failed"
+        self._shared_tracker = None  # shared Linear/GitHub client
+
         for name, path in workflow_paths.items():
             self.orchestrators[name] = Orchestrator(path, shared_raw=self.shared_raw)
             self._workflow_status[name] = "stopped"
         self._workflow_enabled = workflow_enabled or {}
+
+        # Create shared tracker client for workflows that use the same tracker
+        self._init_shared_tracker()
+
+    def _init_shared_tracker(self):
+        """Create a shared tracker client for all workflows using the same tracker."""
+        # Find the first orchestrator with tracker_enabled to get config
+        for orch in self.orchestrators.values():
+            try:
+                errors = orch._load_workflow()
+                if errors:
+                    continue
+                if not orch.cfg.tracker_enabled:
+                    continue
+                if orch.cfg.source == "github-prs":
+                    continue
+
+                # Create the shared client
+                kind = orch.cfg.tracker.kind
+                if kind == "github":
+                    from .github_issues import GitHubIssuesClient
+                    self._shared_tracker = GitHubIssuesClient(
+                        owner=orch.cfg.tracker.github_owner,
+                        repo=orch.cfg.tracker.github_repo,
+                        token=orch.cfg.resolved_api_key(),
+                    )
+                else:
+                    from .linear import LinearClient
+                    self._shared_tracker = LinearClient(
+                        endpoint=orch.cfg.tracker.endpoint,
+                        api_key=orch.cfg.resolved_api_key(),
+                    )
+                logger.info(f"Created shared {kind} tracker client")
+                break
+            except Exception:
+                continue
+
+        # Inject shared client into all tracker-enabled orchestrators
+        if self._shared_tracker:
+            for orch in self.orchestrators.values():
+                try:
+                    if orch.workflow and orch.cfg.tracker_enabled and orch.cfg.source != "github-prs":
+                        orch._tracker = self._shared_tracker
+                except Exception:
+                    pass
 
     async def start(self):
         """Start enabled workflows. Disabled workflows stay stopped (start from UI)."""
@@ -81,7 +128,16 @@ class Manager:
         if self._workflow_status.get(name) in ("stopped", "failed"):
             from .orchestrator import Orchestrator
             path = self.workflow_paths[name]
-            self.orchestrators[name] = Orchestrator(path, shared_raw=self.shared_raw)
+            orch = Orchestrator(path, shared_raw=self.shared_raw)
+            # Inject shared tracker client
+            if self._shared_tracker:
+                try:
+                    errors = orch._load_workflow()
+                    if not errors and orch.cfg.tracker_enabled and orch.cfg.source != "github-prs":
+                        orch._tracker = self._shared_tracker
+                except Exception:
+                    pass
+            self.orchestrators[name] = orch
 
         orch = self.orchestrators[name]
         task = asyncio.create_task(orch.start(), name=f"workflow:{name}")
