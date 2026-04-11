@@ -464,7 +464,7 @@ def _process_event(
         # Extract result text for last_message
         result_text = event.get("result", "")
         if isinstance(result_text, str) and result_text:
-            attempt.last_message = result_text[:200]
+            attempt.last_message = result_text
             # Detect blocked signal from agent
             if "STOKOWSKI:BLOCKED" in result_text:
                 attempt.status = "blocked"
@@ -476,11 +476,11 @@ def _process_event(
         msg = event.get("message", {})
         content = msg.get("content", "")
         if isinstance(content, str) and content:
-            attempt.last_message = content[:200]
+            attempt.last_message = content
         elif isinstance(content, list):
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "text":
-                    attempt.last_message = block.get("text", "")[:200]
+                    attempt.last_message = block.get("text", "")
                     break
 
     elif event_type == "tool_use":
@@ -524,7 +524,7 @@ def _process_gemini_event(
         role = event.get("role", "")
         content = event.get("content", "")
         if role == "assistant" and isinstance(content, str) and content:
-            attempt.last_message = content[:200]
+            attempt.last_message = content
             if "STOKOWSKI:BLOCKED" in content:
                 attempt.status = "blocked"
             if "STOKOWSKI:NEEDS_REVIEW" in content:
