@@ -173,6 +173,15 @@ class TestIsEligible:
         )
         assert orch._is_eligible(issue) is False
 
+    def test_blocked_in_progress_not_eligible(self, workflow_yaml):
+        """Blocker check applies regardless of issue state, not just Todo."""
+        orch = _make_orch(workflow_yaml)
+        issue = _make_issue(
+            state="In Progress",
+            blocked_by=[BlockerRef(id="b1", identifier="DEV-0", state="In Progress")],
+        )
+        assert orch._is_eligible(issue) is False
+
     def test_blocked_todo_resolved_eligible(self, workflow_yaml):
         orch = _make_orch(workflow_yaml)
         issue = _make_issue(

@@ -1194,12 +1194,11 @@ class Orchestrator:
             if excluded & issue_labels:
                 return False
 
-        # Blocker check for Todo (skip for PR-based issues)
+        # Blocker check (skip for PR-based issues)
         if not issue.id.startswith("pr:"):
-            if issue.state.strip().lower() == "todo":
-                for blocker in issue.blocked_by:
-                    if blocker.state and blocker.state.strip().lower() not in [s.strip().lower() for s in self.cfg.terminal_linear_states()]:
-                        return False
+            for blocker in issue.blocked_by:
+                if blocker.state and blocker.state.strip().lower() not in [s.strip().lower() for s in self.cfg.terminal_linear_states()]:
+                    return False
 
         return True
 
