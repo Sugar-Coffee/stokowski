@@ -165,9 +165,15 @@ class Orchestrator:
         """Persist current state to disk (including per-issue tracking)."""
         if not self._state_path:
             return
-        # Build per-issue state
+        # Build per-issue state (skip terminal states — they're already done)
+        terminal_states = {
+            name for name, sc in self.cfg.states.items() if sc.type == "terminal"
+        } if self.cfg else set()
+        now_iso = datetime.now(timezone.utc).isoformat()
         issues: dict[str, dict] = {}
         for issue_id, state_name in self._issue_current_state.items():
+            if state_name in terminal_states:
+                continue
             issues[issue_id] = {
                 "issue_id": issue_id,
                 "identifier": self._last_issues.get(issue_id, Issue(id=issue_id, identifier="?", title="")).identifier,
@@ -175,6 +181,7 @@ class Orchestrator:
                 "run": self._issue_state_runs.get(issue_id, 1),
                 "session_id": self._last_session_ids.get(issue_id),
                 "workspace_path": self.running[issue_id].workspace_path if issue_id in self.running else "",
+                "updated_at": now_iso,
             }
         ps = PersistedState(
             last_schedule_fire_iso=(
@@ -224,19 +231,41 @@ class Orchestrator:
                 pass
 
         # Restore per-issue state machine state from crash recovery
+        terminal_states = {
+            name for name, sc in self.cfg.states.items() if sc.type == "terminal"
+        }
+        gc_days = self.cfg.agent.state_gc_days
+        gc_cutoff = (
+            datetime.now(timezone.utc) - timedelta(days=gc_days)
+        ).isoformat() if gc_days > 0 else None
+
         if ps.issues:
             restored = 0
+            skipped = 0
             for issue_id, issue_data in ps.issues.items():
                 state_name = issue_data.get("current_state", "")
-                if state_name and state_name in self.cfg.states:
-                    self._issue_current_state[issue_id] = state_name
-                    self._issue_state_runs[issue_id] = issue_data.get("run", 1)
-                    session_id = issue_data.get("session_id")
-                    if session_id:
-                        self._last_session_ids[issue_id] = session_id
-                    restored += 1
+                if not state_name or state_name not in self.cfg.states:
+                    skipped += 1
+                    continue
+                # Skip terminal states
+                if state_name in terminal_states:
+                    skipped += 1
+                    continue
+                # GC stale entries
+                updated_at = issue_data.get("updated_at", "")
+                if gc_cutoff and updated_at and updated_at < gc_cutoff:
+                    skipped += 1
+                    continue
+                self._issue_current_state[issue_id] = state_name
+                self._issue_state_runs[issue_id] = issue_data.get("run", 1)
+                session_id = issue_data.get("session_id")
+                if session_id:
+                    self._last_session_ids[issue_id] = session_id
+                restored += 1
             if restored:
                 logger.info(f"Restored state for {restored} in-progress issues")
+            if skipped:
+                logger.info(f"Pruned {skipped} terminal/stale entries from state file")
 
         # Startup terminal cleanup
         await self._startup_cleanup()

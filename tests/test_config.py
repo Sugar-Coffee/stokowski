@@ -203,6 +203,48 @@ class TestParseWorkflow:
         assert wf.config.states["implement"].max_concurrent == 3
         assert wf.config.states["done"].max_concurrent is None
 
+    def test_state_gc_days_parsed(self, tmp_yaml):
+        path = tmp_yaml("""
+            tracker:
+              kind: linear
+              api_key: test_key
+              team_key: DEV
+            agent:
+              state_gc_days: 30
+            states:
+              implement:
+                type: agent
+                prompt: prompts/impl.md
+                linear_state: active
+                transitions:
+                  complete: done
+              done:
+                type: terminal
+                linear_state: terminal
+        """)
+        wf = parse_workflow_file(path)
+        assert wf.config.agent.state_gc_days == 30
+
+    def test_state_gc_days_default(self, tmp_yaml):
+        path = tmp_yaml("""
+            tracker:
+              kind: linear
+              api_key: test_key
+              team_key: DEV
+            states:
+              implement:
+                type: agent
+                prompt: prompts/impl.md
+                linear_state: active
+                transitions:
+                  complete: done
+              done:
+                type: terminal
+                linear_state: terminal
+        """)
+        wf = parse_workflow_file(path)
+        assert wf.config.agent.state_gc_days == 7
+
     def test_missing_file_raises(self):
         with pytest.raises(FileNotFoundError):
             parse_workflow_file("/nonexistent/path.yaml")

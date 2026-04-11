@@ -466,3 +466,134 @@ class TestPerStateConcurrency:
             else orch.cfg.agent.max_concurrent_agents_by_state.get("triage")
         )
         assert state_limit == 1  # inline, not 10
+
+
+class TestSaveStatePruning:
+    def test_terminal_states_excluded_from_save(self, workflow_yaml):
+        from stokowski.state import state_file_path
+        orch = _make_orch(workflow_yaml)
+        orch._state_path = state_file_path(workflow_yaml)
+
+        orch._issue_current_state["active-1"] = "implement"
+        orch._issue_current_state["done-1"] = "done"  # terminal
+        orch._last_issues["active-1"] = _make_issue(id="active-1", identifier="DEV-1")
+        orch._last_issues["done-1"] = _make_issue(id="done-1", identifier="DEV-2")
+
+        orch._save_state()
+
+        import json
+        data = json.loads(orch._state_path.read_text())
+        assert "active-1" in data["issues"]
+        assert "done-1" not in data["issues"]
+
+    def test_updated_at_added_to_entries(self, workflow_yaml):
+        from stokowski.state import state_file_path
+        orch = _make_orch(workflow_yaml)
+        orch._state_path = state_file_path(workflow_yaml)
+
+        orch._issue_current_state["active-1"] = "implement"
+        orch._last_issues["active-1"] = _make_issue(id="active-1", identifier="DEV-1")
+
+        orch._save_state()
+
+        import json
+        data = json.loads(orch._state_path.read_text())
+        assert "updated_at" in data["issues"]["active-1"]
+
+
+def _restore_state(orch: Orchestrator):
+    """Simulate the startup restore logic from start() for testing."""
+    from datetime import datetime, timedelta, timezone
+    from stokowski.state import load_state, state_file_path
+
+    orch._state_path = state_file_path(orch.workflow_path)
+    ps = load_state(orch._state_path)
+
+    terminal_states = {
+        name for name, sc in orch.cfg.states.items() if sc.type == "terminal"
+    }
+    gc_days = orch.cfg.agent.state_gc_days
+    gc_cutoff = (
+        datetime.now(timezone.utc) - timedelta(days=gc_days)
+    ).isoformat() if gc_days > 0 else None
+
+    for issue_id, issue_data in ps.issues.items():
+        state_name = issue_data.get("current_state", "")
+        if not state_name or state_name not in orch.cfg.states:
+            continue
+        if state_name in terminal_states:
+            continue
+        updated_at = issue_data.get("updated_at", "")
+        if gc_cutoff and updated_at and updated_at < gc_cutoff:
+            continue
+        orch._issue_current_state[issue_id] = state_name
+        orch._issue_state_runs[issue_id] = issue_data.get("run", 1)
+        session_id = issue_data.get("session_id")
+        if session_id:
+            orch._last_session_ids[issue_id] = session_id
+
+
+class TestStartupRestore:
+    def test_terminal_entries_skipped_on_restore(self, workflow_yaml):
+        """Terminal state entries should not be restored on startup."""
+        import json
+        from stokowski.state import state_file_path
+
+        orch = _make_orch(workflow_yaml)
+        state_path = state_file_path(workflow_yaml)
+        state_data = {
+            "issues": {
+                "active-1": {"current_state": "implement", "run": 1, "session_id": "sess-1"},
+                "done-1": {"current_state": "done", "run": 1, "session_id": "sess-2"},
+            },
+            "total_tokens": 0,
+        }
+        state_path.write_text(json.dumps(state_data))
+
+        orch2 = _make_orch(workflow_yaml)
+        _restore_state(orch2)
+        assert "active-1" in orch2._issue_current_state
+        assert "done-1" not in orch2._issue_current_state
+
+    def test_stale_entries_pruned_by_gc(self, workflow_yaml):
+        """Entries older than state_gc_days should be pruned."""
+        import json
+        from datetime import datetime, timedelta, timezone
+        from stokowski.state import state_file_path
+
+        old_date = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        fresh_date = datetime.now(timezone.utc).isoformat()
+
+        state_path = state_file_path(workflow_yaml)
+        state_data = {
+            "issues": {
+                "old-1": {"current_state": "implement", "run": 1, "updated_at": old_date},
+                "fresh-1": {"current_state": "implement", "run": 1, "updated_at": fresh_date},
+            },
+            "total_tokens": 0,
+        }
+        state_path.write_text(json.dumps(state_data))
+
+        orch = _make_orch(workflow_yaml)
+        _restore_state(orch)
+        # Default gc_days=7, so 30-day-old entry should be pruned
+        assert "old-1" not in orch._issue_current_state
+        assert "fresh-1" in orch._issue_current_state
+
+    def test_entries_without_updated_at_preserved(self, workflow_yaml):
+        """Legacy entries without updated_at should not be pruned (migration safety)."""
+        import json
+        from stokowski.state import state_file_path
+
+        state_path = state_file_path(workflow_yaml)
+        state_data = {
+            "issues": {
+                "legacy-1": {"current_state": "implement", "run": 1},
+            },
+            "total_tokens": 0,
+        }
+        state_path.write_text(json.dumps(state_data))
+
+        orch = _make_orch(workflow_yaml)
+        _restore_state(orch)
+        assert "legacy-1" in orch._issue_current_state

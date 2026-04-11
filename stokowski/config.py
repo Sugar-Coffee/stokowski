@@ -81,6 +81,7 @@ class AgentConfig:
     max_retry_backoff_ms: int = 300_000
     max_concurrent_agents_by_state: dict[str, int] = field(default_factory=dict)
     max_concurrent_by_project: dict[str, int] = field(default_factory=dict)  # per-project per-state limits
+    state_gc_days: int = 7  # prune terminal issue entries from state file after N days (0 = disable)
 
 
 @dataclass
@@ -575,6 +576,7 @@ def parse_workflow_file(
         max_retry_backoff_ms=_coerce_int(a.get("max_retry_backoff_ms"), 300_000),
         max_concurrent_agents_by_state=a.get("max_concurrent_agents_by_state") or {},
         max_concurrent_by_project=a.get("max_concurrent_by_project") or {},
+        state_gc_days=_coerce_int(a.get("state_gc_days"), 7),
     )
 
     # Parse server
