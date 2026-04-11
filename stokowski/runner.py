@@ -65,11 +65,15 @@ def build_codex_args(
     prompt: str,
     workspace_path: Path,
 ) -> list[str]:
-    """Build the codex CLI argument list."""
-    args = ["codex", "--quiet"]
+    """Build the codex CLI argument list.
+
+    Uses `codex exec` for non-interactive headless mode with JSONL output.
+    """
+    args = ["codex", "exec"]
     if model:
         args.extend(["--model", model])
-    args.extend(["--prompt", prompt])
+    args.extend(["--json", "--dangerously-bypass-approvals-and-sandbox"])
+    args.append(prompt)
     return args
 
 
