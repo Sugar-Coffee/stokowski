@@ -3,6 +3,11 @@ name: CI
 on:
   pull_request:
     branches: [main]
+  # release-please PRs are created by GITHUB_TOKEN, which doesn't trigger
+  # pull_request workflows. This push trigger runs CI when release-please
+  # pushes to its branch, satisfying the required "test" check on the PR.
+  push:
+    branches: [release-please--branches--main]
 
 jobs:
   test:
