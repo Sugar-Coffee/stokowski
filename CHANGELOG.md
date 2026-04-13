@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+* add tmux-based runner modes for Claude Code, Codex, and Gemini when you want the native CLI UI instead of headless JSON mode ([4ea40ab](https://github.com/erikpr1994/stokowski/commit/4ea40ab))
+* add `fallback_models` support so rate-limited states can retry on backup models before failing over to backup runners ([817ccc1](https://github.com/erikpr1994/stokowski/commit/817ccc1))
+* auto-rework pending gates when a human replies to agent questions, with webhook fast-path support for comment events ([785a755](https://github.com/erikpr1994/stokowski/commit/785a755), [01fa9c8](https://github.com/erikpr1994/stokowski/commit/01fa9c8))
+
+### Bug Fixes
+
+* persist the latest active `session_id` to state during a live run so crash recovery resumes from the newest session instead of the previous turn ([b96af0b](https://github.com/erikpr1994/stokowski/commit/b96af0b))
+
 ## [0.7.0](https://github.com/erikpr1994/stokowski/compare/v0.6.0...v0.7.0) (2026-04-13)
 
 

@@ -31,7 +31,7 @@ Report completion. The orchestrator will advance to the implementation stage.
 Include this marker in your response so the orchestrator moves it to Blocked:
 
 ```
-<!-- stokowski:blocked -->
+STOKOWSKI:BLOCKED
 ```
 
 Also explain WHY in plain text before the marker — this will be posted as a comment
@@ -43,5 +43,5 @@ This issue requires design decisions that haven't been made yet. The description
 mentions "redesign the settings page" but there are no mockups, acceptance criteria,
 or specific requirements. A human needs to define what the new design should look like.
 
-<!-- stokowski:blocked -->
+STOKOWSKI:BLOCKED
 ```

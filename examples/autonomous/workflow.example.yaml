@@ -123,7 +123,7 @@ states:
 
   # ── 0. Triage ───────────────────────────────────────────────────────────
   # Fast evaluation: is this issue actionable by AI?
-  # If not → agent includes <!-- stokowski:blocked --> → moved to Blocked.
+  # If not → agent emits STOKOWSKI:BLOCKED → moved to Blocked.
   # Uses Haiku for speed and cost — triage is a simple yes/no decision.
   triage:
     type: agent
