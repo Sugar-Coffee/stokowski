@@ -97,6 +97,7 @@ class TestHandleAgentRework:
             await orch._handle_agent_rework(issue, attempt)
             mock_trans.assert_awaited_once_with(issue, "rework")
         assert orch._issue_state_runs[issue.id] == 2
+        assert orch._is_rework[issue.id] is True
 
     @pytest.mark.asyncio
     async def test_rework_max_exceeded_blocks(self, rework_yaml):
@@ -112,6 +113,7 @@ class TestHandleAgentRework:
         with patch.object(orch, "_move_to_blocked", new_callable=AsyncMock) as mock_block:
             await orch._handle_agent_rework(issue, attempt)
             mock_block.assert_awaited_once_with(issue, attempt)
+        assert issue.id not in orch._is_rework
 
     @pytest.mark.asyncio
     async def test_rework_no_transition_blocks(self, rework_yaml):

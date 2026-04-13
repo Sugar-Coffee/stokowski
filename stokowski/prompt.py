@@ -160,23 +160,13 @@ def build_lifecycle_section(
         lines.append("### Rework")
         lines.append("")
         lines.append(
-            "This is a **rework run**. A previous submission was reviewed "
-            "and sent back for changes."
+            f"This is a **rework run** (run {run}). A previous submission "
+            f"was reviewed and sent back for changes."
         )
         lines.append("")
-        if recent_comments:
-            lines.append("**Review comments:**")
-            lines.append("")
-            for comment in recent_comments:
-                body = comment.get("body", "").strip()
-                created = comment.get("createdAt", "")
-                if body:
-                    lines.append(f"> {body}")
-                    if created:
-                        lines.append(f"> — {created}")
-                    lines.append("")
         lines.append(
-            "Address the feedback above before resubmitting."
+            "Read the review comments on the issue to understand what needs "
+            "to change, then address the feedback before resubmitting."
         )
         lines.append("")
 

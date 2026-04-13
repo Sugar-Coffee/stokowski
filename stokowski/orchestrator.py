@@ -92,6 +92,7 @@ class Orchestrator:
         self._child_pids: set[int] = set()  # Track claude subprocess PIDs
         self._last_session_ids: dict[str, str] = {}  # issue_id -> last known session_id
         self._issue_needs_review: dict[str, bool] = {}  # issue_id -> STOKOWSKI:NEEDS_REVIEW flag
+        self._is_rework: dict[str, bool] = {}  # issue_id -> next dispatch is a rework run
         self._jinja = Environment(undefined=StrictUndefined)
         self._running = False
         self._last_issues: dict[str, Issue] = {}
@@ -564,6 +565,7 @@ class Orchestrator:
         # Increment run count and fire rework transition
         new_run = run + 1
         self._issue_state_runs[issue.id] = new_run
+        self._is_rework[issue.id] = True
         logger.info(
             f"Agent rework issue={issue.identifier} state={state_name} "
             f"rework_to={state_cfg.transitions['rework']} run={new_run}"
@@ -764,6 +766,7 @@ class Orchestrator:
                 await self._update_tracking(issue.id, make_gate_payload(state=gate_state, status="rework", rework_to=rework_to, run=new_run))
 
                 self._issue_current_state[issue.id] = rework_to
+                self._is_rework[issue.id] = True
 
                 active_state = self.cfg.linear_states.active
                 moved = await client.update_issue_state(issue.id, active_state)
@@ -843,6 +846,7 @@ class Orchestrator:
 
             self._pending_gates.pop(issue.id, None)
             self._issue_current_state[issue.id] = rework_to
+            self._is_rework[issue.id] = True
 
             active_state = self.cfg._states_cfg.active
             await client.update_issue_state(issue.id, active_state)
@@ -1502,6 +1506,9 @@ class Orchestrator:
             # Don't fetch comments — the agent reads them via MCP
             comments: list[dict] | None = None
 
+            # Consume rework flag (set by gate rework or agent rework)
+            is_rework = self._is_rework.pop(issue.id, False)
+
             return assemble_prompt(
                 cfg=self.cfg,
                 workflow_dir=str(self.workflow_path.parent),
@@ -1509,7 +1516,7 @@ class Orchestrator:
                 state_name=state_name,
                 state_cfg=state_cfg,
                 run=run,
-                is_rework=False,
+                is_rework=is_rework,
                 attempt=attempt_num or 1,
                 last_run_at=last_run_at,
                 comments=comments,
@@ -1531,6 +1538,8 @@ class Orchestrator:
             last_completed = self._last_completed_at.get(issue.id)
             last_run_at = last_completed.isoformat() if last_completed else None
 
+            is_rework = self._is_rework.pop(issue.id, False)
+
             return assemble_prompt(
                 cfg=self.cfg,
                 workflow_dir=str(self.workflow_path.parent),
@@ -1538,7 +1547,7 @@ class Orchestrator:
                 state_name=state_name,
                 state_cfg=state_cfg,
                 run=run,
-                is_rework=False,
+                is_rework=is_rework,
                 attempt=attempt_num or 1,
                 last_run_at=last_run_at,
                 comments=None,

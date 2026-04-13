@@ -176,18 +176,31 @@ class TestBuildLifecycleSection:
         assert "skip" in section
         assert "done" in section
 
-    def test_rework_section(self):
-        comments = [{"body": "Please fix the tests", "createdAt": "2026-01-01"}]
+    def test_rework_section_no_comments_injected(self):
+        """Rework section should instruct agent to read comments, not inject them."""
         section = build_lifecycle_section(
             issue=Issue(id="1", identifier="X", title="T"),
             state_name="implement",
             state_cfg=self._make_state_cfg(),
             linear_states=LinearStatesConfig(),
+            run=2,
             is_rework=True,
-            recent_comments=comments,
         )
-        assert "rework" in section.lower()
-        assert "fix the tests" in section
+        assert "rework run" in section.lower()
+        assert "run 2" in section
+        assert "Read the review comments" in section
+        # Comments should NOT be injected inline
+        assert "Review comments:" not in section
+
+    def test_rework_false_no_rework_section(self):
+        section = build_lifecycle_section(
+            issue=Issue(id="1", identifier="X", title="T"),
+            state_name="implement",
+            state_cfg=self._make_state_cfg(),
+            linear_states=LinearStatesConfig(),
+            is_rework=False,
+        )
+        assert "Rework" not in section
 
     def test_no_transitions(self):
         section = build_lifecycle_section(
