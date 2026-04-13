@@ -7,7 +7,14 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from stokowski.models import RunAttempt
-from stokowski.runner import _capture_stderr, _process_event, _process_gemini_event
+from stokowski.runner import (
+    _capture_stderr,
+    _extract_gemini_retry_delay_ms,
+    _format_gemini_process_error,
+    _process_event,
+    _process_gemini_event,
+    _summarize_stderr,
+)
 
 
 class TestLastMessageNotTruncated:
@@ -146,7 +153,7 @@ class TestCaptureStderr:
         proc.stderr = AsyncMock()
         proc.stderr.read = AsyncMock(return_value=long_err.encode())
         result = await _capture_stderr(proc, "DEV-1", workspace_path=tmp_path)
-        assert result.startswith("X" * 500)
+        assert result.startswith("..." + "X" * 500)
         assert "full output:" in result
         # Verify file was written
         log_dir = tmp_path / ".stokowski" / "logs"
@@ -160,3 +167,34 @@ class TestCaptureStderr:
         proc.stderr = None
         result = await _capture_stderr(proc, "DEV-1")
         assert result == ""
+
+
+class TestGeminiCliErrorFormatting:
+    def test_extract_gemini_retry_delay_ms(self):
+        stderr_output = "retryDelayMs: 68033648.177763,\nreason: 'QUOTA_EXHAUSTED'\n"
+        assert _extract_gemini_retry_delay_ms(stderr_output) == 68033648
+
+    def test_format_gemini_process_error_uses_api_details(self, tmp_path):
+        stderr_output = "\n".join(
+            [
+                "YOLO mode is enabled. All tool calls will be automatically approved.",
+                "Skill conflict detected: " + ("humanizer ..." * 80),
+                "cause: {",
+                "  code: 429,",
+                "  message: 'You have exhausted your capacity on this model. Your quota will reset after 18h53m53s.',",
+                "}",
+                "retryDelayMs: 68033648.177763,",
+                "reason: 'QUOTA_EXHAUSTED'",
+            ]
+        )
+        stderr_summary = _summarize_stderr(stderr_output, "DEV-1", tmp_path)
+
+        result = _format_gemini_process_error(1, stderr_output, stderr_summary)
+
+        assert result.startswith(
+            "Gemini API error QUOTA_EXHAUSTED (429): "
+            "You have exhausted your capacity on this model."
+        )
+        assert "Retry after 68033648ms." in result
+        assert "full output:" in result
+        assert "YOLO mode is enabled" not in result

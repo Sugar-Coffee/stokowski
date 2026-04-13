@@ -55,6 +55,8 @@ _RATE_LIMIT_PATTERNS = [
     "too many requests",
     "429",
     "quota exceeded",
+    "quota exhausted",
+    "quota_exhausted",
     "token limit",
     "overloaded",
     "capacity",
@@ -1492,6 +1494,40 @@ class Orchestrator:
                     env=agent_env,
                 )
 
+                # Fallback model chain on rate limit errors
+                if (
+                    attempt.status == "failed"
+                    and attempt.error
+                    and _is_rate_limit_error(attempt.error)
+                    and claude_cfg.fallback_models
+                ):
+                    import copy
+                    for fb_model in claude_cfg.fallback_models:
+                        logger.info(
+                            f"Rate limit on model {claude_cfg.model}, falling back to {fb_model} "
+                            f"issue={issue.identifier}"
+                        )
+                        fb_claude_cfg = copy.copy(claude_cfg)
+                        fb_claude_cfg.model = fb_model
+                        attempt.status = "pending"
+                        attempt.error = None
+                        attempt.retry_delay_ms = None
+                        attempt.session_id = None  # models might not share sessions
+                        attempt = await run_turn(
+                            runner_type=runner_type,
+                            claude_cfg=fb_claude_cfg,
+                            hooks_cfg=hooks_cfg,
+                            prompt=prompt,
+                            workspace_path=Path(attempt.workspace_path),
+                            issue=issue,
+                            attempt=attempt,
+                            on_event=self._on_agent_event,
+                            on_pid=self._on_child_pid,
+                            env=agent_env,
+                        )
+                        if attempt.status != "failed" or not _is_rate_limit_error(attempt.error or ""):
+                            break  # success or non-rate-limit failure
+
                 # Fallback runner chain on rate limit errors
                 if (
                     attempt.status == "failed"
@@ -1510,6 +1546,7 @@ class Orchestrator:
                         )
                         attempt.status = "pending"
                         attempt.error = None
+                        attempt.retry_delay_ms = None
                         attempt.session_id = None  # can't resume across runners
                         attempt = await run_turn(
                             runner_type=fb_runner,
@@ -1566,6 +1603,40 @@ class Orchestrator:
                         on_pid=self._on_child_pid,
                         env=agent_env,
                     )
+
+                    # Fallback model chain on rate limit errors
+                    if (
+                        attempt.status == "failed"
+                        and attempt.error
+                        and _is_rate_limit_error(attempt.error)
+                        and claude_cfg.fallback_models
+                    ):
+                        import copy
+                        for fb_model in claude_cfg.fallback_models:
+                            logger.info(
+                                f"Rate limit on model {claude_cfg.model}, falling back to {fb_model} "
+                                f"issue={issue.identifier}"
+                            )
+                            fb_claude_cfg = copy.copy(claude_cfg)
+                            fb_claude_cfg.model = fb_model
+                            attempt.status = "pending"
+                            attempt.error = None
+                            attempt.retry_delay_ms = None
+                            attempt.session_id = None  # models might not share sessions
+                            attempt = await run_turn(
+                                runner_type=runner_type,
+                                claude_cfg=fb_claude_cfg,
+                                hooks_cfg=hooks_cfg,
+                                prompt=prompt,
+                                workspace_path=Path(attempt.workspace_path),
+                                issue=issue,
+                                attempt=attempt,
+                                on_event=self._on_agent_event,
+                                on_pid=self._on_child_pid,
+                                env=agent_env,
+                            )
+                            if attempt.status != "failed" or not _is_rate_limit_error(attempt.error or ""):
+                                break  # success or non-rate-limit failure
 
                     # Persist state between turns (captures session_id)
                     if attempt.session_id:
@@ -1800,10 +1871,17 @@ class Orchestrator:
                 self._spawn_background(self._move_to_blocked(issue, attempt))
             else:
                 current_attempt = (attempt.attempt or 0) + 1
-                delay = min(
-                    10_000 * (2 ** (current_attempt - 1)),
-                    self.cfg.agent.max_retry_backoff_ms,
-                )
+                if (
+                    attempt.retry_delay_ms
+                    and attempt.retry_delay_ms > 0
+                    and _is_rate_limit_error(attempt.error or "")
+                ):
+                    delay = attempt.retry_delay_ms
+                else:
+                    delay = min(
+                        10_000 * (2 ** (current_attempt - 1)),
+                        self.cfg.agent.max_retry_backoff_ms,
+                    )
                 self._schedule_retry(
                     issue,
                     attempt_num=current_attempt,

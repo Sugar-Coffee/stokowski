@@ -41,6 +41,7 @@ class RunAttempt:
     session_id: str | None = None
     session_ids: list[str] = field(default_factory=list)  # all session IDs across turns
     error: str | None = None
+    retry_delay_ms: int | None = None
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0

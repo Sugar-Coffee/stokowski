@@ -178,6 +178,24 @@ class TestCircuitBreaker:
             orch._on_worker_exit(issue, attempt)
         assert issue.id not in orch._consecutive_failures
 
+    def test_rate_limit_failure_uses_explicit_retry_delay(self, workflow_yaml):
+        orch = _make_orch(workflow_yaml)
+        issue = _make_issue()
+        attempt = RunAttempt(
+            issue_id=issue.id,
+            issue_identifier=issue.identifier,
+            status="failed",
+            state_name="implement",
+            error="Gemini API error QUOTA_EXHAUSTED (429)",
+            retry_delay_ms=68_033_648,
+        )
+        orch.running[issue.id] = attempt
+
+        with patch.object(orch, "_schedule_retry") as mock_retry:
+            orch._on_worker_exit(issue, attempt)
+            mock_retry.assert_called_once()
+            assert mock_retry.call_args.kwargs["delay_ms"] == 68_033_648
+
 
 class TestSpawnBackground:
     @pytest.mark.asyncio
@@ -327,6 +345,9 @@ class TestIsRateLimitError:
 
     def test_overloaded_detected(self):
         assert _is_rate_limit_error("Service overloaded, try later") is True
+
+    def test_quota_exhausted_detected(self):
+        assert _is_rate_limit_error("Gemini API error QUOTA_EXHAUSTED (429)") is True
 
     def test_normal_error_not_rate_limit(self):
         assert _is_rate_limit_error("Syntax error in code") is False

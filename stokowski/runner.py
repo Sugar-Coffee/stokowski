@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -15,14 +16,17 @@ from .models import Issue, RunAttempt
 logger = logging.getLogger("stokowski.runner")
 
 _STDERR_SUMMARY_LIMIT = 500  # chars kept in attempt.error
+_GEMINI_CODE_RE = re.compile(r"code:\s*(\d+)")
+_GEMINI_MESSAGE_RE = re.compile(r"message:\s*'([^']+)'")
+_GEMINI_REASON_RE = re.compile(r"reason:\s*'([^']+)'")
+_GEMINI_RETRY_DELAY_RE = re.compile(r"retryDelayMs:\s*([0-9]+(?:\.[0-9]+)?)")
+_FULL_OUTPUT_RE = re.compile(r"\(full output: ([^)]+)\)")
 
 
-async def _capture_stderr(
+async def _read_stderr(
     proc: asyncio.subprocess.Process,
-    identifier: str,
-    workspace_path: Path | None = None,
 ) -> str:
-    """Read full stderr, write to log file, return truncated summary."""
+    """Read full stderr from a process."""
     stderr_output = ""
     if proc.stderr:
         try:
@@ -30,6 +34,17 @@ async def _capture_stderr(
             stderr_output = stderr_bytes.decode()
         except (asyncio.TimeoutError, Exception):
             pass
+    return stderr_output
+
+
+def _summarize_stderr(
+    stderr_output: str,
+    identifier: str,
+    workspace_path: Path | None = None,
+) -> str:
+    """Write full stderr to a log file when needed and return a summary."""
+    if not stderr_output:
+        return ""
 
     if stderr_output and len(stderr_output) > _STDERR_SUMMARY_LIMIT:
         # Write full stderr to log file
@@ -39,12 +54,77 @@ async def _capture_stderr(
             ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
             log_file = log_dir / f"{identifier}-{ts}.stderr"
             log_file.write_text(stderr_output)
-            summary = stderr_output[:_STDERR_SUMMARY_LIMIT]
-            return f"{summary}... (full output: {log_file})"
+            summary = stderr_output[-_STDERR_SUMMARY_LIMIT:]
+            return f"...{summary} (full output: {log_file})"
         except Exception:
             pass  # fall through to truncated output
 
-    return stderr_output[:_STDERR_SUMMARY_LIMIT]
+    return stderr_output[-_STDERR_SUMMARY_LIMIT:]
+
+
+async def _capture_stderr(
+    proc: asyncio.subprocess.Process,
+    identifier: str,
+    workspace_path: Path | None = None,
+) -> str:
+    """Read full stderr, write to log file, return truncated summary."""
+    stderr_output = await _read_stderr(proc)
+    return _summarize_stderr(stderr_output, identifier, workspace_path)
+
+
+def _extract_gemini_retry_delay_ms(stderr_output: str) -> int | None:
+    """Extract Gemini's suggested retry delay in milliseconds."""
+    match = _GEMINI_RETRY_DELAY_RE.search(stderr_output)
+    if not match:
+        return None
+    try:
+        return int(float(match.group(1)))
+    except ValueError:
+        return None
+
+
+def _format_gemini_process_error(
+    exit_code: int,
+    stderr_output: str,
+    stderr_summary: str,
+) -> str:
+    """Prefer Gemini API details over noisy CLI warnings in attempt.error."""
+    reason = None
+    match = _GEMINI_REASON_RE.search(stderr_output)
+    if match:
+        reason = match.group(1)
+
+    message = None
+    match = _GEMINI_MESSAGE_RE.search(stderr_output)
+    if match:
+        message = match.group(1)
+
+    code = None
+    match = _GEMINI_CODE_RE.search(stderr_output)
+    if match:
+        code = match.group(1)
+
+    retry_delay_ms = _extract_gemini_retry_delay_ms(stderr_output)
+    log_path = None
+    match = _FULL_OUTPUT_RE.search(stderr_summary)
+    if match:
+        log_path = match.group(1)
+
+    if reason or message or code:
+        detail = message or stderr_summary or "Gemini exited with an error."
+        prefix = "Gemini API error"
+        if reason:
+            prefix += f" {reason}"
+        if code:
+            prefix += f" ({code})"
+        formatted = f"{prefix}: {detail}"
+        if retry_delay_ms:
+            formatted += f" Retry after {retry_delay_ms}ms."
+        if log_path:
+            formatted += f" full output: {log_path}"
+        return formatted
+
+    return f"Exit code {exit_code}: {stderr_summary}"
 
 
 # Callback type for events from the runner to the orchestrator
@@ -699,9 +779,15 @@ async def run_gemini_turn(
         if proc.returncode == 0:
             attempt.status = "succeeded"
         else:
-            stderr_output = await _capture_stderr(proc, issue.identifier, workspace_path)
+            stderr_output = await _read_stderr(proc)
+            stderr_summary = _summarize_stderr(
+                stderr_output, issue.identifier, workspace_path
+            )
             attempt.status = "failed"
-            attempt.error = f"Exit code {proc.returncode}: {stderr_output}"
+            attempt.retry_delay_ms = _extract_gemini_retry_delay_ms(stderr_output)
+            attempt.error = _format_gemini_process_error(
+                proc.returncode, stderr_output, stderr_summary
+            )
 
     # Run after_run hook
     if hooks_cfg.after_run:

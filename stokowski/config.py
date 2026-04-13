@@ -68,6 +68,7 @@ class ClaudeConfig:
         default_factory=lambda: ["Bash", "Read", "Edit", "Write", "Glob", "Grep"]
     )
     model: str | None = None
+    fallback_models: list[str] = field(default_factory=list)
     max_turns: int = 20
     turn_timeout_ms: int = 3_600_000
     stall_timeout_ms: int = 300_000
@@ -155,6 +156,7 @@ class StateConfig:
     runner: str = "claude"
     fallback_runners: list[str] = field(default_factory=list)  # e.g. ["gemini", "codex"] — tried in order on rate limit errors
     model: str | None = None
+    fallback_models: list[str] = field(default_factory=list)
     max_turns: int | None = None
     turn_timeout_ms: int | None = None
     stall_timeout_ms: int | None = None
@@ -370,6 +372,7 @@ def _parse_state_config(name: str, raw: dict[str, Any]) -> StateConfig:
         runner=str(raw.get("runner", "claude")),
         fallback_runners=_coerce_list(raw.get("fallback_runners")),
         model=raw.get("model"),
+        fallback_models=_coerce_list(raw.get("fallback_models")),
         max_turns=raw.get("max_turns"),
         turn_timeout_ms=raw.get("turn_timeout_ms"),
         stall_timeout_ms=raw.get("stall_timeout_ms"),
@@ -396,6 +399,7 @@ def merge_state_config(
         permission_mode=state.permission_mode or root_claude.permission_mode,
         allowed_tools=state.allowed_tools if state.allowed_tools is not None else root_claude.allowed_tools,
         model=state.model or root_claude.model,
+        fallback_models=state.fallback_models or root_claude.fallback_models,
         max_turns=state.max_turns if state.max_turns is not None else root_claude.max_turns,
         turn_timeout_ms=state.turn_timeout_ms if state.turn_timeout_ms is not None else root_claude.turn_timeout_ms,
         stall_timeout_ms=state.stall_timeout_ms if state.stall_timeout_ms is not None else root_claude.stall_timeout_ms,
@@ -565,6 +569,7 @@ def parse_workflow_file(
         allowed_tools=_coerce_list(c.get("allowed_tools"))
         or ["Bash", "Read", "Edit", "Write", "Glob", "Grep"],
         model=c.get("model"),
+        fallback_models=_coerce_list(c.get("fallback_models")) or [],
         max_turns=_coerce_int(c.get("max_turns"), 20),
         turn_timeout_ms=_coerce_int(c.get("turn_timeout_ms"), 3_600_000),
         stall_timeout_ms=_coerce_int(c.get("stall_timeout_ms"), 300_000),
