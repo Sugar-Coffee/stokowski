@@ -165,6 +165,7 @@ class StateConfig:
     rework_to: str | None = None     # gate: target state on rework; agent: unused (use transitions.rework)
     max_rework: int | None = None    # gate + agent: max rework cycles before blocking
     auto_approve: str = "never"      # gate only: "never", "when_no_questions", "always"
+    rework_on_comment: bool = False  # gate only: trigger rework when new comments arrive
     transitions: dict[str, str] = field(default_factory=dict)
     hooks: HooksConfig | None = None
     # PR-driven transitions for gates — maps GitHub PR events to gate actions
@@ -379,6 +380,7 @@ def _parse_state_config(name: str, raw: dict[str, Any]) -> StateConfig:
         rework_to=raw.get("rework_to"),
         max_rework=raw.get("max_rework"),
         auto_approve=str(raw.get("auto_approve", "never")),
+        rework_on_comment=bool(raw.get("rework_on_comment", False)),
         transitions=raw.get("transitions") or {},
         hooks=_parse_hooks(hooks_raw) if hooks_raw else None,
         pr_triggers=raw.get("pr_triggers") or {},
@@ -749,9 +751,21 @@ def validate_config(cfg: ServiceConfig) -> list[str]:
                     f"Gate state '{name}' has invalid auto_approve: '{sc.auto_approve}' "
                     f"(valid: {', '.join(sorted(valid_auto_approve))})"
                 )
+            # Validate rework_on_comment
+            if sc.rework_on_comment and not sc.rework_to:
+                errors.append(
+                    f"Gate state '{name}': rework_on_comment is true but rework_to is not set"
+                )
 
         elif sc.type == "terminal":
             has_terminal = True
+
+        # Warn if rework_on_comment is set on a non-gate state
+        if sc.rework_on_comment and sc.type != "gate":
+            log.warning(
+                "State '%s': rework_on_comment is set but state type is '%s' (only gates support this)",
+                name, sc.type,
+            )
 
         # Validate linear_state key (allow literal state names too)
         if sc.linear_state not in valid_linear_keys and sc.linear_state == sc.linear_state.lower():

@@ -30,6 +30,7 @@ from .tracker import TrackerClient
 from .prompt import assemble_prompt, build_lifecycle_section
 from .runner import run_agent_turn, run_turn
 from .tracking import (
+    get_comments_since,
     make_gate_payload,
     make_state_payload,
     parse_latest_tracking,
@@ -103,6 +104,7 @@ class Orchestrator:
         self._issue_current_state: dict[str, str] = {}   # issue_id -> internal state name
         self._issue_state_runs: dict[str, int] = {}       # issue_id -> run number for current state
         self._pending_gates: dict[str, str] = {}           # issue_id -> gate state name
+        self._gate_entered_at: dict[str, str] = {}         # issue_id -> ISO timestamp of gate entry
 
         # Schedule tracking
         self._last_schedule_fire: datetime | None = None
@@ -430,6 +432,7 @@ class Orchestrator:
             return
 
         self._pending_gates[issue.id] = state_name
+        self._gate_entered_at[issue.id] = datetime.now(timezone.utc).isoformat()
         self._issue_current_state[issue.id] = state_name
         # Release from running/claimed so it doesn't block slots
         self.running.pop(issue.id, None)
@@ -469,6 +472,7 @@ class Orchestrator:
 
         target = gate_cfg.transitions["approve"]
         self._pending_gates.pop(issue.id, None)
+        self._gate_entered_at.pop(issue.id, None)
         self._issue_current_state[issue.id] = target
 
         target_cfg = self.cfg.states.get(target)
@@ -549,6 +553,7 @@ class Orchestrator:
         self._issue_current_state.pop(issue.id, None)
         self._issue_state_runs.pop(issue.id, None)
         self._pending_gates.pop(issue.id, None)
+        self._gate_entered_at.pop(issue.id, None)
         self._last_session_ids.pop(issue.id, None)
         self.claimed.discard(issue.id)
 
@@ -668,6 +673,7 @@ class Orchestrator:
             self._issue_current_state.pop(issue.id, None)
             self._issue_state_runs.pop(issue.id, None)
             self._pending_gates.pop(issue.id, None)
+            self._gate_entered_at.pop(issue.id, None)
             self._last_session_ids.pop(issue.id, None)
             self.claimed.discard(issue.id)
             self.completed.add(issue.id)
@@ -715,6 +721,7 @@ class Orchestrator:
                 continue
 
             gate_state = self._pending_gates.pop(issue.id, None)
+            self._gate_entered_at.pop(issue.id, None)
             if not gate_state:
                 continue  # no gate tracked in memory — skip (no API call)
 
@@ -752,6 +759,7 @@ class Orchestrator:
                 continue
 
             gate_state = self._pending_gates.pop(issue.id, None)
+            self._gate_entered_at.pop(issue.id, None)
             if not gate_state:
                 continue  # no gate tracked in memory — skip (no API call)
 
@@ -793,6 +801,72 @@ class Orchestrator:
                     f"rework_to={rework_to} run={new_run}"
                 )
 
+        # Check for rework-on-comment gates
+        for issue_id, gate_state in list(self._pending_gates.items()):
+            if issue_id in self.running or issue_id in self.claimed:
+                continue
+
+            gate_cfg = self.cfg.states.get(gate_state)
+            if not gate_cfg or not gate_cfg.rework_on_comment:
+                continue
+            if not gate_cfg.rework_to:
+                continue
+
+            gate_timestamp = self._gate_entered_at.get(issue_id)
+            if not gate_timestamp:
+                continue
+
+            # Fetch comments and check for new human (non-tracking) comments
+            try:
+                comments = await client.fetch_comments(issue_id)
+            except Exception as e:
+                logger.warning(f"Failed to fetch comments for gate rework-on-comment {issue_id}: {e}")
+                continue
+
+            new_comments = get_comments_since(comments, gate_timestamp)
+            if not new_comments:
+                continue
+
+            # New human comments found — trigger rework
+            run = self._issue_state_runs.get(issue_id, 1)
+            max_rework = gate_cfg.max_rework
+            if max_rework is not None and run >= max_rework:
+                logger.warning(
+                    f"Gate {gate_state} max_rework={max_rework} exceeded for {issue_id}, "
+                    f"skipping rework-on-comment"
+                )
+                continue
+
+            new_run = run + 1
+            self._issue_state_runs[issue_id] = new_run
+
+            await self._update_tracking(
+                issue_id,
+                make_gate_payload(state=gate_state, status="rework", rework_to=gate_cfg.rework_to, run=new_run),
+            )
+
+            self._pending_gates.pop(issue_id, None)
+            self._gate_entered_at.pop(issue_id, None)
+            self._issue_current_state[issue_id] = gate_cfg.rework_to
+            self._is_rework[issue_id] = True
+
+            # Move issue back to active state
+            active_state = self.cfg.linear_states.active
+            issue_obj = self._last_issues.get(issue_id)
+            if issue_obj:
+                moved = await client.update_issue_state(issue_id, active_state)
+                if moved:
+                    issue_obj.state = active_state
+                logger.info(
+                    f"Gate rework-on-comment issue={issue_obj.identifier} "
+                    f"gate={gate_state} rework_to={gate_cfg.rework_to} run={new_run}"
+                )
+            else:
+                logger.info(
+                    f"Gate rework-on-comment issue_id={issue_id} "
+                    f"gate={gate_state} rework_to={gate_cfg.rework_to} run={new_run}"
+                )
+
     async def handle_pr_event(self, action: str, branch: str, pr_number: int, pr_url: str = ""):
         """Handle a GitHub PR event and trigger gate transitions if configured.
 
@@ -832,6 +906,7 @@ class Orchestrator:
             await self._update_tracking(issue.id, make_gate_payload(state=gate_state, status="approved", run=run))
 
             self._pending_gates.pop(issue.id, None)
+            self._gate_entered_at.pop(issue.id, None)
             self._issue_current_state[issue.id] = gate_state
             if "approve" in gate_cfg.transitions:
                 self._issue_current_state[issue.id] = gate_cfg.transitions["approve"]
@@ -858,6 +933,7 @@ class Orchestrator:
             await self._update_tracking(issue.id, make_gate_payload(state=gate_state, status="rework", rework_to=rework_to, run=new_run))
 
             self._pending_gates.pop(issue.id, None)
+            self._gate_entered_at.pop(issue.id, None)
             self._issue_current_state[issue.id] = rework_to
             self._is_rework[issue.id] = True
 
@@ -871,6 +947,7 @@ class Orchestrator:
             # Generic transition (e.g. "merged" → "done")
             target = gate_cfg.transitions[trigger_action]
             self._pending_gates.pop(issue.id, None)
+            self._gate_entered_at.pop(issue.id, None)
             self._issue_current_state[issue.id] = target
 
             target_cfg = self.cfg.states.get(target)
