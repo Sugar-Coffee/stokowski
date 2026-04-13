@@ -538,6 +538,38 @@ class Orchestrator:
         self._last_session_ids.pop(issue.id, None)
         self.claimed.discard(issue.id)
 
+    async def _handle_agent_rework(self, issue: Issue, attempt: RunAttempt):
+        """Handle agent-driven rework: fire the 'rework' transition with max_rework enforcement."""
+        state_name = attempt.state_name
+        state_cfg = self.cfg.states.get(state_name) if state_name else None
+
+        if not state_cfg or "rework" not in state_cfg.transitions:
+            logger.warning(
+                f"Agent emitted STOKOWSKI:REWORK but state '{state_name}' "
+                f"has no 'rework' transition for {issue.identifier} — treating as blocked"
+            )
+            await self._move_to_blocked(issue, attempt)
+            return
+
+        # Check max_rework
+        run = self._issue_state_runs.get(issue.id, 1)
+        if state_cfg.max_rework is not None and run >= state_cfg.max_rework:
+            logger.warning(
+                f"Max rework exceeded issue={issue.identifier} "
+                f"state={state_name} run={run} max={state_cfg.max_rework} — blocking"
+            )
+            await self._move_to_blocked(issue, attempt)
+            return
+
+        # Increment run count and fire rework transition
+        new_run = run + 1
+        self._issue_state_runs[issue.id] = new_run
+        logger.info(
+            f"Agent rework issue={issue.identifier} state={state_name} "
+            f"rework_to={state_cfg.transitions['rework']} run={new_run}"
+        )
+        await self._safe_transition(issue, "rework")
+
     async def _safe_transition(self, issue: Issue, transition_name: str):
         """Wrapper around _transition that logs errors instead of silently swallowing them."""
         try:
@@ -1624,6 +1656,9 @@ class Orchestrator:
         if attempt.status == "blocked":
             # Agent signaled it can't handle this issue — move to Blocked
             self._spawn_background(self._move_to_blocked(issue, attempt))
+        elif attempt.status == "rework":
+            # Agent signaled rework needed — fire "rework" transition if defined
+            self._spawn_background(self._handle_agent_rework(issue, attempt))
         elif attempt.status == "succeeded":
             if attempt.state_name and attempt.state_name in self.cfg.states:
                 # State machine mode: transition via "complete"

@@ -108,7 +108,7 @@ Parses `workflow.yaml`, `stokowski.yaml` (root config for multi-workflow), and l
 - `LinearStatesConfig` — maps logical state names (`todo`, `active`, `review`, `gate_approved`, `rework`, `blocked`, `terminal`) to actual Linear state names. Issues in the `todo` state are picked up and automatically moved to `active` on dispatch. Issues moved to `blocked` are released from the orchestrator.
 - `GitHubStatesConfig` — same logical mapping but for GitHub Issues (uses labels as state markers, with optional `close_on_terminal`)
 - `PromptsConfig` — global prompt file reference
-- `StateConfig` — a single state in the state machine: type, prompt path, linear_state key, runner, session mode, transitions, per-state overrides (model, max_turns, timeouts, hooks), gate-specific fields (rework_to, max_rework)
+- `StateConfig` — a single state in the state machine: type, prompt path, linear_state key, runner, session mode, transitions, per-state overrides (model, max_turns, timeouts, hooks), gate fields (rework_to, auto_approve), shared fields (max_rework — gates and agent states)
 - `RoutingRule` — maps Linear labels to entry states for label-based routing
 - `ScheduleConfig` — optional cron-based issue creation via external shell command with `{date}`/`{datetime}` placeholders
 
@@ -185,6 +185,8 @@ while running:
 **Reconciliation:** on each tick, fetches current states for all running issue IDs. If an issue moved to terminal state → cancel worker + clean workspace. If moved out of active states → cancel worker, release claim.
 
 **Blocked handling:** When a runner detects `STOKOWSKI:BLOCKED` in the agent's result text, `attempt.status` is set to `"blocked"`. On worker exit, `_move_to_blocked()` posts a comment with the reason, moves the issue to the Blocked Linear state, and releases all tracking. The workspace is preserved on block (not deleted).
+
+**Agent-driven rework:** When a runner detects `STOKOWSKI:REWORK` in the agent's result text, `attempt.status` is set to `"rework"`. On worker exit, `_handle_agent_rework()` checks: (1) the current state has a `rework` transition, (2) `max_rework` is not exceeded. If both pass, it increments the run count and fires the `rework` transition. If either fails, it falls back to `_move_to_blocked()`. This enables fully automated review → rework loops without gates.
 
 **Label-based routing:** `_resolve_current_state()` calls `cfg.entry_state_for_issue(labels)` for new issues (no tracking comments). If routing rules match the issue's labels, the issue enters the matched state instead of the default entry state.
 
@@ -393,4 +395,5 @@ Config: `ScheduleConfig` in `config.py`. Logic: `_check_schedule()` in `orchestr
 - **workflow.yaml is pure YAML**: No markdown front matter. The legacy `.md` format with `---` delimiters is still supported but `.yaml` is the canonical format.
 - **Prompt files use Jinja2 with silent undefined**: Missing variables become empty strings rather than raising errors. This is intentional — not all variables are available in every context.
 - **`STOKOWSKI:BLOCKED` marker**: Agents signal blocked status with the literal text `STOKOWSKI:BLOCKED` in their result output — not HTML comments (`<!-- stokowski:blocked -->`). The marker format changed in v0.5.0.
+- **`STOKOWSKI:REWORK` marker**: Agents signal rework needed with `STOKOWSKI:REWORK` in their result output. The orchestrator fires `transitions["rework"]` on the current state. If no `rework` transition exists or `max_rework` is exceeded, falls back to blocked behavior. `BLOCKED` takes priority over `REWORK` if both are present.
 - **Shared Linear client rate limiting**: In multi-workflow setups, all orchestrators share a single `LinearClient` with semaphore(1) + 1s minimum delay. Do not instantiate separate clients per workflow — this bypasses rate limiting and causes 429 errors.

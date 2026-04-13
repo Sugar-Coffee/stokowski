@@ -52,6 +52,83 @@ def _make_issue(**kwargs) -> Issue:
     return Issue(**defaults)
 
 
+class TestHandleAgentRework:
+    @pytest.fixture
+    def rework_yaml(self, tmp_path):
+        p = tmp_path / "workflow.yaml"
+        p.write_text(textwrap.dedent("""\
+            tracker:
+              kind: linear
+              api_key: test_key
+              team_key: DEV
+            states:
+              implement:
+                type: agent
+                prompt: prompts/impl.md
+                linear_state: active
+                transitions:
+                  complete: review
+              review:
+                type: agent
+                prompt: prompts/review.md
+                linear_state: active
+                max_rework: 3
+                transitions:
+                  complete: done
+                  rework: implement
+              done:
+                type: terminal
+                linear_state: terminal
+        """))
+        return p
+
+    @pytest.mark.asyncio
+    async def test_rework_fires_transition(self, rework_yaml):
+        orch = _make_orch(rework_yaml)
+        issue = _make_issue()
+        attempt = RunAttempt(
+            issue_id=issue.id, issue_identifier=issue.identifier,
+            status="rework", state_name="review",
+        )
+        orch._issue_current_state[issue.id] = "review"
+        orch._issue_state_runs[issue.id] = 1
+
+        with patch.object(orch, "_safe_transition", new_callable=AsyncMock) as mock_trans:
+            await orch._handle_agent_rework(issue, attempt)
+            mock_trans.assert_awaited_once_with(issue, "rework")
+        assert orch._issue_state_runs[issue.id] == 2
+
+    @pytest.mark.asyncio
+    async def test_rework_max_exceeded_blocks(self, rework_yaml):
+        orch = _make_orch(rework_yaml)
+        issue = _make_issue()
+        attempt = RunAttempt(
+            issue_id=issue.id, issue_identifier=issue.identifier,
+            status="rework", state_name="review",
+        )
+        orch._issue_current_state[issue.id] = "review"
+        orch._issue_state_runs[issue.id] = 3  # equals max_rework
+
+        with patch.object(orch, "_move_to_blocked", new_callable=AsyncMock) as mock_block:
+            await orch._handle_agent_rework(issue, attempt)
+            mock_block.assert_awaited_once_with(issue, attempt)
+
+    @pytest.mark.asyncio
+    async def test_rework_no_transition_blocks(self, rework_yaml):
+        """Agent emits REWORK but state has no rework transition → fall back to blocked."""
+        orch = _make_orch(rework_yaml)
+        issue = _make_issue()
+        attempt = RunAttempt(
+            issue_id=issue.id, issue_identifier=issue.identifier,
+            status="rework", state_name="implement",  # implement has no rework transition
+        )
+        orch._issue_current_state[issue.id] = "implement"
+
+        with patch.object(orch, "_move_to_blocked", new_callable=AsyncMock) as mock_block:
+            await orch._handle_agent_rework(issue, attempt)
+            mock_block.assert_awaited_once_with(issue, attempt)
+
+
 class TestSpawnBackground:
     @pytest.mark.asyncio
     async def test_task_added_and_cleaned_up(self, workflow_yaml):

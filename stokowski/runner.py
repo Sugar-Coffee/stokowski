@@ -469,9 +469,11 @@ def _process_event(
         result_text = event.get("result", "")
         if isinstance(result_text, str) and result_text:
             attempt.last_message = result_text
-            # Detect blocked signal from agent
+            # Detect signals from agent
             if "STOKOWSKI:BLOCKED" in result_text:
                 attempt.status = "blocked"
+            elif "STOKOWSKI:REWORK" in result_text:
+                attempt.status = "rework"
             if "STOKOWSKI:NEEDS_REVIEW" in result_text:
                 attempt.needs_review = True
 
@@ -531,6 +533,8 @@ def _process_gemini_event(
             attempt.last_message = content
             if "STOKOWSKI:BLOCKED" in content:
                 attempt.status = "blocked"
+            elif "STOKOWSKI:REWORK" in content:
+                attempt.status = "rework"
             if "STOKOWSKI:NEEDS_REVIEW" in content:
                 attempt.needs_review = True
 

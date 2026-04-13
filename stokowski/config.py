@@ -161,8 +161,8 @@ class StateConfig:
     permission_mode: str | None = None
     allowed_tools: list[str] | None = None
     max_concurrent: int | None = None  # per-state concurrency limit (overrides agent.max_concurrent_agents_by_state)
-    rework_to: str | None = None     # gate only
-    max_rework: int | None = None    # gate only
+    rework_to: str | None = None     # gate: target state on rework; agent: unused (use transitions.rework)
+    max_rework: int | None = None    # gate + agent: max rework cycles before blocking
     auto_approve: str = "never"      # gate only: "never", "when_no_questions", "always"
     transitions: dict[str, str] = field(default_factory=dict)
     hooks: HooksConfig | None = None
