@@ -177,6 +177,43 @@ class TestReworkOnCommentTriggersRework:
         assert orch._issue_state_runs[issue.id] == 2
         mock_client.update_issue_state.assert_awaited()
 
+    @pytest.mark.asyncio
+    async def test_comment_webhook_triggers_rework_without_fetching_comments(self, gate_rework_yaml):
+        """Webhook comment events should trigger the same rework path directly."""
+        orch = _make_orch(gate_rework_yaml(rework_on_comment=True))
+        issue = _make_issue()
+
+        mock_client = AsyncMock()
+        mock_client.fetch_issues_by_states = AsyncMock(return_value=[])
+        mock_client.fetch_comments = AsyncMock(return_value=[])
+        mock_client.update_issue_state = AsyncMock(return_value=True)
+
+        gate_time = datetime.now(timezone.utc) - timedelta(minutes=5)
+        comment_time = datetime.now(timezone.utc) - timedelta(minutes=1)
+
+        orch._tracker = mock_client
+        orch._running = True
+        orch._pending_gates[issue.id] = "review"
+        orch._gate_entered_at[issue.id] = gate_time.isoformat()
+        orch._issue_state_runs[issue.id] = 1
+        orch._last_issues[issue.id] = issue
+
+        handled = await orch.handle_tracker_comment_event(
+            issue.id,
+            comment_body="I've answered your question about the API design.",
+            comment_created_at=comment_time.isoformat(),
+            actor_type="user",
+        )
+
+        assert handled is True
+        assert issue.id not in orch._pending_gates
+        assert issue.id not in orch._gate_entered_at
+        assert orch._issue_current_state[issue.id] == "implement"
+        assert orch._is_rework[issue.id] is True
+        assert orch._issue_state_runs[issue.id] == 2
+        mock_client.fetch_comments.assert_not_awaited()
+        mock_client.update_issue_state.assert_awaited()
+
 
 class TestReworkOnCommentNoNewComments:
     @pytest.mark.asyncio
@@ -214,6 +251,36 @@ class TestReworkOnCommentNoNewComments:
         assert orch._issue_current_state.get(issue.id) != "implement"
         assert issue.id not in orch._is_rework
 
+    @pytest.mark.asyncio
+    async def test_comment_webhook_ignores_old_comment(self, gate_rework_yaml):
+        """Webhook comments before gate entry should not trigger rework."""
+        orch = _make_orch(gate_rework_yaml(rework_on_comment=True))
+        issue = _make_issue()
+
+        mock_client = AsyncMock()
+        mock_client.update_issue_state = AsyncMock(return_value=True)
+        orch._tracker = mock_client
+        orch._running = True
+
+        comment_time = datetime.now(timezone.utc) - timedelta(minutes=10)
+        gate_time = datetime.now(timezone.utc) - timedelta(minutes=5)
+
+        orch._pending_gates[issue.id] = "review"
+        orch._gate_entered_at[issue.id] = gate_time.isoformat()
+        orch._issue_state_runs[issue.id] = 1
+        orch._last_issues[issue.id] = issue
+
+        handled = await orch.handle_tracker_comment_event(
+            issue.id,
+            comment_body="Some old answer",
+            comment_created_at=comment_time.isoformat(),
+            actor_type="user",
+        )
+
+        assert handled is False
+        assert issue.id in orch._pending_gates
+        mock_client.update_issue_state.assert_not_awaited()
+
 
 class TestReworkOnCommentMaxReworkExceeded:
     @pytest.mark.asyncio
@@ -248,6 +315,36 @@ class TestReworkOnCommentMaxReworkExceeded:
         # Should still be pending (max_rework exceeded)
         assert issue.id in orch._pending_gates
         assert orch._issue_state_runs[issue.id] == 2  # unchanged
+
+    @pytest.mark.asyncio
+    async def test_comment_webhook_ignores_non_user_actor(self, gate_rework_yaml):
+        """Webhook comments from integrations should not trigger rework."""
+        orch = _make_orch(gate_rework_yaml(rework_on_comment=True))
+        issue = _make_issue()
+
+        mock_client = AsyncMock()
+        mock_client.update_issue_state = AsyncMock(return_value=True)
+        orch._tracker = mock_client
+        orch._running = True
+
+        gate_time = datetime.now(timezone.utc) - timedelta(minutes=5)
+        comment_time = datetime.now(timezone.utc) - timedelta(minutes=1)
+
+        orch._pending_gates[issue.id] = "review"
+        orch._gate_entered_at[issue.id] = gate_time.isoformat()
+        orch._issue_state_runs[issue.id] = 1
+        orch._last_issues[issue.id] = issue
+
+        handled = await orch.handle_tracker_comment_event(
+            issue.id,
+            comment_body="Automated note",
+            comment_created_at=comment_time.isoformat(),
+            actor_type="integration",
+        )
+
+        assert handled is False
+        assert issue.id in orch._pending_gates
+        mock_client.update_issue_state.assert_not_awaited()
 
 
 class TestReworkOnCommentDisabled:

@@ -1393,6 +1393,18 @@ def create_app(orchestrator: Orchestrator) -> FastAPI:
         # Only react to issue state changes and new issues
         event_type = payload.get("type")
         action = payload.get("action")
+        if event_type == "Comment" and action == "create":
+            comment = payload.get("data", {}) or {}
+            asyncio.create_task(
+                orchestrator.handle_tracker_comment_event(
+                    comment.get("issueId", ""),
+                    comment_body=comment.get("body", ""),
+                    comment_created_at=comment.get("createdAt"),
+                    actor_type=(payload.get("actor", {}) or {}).get("type", ""),
+                )
+            )
+            return JSONResponse({"ok": True, "action": "comment_handled"})
+
         if event_type != "Issue" or action not in ("update", "create"):
             return JSONResponse({"ok": True, "action": "ignored"})
 
@@ -1555,6 +1567,29 @@ def create_app_multi(manager) -> FastAPI:
             payload = await request.json()
         except Exception:
             return JSONResponse({"error": "invalid json"}, status_code=400)
+
+        event_type = payload.get("type")
+        action = payload.get("action")
+        if event_type == "Comment" and action == "create":
+            comment = payload.get("data", {}) or {}
+            issue_id = comment.get("issueId", "")
+            targets = []
+            for orch in manager.orchestrators.values():
+                if issue_id in orch._pending_gates:
+                    targets = [orch]
+                    break
+            if not targets:
+                targets = list(manager.orchestrators.values())
+            for orch in targets:
+                asyncio.create_task(
+                    orch.handle_tracker_comment_event(
+                        issue_id,
+                        comment_body=comment.get("body", ""),
+                        comment_created_at=comment.get("createdAt"),
+                        actor_type=(payload.get("actor", {}) or {}).get("type", ""),
+                    )
+                )
+            return JSONResponse({"ok": True, "action": "comment_handled"})
 
         # Route by project slug from payload
         project_slug = (

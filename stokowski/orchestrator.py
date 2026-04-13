@@ -592,6 +592,112 @@ class Orchestrator:
         )
         await self._safe_transition(issue, "rework")
 
+    async def _trigger_gate_rework(
+        self,
+        issue_id: str,
+        gate_state: str,
+        gate_cfg: StateConfig,
+        *,
+        reason: str,
+    ) -> bool:
+        """Move a pending gate back to its rework target with shared safeguards."""
+        rework_to = gate_cfg.rework_to
+        if not rework_to:
+            logger.warning(f"Gate {gate_state} has no rework_to target, skipping")
+            return False
+
+        run = self._issue_state_runs.get(issue_id, 1)
+        max_rework = gate_cfg.max_rework
+        if max_rework is not None and run >= max_rework:
+            await self._update_tracking(
+                issue_id,
+                make_gate_payload(state=gate_state, status="escalated", run=run),
+            )
+            identifier = self._last_issues.get(
+                issue_id, Issue(id=issue_id, identifier=issue_id, title="")
+            ).identifier
+            logger.warning(
+                f"Max rework exceeded issue={identifier} "
+                f"gate={gate_state} run={run} max={max_rework} reason={reason}"
+            )
+            return False
+
+        new_run = run + 1
+        self._issue_state_runs[issue_id] = new_run
+        await self._update_tracking(
+            issue_id,
+            make_gate_payload(
+                state=gate_state,
+                status="rework",
+                rework_to=rework_to,
+                run=new_run,
+            ),
+        )
+
+        self._pending_gates.pop(issue_id, None)
+        self._gate_entered_at.pop(issue_id, None)
+        self._issue_current_state[issue_id] = rework_to
+        self._is_rework[issue_id] = True
+
+        issue = self._last_issues.get(issue_id)
+        active_state = self.cfg.linear_states.active
+        moved = await self._ensure_tracker_client().update_issue_state(issue_id, active_state)
+        if moved and issue:
+            issue.state = active_state
+        elif not moved:
+            logger.warning(
+                f"Failed to move {(issue.identifier if issue else issue_id)} "
+                f"to active after {reason}"
+            )
+
+        logger.info(
+            f"Gate {reason} issue={(issue.identifier if issue else issue_id)} "
+            f"gate={gate_state} rework_to={rework_to} run={new_run}"
+        )
+        return True
+
+    async def handle_tracker_comment_event(
+        self,
+        issue_id: str,
+        *,
+        comment_body: str = "",
+        comment_created_at: str | None = None,
+        actor_type: str = "",
+    ) -> bool:
+        """Fast-path gate rework when a fresh human comment arrives via webhook."""
+        if not self._running or not issue_id:
+            return False
+
+        gate_state = self._pending_gates.get(issue_id)
+        if not gate_state:
+            return False
+
+        gate_cfg = self.cfg.states.get(gate_state)
+        if not gate_cfg or not gate_cfg.rework_on_comment or not gate_cfg.rework_to:
+            return False
+
+        if actor_type.lower() != "user":
+            return False
+
+        if "<!-- stokowski:" in comment_body:
+            return False
+
+        gate_entered_at = self._gate_entered_at.get(issue_id)
+        if not gate_entered_at:
+            return False
+
+        comment_dt = _parse_dt(comment_created_at) if comment_created_at else None
+        gate_dt = _parse_dt(gate_entered_at)
+        if comment_dt and gate_dt and comment_dt <= gate_dt:
+            return False
+
+        return await self._trigger_gate_rework(
+            issue_id,
+            gate_state,
+            gate_cfg,
+            reason="rework-on-comment",
+        )
+
     async def _safe_transition(self, issue: Issue, transition_name: str):
         """Wrapper around _transition that logs errors instead of silently swallowing them."""
         try:
@@ -767,40 +873,14 @@ class Orchestrator:
 
             if gate_state:
                 gate_cfg = self.cfg.states.get(gate_state)
-                rework_to = gate_cfg.rework_to if gate_cfg else ""
-                if not rework_to:
-                    logger.warning(f"Gate {gate_state} has no rework_to target, skipping")
+                if not gate_cfg:
                     continue
-
-                # Check max_rework
-                run = self._issue_state_runs.get(issue.id, 1)
-                max_rework = gate_cfg.max_rework if gate_cfg else None
-                if max_rework is not None and run >= max_rework:
-                    # Exceeded max rework — post escalated comment, don't transition
-                    await self._update_tracking(issue.id, make_gate_payload(state=gate_state, status="escalated", run=run))
-                    logger.warning(
-                        f"Max rework exceeded issue={issue.identifier} "
-                        f"gate={gate_state} run={run} max={max_rework}"
-                    )
-                    continue
-
-                new_run = run + 1
-                self._issue_state_runs[issue.id] = new_run
-                await self._update_tracking(issue.id, make_gate_payload(state=gate_state, status="rework", rework_to=rework_to, run=new_run))
-
-                self._issue_current_state[issue.id] = rework_to
-                self._is_rework[issue.id] = True
-
-                active_state = self.cfg.linear_states.active
-                moved = await client.update_issue_state(issue.id, active_state)
-                if moved:
-                    issue.state = active_state
-                else:
-                    logger.warning(f"Failed to move {issue.identifier} to active after rework")
                 self._last_issues[issue.id] = issue
-                logger.info(
-                    f"Rework issue={issue.identifier} gate={gate_state} "
-                    f"rework_to={rework_to} run={new_run}"
+                await self._trigger_gate_rework(
+                    issue.id,
+                    gate_state,
+                    gate_cfg,
+                    reason="rework",
                 )
 
         # Check for rework-on-comment gates
@@ -829,45 +909,12 @@ class Orchestrator:
             if not new_comments:
                 continue
 
-            # New human comments found — trigger rework
-            run = self._issue_state_runs.get(issue_id, 1)
-            max_rework = gate_cfg.max_rework
-            if max_rework is not None and run >= max_rework:
-                logger.warning(
-                    f"Gate {gate_state} max_rework={max_rework} exceeded for {issue_id}, "
-                    f"skipping rework-on-comment"
-                )
-                continue
-
-            new_run = run + 1
-            self._issue_state_runs[issue_id] = new_run
-
-            await self._update_tracking(
+            await self._trigger_gate_rework(
                 issue_id,
-                make_gate_payload(state=gate_state, status="rework", rework_to=gate_cfg.rework_to, run=new_run),
+                gate_state,
+                gate_cfg,
+                reason="rework-on-comment",
             )
-
-            self._pending_gates.pop(issue_id, None)
-            self._gate_entered_at.pop(issue_id, None)
-            self._issue_current_state[issue_id] = gate_cfg.rework_to
-            self._is_rework[issue_id] = True
-
-            # Move issue back to active state
-            active_state = self.cfg.linear_states.active
-            issue_obj = self._last_issues.get(issue_id)
-            if issue_obj:
-                moved = await client.update_issue_state(issue_id, active_state)
-                if moved:
-                    issue_obj.state = active_state
-                logger.info(
-                    f"Gate rework-on-comment issue={issue_obj.identifier} "
-                    f"gate={gate_state} rework_to={gate_cfg.rework_to} run={new_run}"
-                )
-            else:
-                logger.info(
-                    f"Gate rework-on-comment issue_id={issue_id} "
-                    f"gate={gate_state} rework_to={gate_cfg.rework_to} run={new_run}"
-                )
 
     async def handle_pr_event(self, action: str, branch: str, pr_number: int, pr_url: str = ""):
         """Handle a GitHub PR event and trigger gate transitions if configured.
