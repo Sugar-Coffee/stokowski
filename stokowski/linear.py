@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime
 
 import httpx
@@ -10,6 +11,15 @@ import httpx
 from .models import BlockerRef, Issue
 
 logger = logging.getLogger("stokowski.linear")
+
+# Linear issue IDs are UUIDs; identifiers are TEAM-NNN (e.g., DEV-123)
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+_TEAM_ID_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
+
+
+def _is_linear_id(value: str) -> bool:
+    """Check if a value is a valid Linear issue ID (UUID) or identifier (TEAM-NNN)."""
+    return bool(_UUID_RE.match(value) or _TEAM_ID_RE.match(value))
 
 # ---------------------------------------------------------------------------
 # GraphQL queries — project-scoped (original)
@@ -367,7 +377,12 @@ class LinearClient:
         if not issue_ids:
             return {}
 
-        data = await self._graphql(ISSUES_BY_IDS_QUERY, {"ids": issue_ids})
+        # Filter out non-Linear IDs (e.g., pr:3440)
+        linear_ids = [i for i in issue_ids if _is_linear_id(i)]
+        if not linear_ids:
+            return {}
+
+        data = await self._graphql(ISSUES_BY_IDS_QUERY, {"ids": linear_ids})
         result = {}
         for node in data.get("issues", {}).get("nodes", []):
             if node and node.get("id") and node.get("state"):
@@ -419,6 +434,9 @@ class LinearClient:
 
     async def post_comment(self, issue_id: str, body: str) -> bool:
         """Post a comment on a Linear issue. Returns True on success."""
+        if not _is_linear_id(issue_id):
+            logger.debug("Skipping comment for non-Linear identifier: %s", issue_id)
+            return False
         try:
             data = await self._graphql(
                 COMMENT_CREATE_MUTATION,
@@ -431,6 +449,8 @@ class LinearClient:
 
     async def fetch_comments(self, issue_id: str) -> list[dict]:
         """Fetch all comments on a Linear issue. Returns list of {id, body, createdAt}."""
+        if not _is_linear_id(issue_id):
+            return []
         try:
             data = await self._graphql(COMMENTS_QUERY, {"issueId": issue_id})
             issue = data.get("issue", {})
@@ -441,6 +461,9 @@ class LinearClient:
 
     async def update_issue_state(self, issue_id: str, state_name: str) -> bool:
         """Move an issue to a new state by name. Returns True on success."""
+        if not _is_linear_id(issue_id):
+            logger.debug("Skipping state update for non-Linear identifier: %s", issue_id)
+            return False
         try:
             # Get team and its workflow states in one query
             data = await self._graphql(
@@ -482,6 +505,8 @@ class LinearClient:
 
     async def fetch_issue_description(self, issue_id: str) -> str:
         """Fetch the issue description."""
+        if not _is_linear_id(issue_id):
+            return ""
         try:
             data = await self._graphql(
                 'query($id: String!) { issue(id: $id) { description } }',
@@ -494,6 +519,8 @@ class LinearClient:
 
     async def update_issue_description(self, issue_id: str, description: str) -> bool:
         """Update the issue description."""
+        if not _is_linear_id(issue_id):
+            return False
         try:
             data = await self._graphql(
                 'mutation($id: String!, $desc: String!) { issueUpdate(id: $id, input: { description: $desc }) { success } }',
