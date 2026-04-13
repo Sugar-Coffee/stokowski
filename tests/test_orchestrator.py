@@ -739,3 +739,123 @@ class TestStartupRestore:
         assert "never-ran" not in orch._issue_current_state
         assert "has-session" in orch._issue_current_state
         assert "run-2" in orch._issue_current_state
+
+
+class TestSessionIdPersistence:
+    """Tests for session_id persistence during active agent runs (#151)."""
+
+    def test_session_id_persisted_on_result_event(self, workflow_yaml):
+        """When a result event with session_id arrives, _last_session_ids is updated
+        and _save_state() is called immediately."""
+        orch = _make_orch(workflow_yaml)
+        issue = _make_issue()
+        attempt = RunAttempt(
+            issue_id=issue.id, issue_identifier=issue.identifier,
+            status="running", state_name="implement",
+        )
+        orch.running[issue.id] = attempt
+
+        with patch.object(orch, "_save_state") as mock_save:
+            orch._on_agent_event(
+                issue.identifier,
+                "result",
+                {"session_id": "sess-abc", "type": "result"},
+            )
+            mock_save.assert_called_once()
+        assert orch._last_session_ids[issue.id] == "sess-abc"
+
+    def test_session_id_not_persisted_without_session_id(self, workflow_yaml):
+        """A result event without session_id should not trigger a save."""
+        orch = _make_orch(workflow_yaml)
+        issue = _make_issue()
+        attempt = RunAttempt(
+            issue_id=issue.id, issue_identifier=issue.identifier,
+            status="running", state_name="implement",
+        )
+        orch.running[issue.id] = attempt
+
+        with patch.object(orch, "_save_state") as mock_save:
+            orch._on_agent_event(
+                issue.identifier,
+                "result",
+                {"type": "result"},  # no session_id
+            )
+            mock_save.assert_not_called()
+        assert issue.id not in orch._last_session_ids
+
+    def test_non_result_event_does_not_persist(self, workflow_yaml):
+        """Non-result events (assistant, tool_use) should not trigger persistence."""
+        orch = _make_orch(workflow_yaml)
+        issue = _make_issue()
+        attempt = RunAttempt(
+            issue_id=issue.id, issue_identifier=issue.identifier,
+            status="running", state_name="implement",
+        )
+        orch.running[issue.id] = attempt
+
+        with patch.object(orch, "_save_state") as mock_save:
+            orch._on_agent_event(
+                issue.identifier,
+                "assistant",
+                {"type": "assistant", "session_id": "sess-abc"},
+            )
+            mock_save.assert_not_called()
+        assert issue.id not in orch._last_session_ids
+
+    def test_session_id_persisted_between_turns(self, workflow_yaml):
+        """In multi-turn legacy mode, state is saved between turns
+        when session_id is present on the attempt."""
+        from stokowski.state import state_file_path
+
+        orch = _make_orch(workflow_yaml)
+        orch._state_path = state_file_path(workflow_yaml)
+        issue = _make_issue()
+        attempt = RunAttempt(
+            issue_id=issue.id, issue_identifier=issue.identifier,
+            status="succeeded", state_name="implement",
+            session_id="sess-turn1",
+        )
+        orch._issue_current_state[issue.id] = "implement"
+        orch._last_issues[issue.id] = issue
+
+        # Simulate what happens between turns: session_id is set,
+        # then the inter-turn persistence code runs
+        orch._last_session_ids[issue.id] = attempt.session_id
+        orch._save_state()
+
+        # Verify state file has the session_id
+        import json
+        data = json.loads(orch._state_path.read_text())
+        assert data["issues"][issue.id]["session_id"] == "sess-turn1"
+
+    def test_session_id_survives_crash_recovery(self, workflow_yaml):
+        """Session ID saved via _on_agent_event should be recoverable on restart."""
+        import json
+        from stokowski.state import state_file_path
+
+        orch = _make_orch(workflow_yaml)
+        orch._state_path = state_file_path(workflow_yaml)
+        issue = _make_issue()
+        attempt = RunAttempt(
+            issue_id=issue.id, issue_identifier=issue.identifier,
+            status="running", state_name="implement",
+        )
+        orch.running[issue.id] = attempt
+        orch._issue_current_state[issue.id] = "implement"
+        orch._last_issues[issue.id] = issue
+
+        # Simulate result event arriving mid-run
+        orch._on_agent_event(
+            issue.identifier,
+            "result",
+            {"session_id": "sess-crash", "type": "result"},
+        )
+
+        # Verify it's on disk
+        data = json.loads(orch._state_path.read_text())
+        assert data["issues"][issue.id]["session_id"] == "sess-crash"
+
+        # Simulate crash recovery: new orchestrator reads state
+        orch2 = _make_orch(workflow_yaml)
+        _restore_state(orch2)
+        assert orch2._last_session_ids[issue.id] == "sess-crash"

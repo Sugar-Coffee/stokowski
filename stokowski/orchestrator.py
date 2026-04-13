@@ -1567,6 +1567,11 @@ class Orchestrator:
                         env=agent_env,
                     )
 
+                    # Persist state between turns (captures session_id)
+                    if attempt.session_id:
+                        self._last_session_ids[issue.id] = attempt.session_id
+                        self._save_state()
+
                     if attempt.status != "succeeded":
                         break
 
@@ -1687,8 +1692,19 @@ class Orchestrator:
             self._child_pids.discard(pid)
 
     def _on_agent_event(self, identifier: str, event_type: str, event: dict):
-        """Callback for agent events."""
+        """Callback for agent events — persists session_id on result."""
         logger.debug(f"Agent event issue={identifier} type={event_type}")
+        if event_type == "result" and "session_id" in event:
+            session_id = event["session_id"]
+            for issue_id, attempt in self.running.items():
+                if attempt.issue_identifier == identifier:
+                    self._last_session_ids[issue_id] = session_id
+                    self._save_state()
+                    logger.info(
+                        f"Persisted session_id={session_id} "
+                        f"issue={identifier}"
+                    )
+                    break
 
     def _on_worker_exit(self, issue: Issue, attempt: RunAttempt):
         """Handle worker completion."""
