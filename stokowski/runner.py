@@ -14,6 +14,39 @@ from .models import Issue, RunAttempt
 
 logger = logging.getLogger("stokowski.runner")
 
+_STDERR_SUMMARY_LIMIT = 500  # chars kept in attempt.error
+
+
+async def _capture_stderr(
+    proc: asyncio.subprocess.Process,
+    identifier: str,
+    workspace_path: Path | None = None,
+) -> str:
+    """Read full stderr, write to log file, return truncated summary."""
+    stderr_output = ""
+    if proc.stderr:
+        try:
+            stderr_bytes = await asyncio.wait_for(proc.stderr.read(), timeout=5)
+            stderr_output = stderr_bytes.decode()
+        except (asyncio.TimeoutError, Exception):
+            pass
+
+    if stderr_output and len(stderr_output) > _STDERR_SUMMARY_LIMIT:
+        # Write full stderr to log file
+        log_dir = (workspace_path or Path(".")) / ".stokowski" / "logs"
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+            log_file = log_dir / f"{identifier}-{ts}.stderr"
+            log_file.write_text(stderr_output)
+            summary = stderr_output[:_STDERR_SUMMARY_LIMIT]
+            return f"{summary}... (full output: {log_file})"
+        except Exception:
+            pass  # fall through to truncated output
+
+    return stderr_output[:_STDERR_SUMMARY_LIMIT]
+
+
 # Callback type for events from the runner to the orchestrator
 EventCallback = Callable[[str, str, dict[str, Any]], None]
 # Callback for registering/unregistering child PIDs
@@ -239,16 +272,10 @@ async def run_codex_turn(
 
     # Determine final status from exit code if not already set
     if attempt.status == "streaming":
-        stderr_output = ""
-        if proc.stderr:
-            try:
-                stderr_bytes = await asyncio.wait_for(proc.stderr.read(), timeout=5)
-                stderr_output = stderr_bytes.decode()[:500]
-            except (asyncio.TimeoutError, Exception):
-                pass
         if proc.returncode == 0:
             attempt.status = "succeeded"
         else:
+            stderr_output = await _capture_stderr(proc, issue.identifier, workspace_path)
             attempt.status = "failed"
             attempt.error = f"Codex exit code {proc.returncode}: {stderr_output}"
 
@@ -409,13 +436,7 @@ async def run_agent_turn(
         if proc.returncode == 0:
             attempt.status = "succeeded"
         else:
-            stderr_output = ""
-            if proc.stderr:
-                try:
-                    stderr_bytes = await asyncio.wait_for(proc.stderr.read(), timeout=5)
-                    stderr_output = stderr_bytes.decode()[:500]
-                except (asyncio.TimeoutError, Exception):
-                    pass
+            stderr_output = await _capture_stderr(proc, issue.identifier, workspace_path)
             attempt.status = "failed"
             attempt.error = f"Exit code {proc.returncode}: {stderr_output}"
 
@@ -678,13 +699,7 @@ async def run_gemini_turn(
         if proc.returncode == 0:
             attempt.status = "succeeded"
         else:
-            stderr_output = ""
-            if proc.stderr:
-                try:
-                    stderr_bytes = await asyncio.wait_for(proc.stderr.read(), timeout=5)
-                    stderr_output = stderr_bytes.decode()[:500]
-                except (asyncio.TimeoutError, Exception):
-                    pass
+            stderr_output = await _capture_stderr(proc, issue.identifier, workspace_path)
             attempt.status = "failed"
             attempt.error = f"Exit code {proc.returncode}: {stderr_output}"
 

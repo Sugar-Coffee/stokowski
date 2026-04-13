@@ -93,6 +93,7 @@ class Orchestrator:
         self._last_session_ids: dict[str, str] = {}  # issue_id -> last known session_id
         self._issue_needs_review: dict[str, bool] = {}  # issue_id -> STOKOWSKI:NEEDS_REVIEW flag
         self._is_rework: dict[str, bool] = {}  # issue_id -> next dispatch is a rework run
+        self._consecutive_failures: dict[str, int] = {}  # issue_id -> consecutive failure count
         self._jinja = Environment(undefined=StrictUndefined)
         self._running = False
         self._last_issues: dict[str, Issue] = {}
@@ -252,9 +253,14 @@ class Orchestrator:
                 if state_name in terminal_states:
                     skipped += 1
                     continue
-                # GC stale entries
+                # GC stale entries (by updated_at age)
                 updated_at = issue_data.get("updated_at", "")
                 if gc_cutoff and updated_at and updated_at < gc_cutoff:
+                    skipped += 1
+                    continue
+                # Skip entries that never ran (no session) — they'll be
+                # re-discovered from the tracker on the next poll tick
+                if not issue_data.get("session_id") and issue_data.get("run", 1) == 1:
                     skipped += 1
                     continue
                 self._issue_current_state[issue_id] = state_name
@@ -1669,6 +1675,7 @@ class Orchestrator:
             # Agent signaled rework needed — fire "rework" transition if defined
             self._spawn_background(self._handle_agent_rework(issue, attempt))
         elif attempt.status == "succeeded":
+            self._consecutive_failures.pop(issue.id, None)
             if attempt.state_name and attempt.state_name in self.cfg.states:
                 # State machine mode: transition via "complete"
                 self._spawn_background(self._safe_transition(issue, "complete"))
@@ -1676,17 +1683,33 @@ class Orchestrator:
                 # Legacy mode
                 self._schedule_retry(issue, attempt_num=1, delay_ms=1000)
         elif attempt.status in ("failed", "timed_out", "stalled"):
-            current_attempt = (attempt.attempt or 0) + 1
-            delay = min(
-                10_000 * (2 ** (current_attempt - 1)),
-                self.cfg.agent.max_retry_backoff_ms,
-            )
-            self._schedule_retry(
-                issue,
-                attempt_num=current_attempt,
-                delay_ms=delay,
-                error=attempt.error,
-            )
+            # Circuit breaker: block after N consecutive failures
+            failures = self._consecutive_failures.get(issue.id, 0) + 1
+            self._consecutive_failures[issue.id] = failures
+            max_failures = self.cfg.agent.max_consecutive_failures
+            if max_failures > 0 and failures >= max_failures:
+                logger.warning(
+                    f"Circuit breaker tripped issue={issue.identifier} "
+                    f"failures={failures} — blocking"
+                )
+                attempt.last_message = (
+                    f"Circuit breaker: {failures} consecutive failures. "
+                    f"Last error: {attempt.error or 'unknown'}"
+                )
+                self._consecutive_failures.pop(issue.id, None)
+                self._spawn_background(self._move_to_blocked(issue, attempt))
+            else:
+                current_attempt = (attempt.attempt or 0) + 1
+                delay = min(
+                    10_000 * (2 ** (current_attempt - 1)),
+                    self.cfg.agent.max_retry_backoff_ms,
+                )
+                self._schedule_retry(
+                    issue,
+                    attempt_num=current_attempt,
+                    delay_ms=delay,
+                    error=attempt.error,
+                )
         else:
             self.claimed.discard(issue.id)
 

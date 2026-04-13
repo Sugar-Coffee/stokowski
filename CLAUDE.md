@@ -102,7 +102,7 @@ Parses `workflow.yaml`, `stokowski.yaml` (root config for multi-workflow), and l
 - `WorkspaceConfig` — root path (supports `~` and `$VAR` expansion)
 - `HooksConfig` — shell scripts for lifecycle events + timeout (includes `on_stage_enter`)
 - `ClaudeConfig` — command, permission mode, model, timeouts, system prompt
-- `AgentConfig` — concurrency limits (global, per-state, and per-project per-state)
+- `AgentConfig` — concurrency limits (global, per-state, and per-project per-state), `max_consecutive_failures` (circuit breaker, default 3)
 - `ServerConfig` — optional web dashboard port
 - `WebhookConfig` — optional webhook listener: `secret` for HMAC-SHA256 signature verification
 - `LinearStatesConfig` — maps logical state names (`todo`, `active`, `review`, `gate_approved`, `rework`, `blocked`, `terminal`) to actual Linear state names. Issues in the `todo` state are picked up and automatically moved to `active` on dispatch. Issues moved to `blocked` are released from the orchestrator.
@@ -192,8 +192,9 @@ while running:
 
 **Retry logic:**
 - `blocked` → `_move_to_blocked()` — no retry
+- `rework` → `_handle_agent_rework()` — fire `transitions["rework"]` or fall back to blocked
 - `succeeded` → schedule continuation retry in 1s (checks if more work needed)
-- `failed/timed_out/stalled` → exponential backoff: `min(10000 * 2^(attempt-1), max_retry_backoff_ms)`
+- `failed/timed_out/stalled` → exponential backoff: `min(10000 * 2^(attempt-1), max_retry_backoff_ms)`. Circuit breaker: after `max_consecutive_failures` (default 3) consecutive failures, blocks the issue instead of retrying.
 - `canceled` → release claim immediately
 
 **Shutdown:** `stop()` sets `_stop_event`, kills all child PIDs via `os.killpg`, cancels async tasks.

@@ -131,6 +131,54 @@ class TestHandleAgentRework:
             mock_block.assert_awaited_once_with(issue, attempt)
 
 
+class TestCircuitBreaker:
+    def test_failure_increments_counter(self, workflow_yaml):
+        orch = _make_orch(workflow_yaml)
+        issue = _make_issue()
+        attempt = RunAttempt(
+            issue_id=issue.id, issue_identifier=issue.identifier,
+            status="failed", state_name="implement", error="hook failed",
+        )
+        orch.running[issue.id] = attempt
+
+        with patch.object(orch, "_schedule_retry") as mock_retry:
+            orch._on_worker_exit(issue, attempt)
+            mock_retry.assert_called_once()
+        assert orch._consecutive_failures[issue.id] == 1
+
+    def test_circuit_breaker_trips_after_max_failures(self, workflow_yaml):
+        orch = _make_orch(workflow_yaml)
+        issue = _make_issue()
+        # Pre-set to 2 failures (max_consecutive_failures defaults to 3)
+        orch._consecutive_failures[issue.id] = 2
+        attempt = RunAttempt(
+            issue_id=issue.id, issue_identifier=issue.identifier,
+            status="failed", state_name="implement", error="hook failed",
+        )
+        orch.running[issue.id] = attempt
+
+        with patch.object(orch, "_spawn_background") as mock_spawn:
+            orch._on_worker_exit(issue, attempt)
+            mock_spawn.assert_called_once()
+        # Counter should be cleared after tripping
+        assert issue.id not in orch._consecutive_failures
+
+    def test_success_resets_failure_counter(self, workflow_yaml):
+        orch = _make_orch(workflow_yaml)
+        issue = _make_issue()
+        orch._consecutive_failures[issue.id] = 2
+        orch._issue_current_state[issue.id] = "implement"
+        attempt = RunAttempt(
+            issue_id=issue.id, issue_identifier=issue.identifier,
+            status="succeeded", state_name="implement",
+        )
+        orch.running[issue.id] = attempt
+
+        with patch.object(orch, "_spawn_background"):
+            orch._on_worker_exit(issue, attempt)
+        assert issue.id not in orch._consecutive_failures
+
+
 class TestSpawnBackground:
     @pytest.mark.asyncio
     async def test_task_added_and_cleaned_up(self, workflow_yaml):
@@ -614,6 +662,8 @@ def _restore_state(orch: Orchestrator):
         updated_at = issue_data.get("updated_at", "")
         if gc_cutoff and updated_at and updated_at < gc_cutoff:
             continue
+        if not issue_data.get("session_id") and issue_data.get("run", 1) == 1:
+            continue
         orch._issue_current_state[issue_id] = state_name
         orch._issue_state_runs[issue_id] = issue_data.get("run", 1)
         session_id = issue_data.get("session_id")
@@ -655,8 +705,8 @@ class TestStartupRestore:
         state_path = state_file_path(workflow_yaml)
         state_data = {
             "issues": {
-                "old-1": {"current_state": "implement", "run": 1, "updated_at": old_date},
-                "fresh-1": {"current_state": "implement", "run": 1, "updated_at": fresh_date},
+                "old-1": {"current_state": "implement", "run": 1, "updated_at": old_date, "session_id": "s1"},
+                "fresh-1": {"current_state": "implement", "run": 1, "updated_at": fresh_date, "session_id": "s2"},
             },
             "total_tokens": 0,
         }
@@ -668,15 +718,17 @@ class TestStartupRestore:
         assert "old-1" not in orch._issue_current_state
         assert "fresh-1" in orch._issue_current_state
 
-    def test_entries_without_updated_at_preserved(self, workflow_yaml):
-        """Legacy entries without updated_at should not be pruned (migration safety)."""
+    def test_entries_without_session_and_run1_skipped(self, workflow_yaml):
+        """Entries that never ran (no session_id, run=1) should be skipped on restore."""
         import json
         from stokowski.state import state_file_path
 
         state_path = state_file_path(workflow_yaml)
         state_data = {
             "issues": {
-                "legacy-1": {"current_state": "implement", "run": 1},
+                "never-ran": {"current_state": "implement", "run": 1},
+                "has-session": {"current_state": "implement", "run": 1, "session_id": "s1"},
+                "run-2": {"current_state": "implement", "run": 2},
             },
             "total_tokens": 0,
         }
@@ -684,4 +736,6 @@ class TestStartupRestore:
 
         orch = _make_orch(workflow_yaml)
         _restore_state(orch)
-        assert "legacy-1" in orch._issue_current_state
+        assert "never-ran" not in orch._issue_current_state
+        assert "has-session" in orch._issue_current_state
+        assert "run-2" in orch._issue_current_state

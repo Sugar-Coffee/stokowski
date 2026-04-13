@@ -1,7 +1,13 @@
 """Tests for runner event processing."""
 
+import asyncio
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
 from stokowski.models import RunAttempt
-from stokowski.runner import _process_event, _process_gemini_event
+from stokowski.runner import _capture_stderr, _process_event, _process_gemini_event
 
 
 class TestLastMessageNotTruncated:
@@ -122,3 +128,35 @@ class TestProcessGeminiEventNeedsReview:
         }
         _process_gemini_event(event, attempt, None, "DEV-1")
         assert attempt.status == "rework"
+
+
+class TestCaptureStderr:
+    @pytest.mark.asyncio
+    async def test_short_stderr_returned_as_is(self):
+        proc = MagicMock()
+        proc.stderr = AsyncMock()
+        proc.stderr.read = AsyncMock(return_value=b"short error")
+        result = await _capture_stderr(proc, "DEV-1")
+        assert result == "short error"
+
+    @pytest.mark.asyncio
+    async def test_long_stderr_written_to_file(self, tmp_path):
+        long_err = "X" * 1000
+        proc = MagicMock()
+        proc.stderr = AsyncMock()
+        proc.stderr.read = AsyncMock(return_value=long_err.encode())
+        result = await _capture_stderr(proc, "DEV-1", workspace_path=tmp_path)
+        assert result.startswith("X" * 500)
+        assert "full output:" in result
+        # Verify file was written
+        log_dir = tmp_path / ".stokowski" / "logs"
+        log_files = list(log_dir.glob("DEV-1-*.stderr"))
+        assert len(log_files) == 1
+        assert log_files[0].read_text() == long_err
+
+    @pytest.mark.asyncio
+    async def test_no_stderr_returns_empty(self):
+        proc = MagicMock()
+        proc.stderr = None
+        result = await _capture_stderr(proc, "DEV-1")
+        assert result == ""
