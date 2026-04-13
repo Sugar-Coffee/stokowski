@@ -1140,6 +1140,16 @@ def _kill_orphan_agents():
                     pass
     except Exception:
         pass
+
+    # Also kill orphan tmux session from previous crash
+    try:
+        subprocess.run(
+            ["tmux", "kill-session", "-t", "stokowski"],
+            capture_output=True,
+        )
+    except Exception:
+        pass
+
     return killed
 
 

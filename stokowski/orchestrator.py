@@ -328,6 +328,13 @@ class Orchestrator:
                     pass
         self._child_pids.clear()
 
+        # Kill tmux windows for tmux-based runners
+        try:
+            from .tmux_runner import cleanup_all_windows
+            await cleanup_all_windows()
+        except Exception:
+            pass
+
         # Cancel async tasks and wait for them to finish
         for issue_id, task in list(self._tasks.items()):
             task.cancel()

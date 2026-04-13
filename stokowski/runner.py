@@ -773,5 +773,23 @@ async def run_turn(
             on_pid=on_pid,
             env=env,
         )
+    elif runner_type == "tmux" or runner_type.startswith("tmux:"):
+        from .tmux_runner import run_tmux_turn
+
+        # Parse CLI from compound type: "tmux" → claude, "tmux:gemini" → gemini
+        cli = runner_type.split(":", 1)[1] if ":" in runner_type else "claude"
+
+        return await run_tmux_turn(
+            claude_cfg=claude_cfg,
+            hooks_cfg=hooks_cfg,
+            prompt=prompt,
+            workspace_path=workspace_path,
+            issue=issue,
+            attempt=attempt,
+            on_event=on_event,
+            on_pid=on_pid,
+            env=env,
+            cli=cli,
+        )
     else:
         raise ValueError(f"Unknown runner type: {runner_type}")
