@@ -5,4 +5,4 @@ from importlib.metadata import version, PackageNotFoundError
 try:
     __version__ = version("stokowski")
 except PackageNotFoundError:
-    __version__ = "0.6.0"  # not installed as a package
+    __version__ = "0.7.0"  # not installed as a package

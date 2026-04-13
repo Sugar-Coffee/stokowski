@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.7.0](https://github.com/erikpr1994/stokowski/compare/v0.6.0...v0.7.0) (2026-04-13)
+
+
+### Features
+
+* add CI workflow and expand test suite to 153 tests ([#113](https://github.com/erikpr1994/stokowski/issues/113)) ([5cc1573](https://github.com/erikpr1994/stokowski/commit/5cc15734509a57e5ec359f4b806440d249836f24))
+* conditional gates — auto-approve when agent has no questions ([#125](https://github.com/erikpr1994/stokowski/issues/125)) ([#126](https://github.com/erikpr1994/stokowski/issues/126)) ([1284fb9](https://github.com/erikpr1994/stokowski/commit/1284fb9a2aa128552877bf9ed1c0bb2c04ce25e8))
+* expandable run history with result text and session ID ([#118](https://github.com/erikpr1994/stokowski/issues/118)) ([4236da5](https://github.com/erikpr1994/stokowski/commit/4236da566e61aa51cb33d3eb93b17e1399ee609e))
+* garbage-collect terminal-state issues from state files ([#131](https://github.com/erikpr1994/stokowski/issues/131)) ([#133](https://github.com/erikpr1994/stokowski/issues/133)) ([8e83433](https://github.com/erikpr1994/stokowski/commit/8e83433e11ca4710eb2130216e91c19ef6eec4ee))
+* per-state max_concurrent for agent concurrency control ([#127](https://github.com/erikpr1994/stokowski/issues/127)) ([#128](https://github.com/erikpr1994/stokowski/issues/128)) ([f6b7524](https://github.com/erikpr1994/stokowski/commit/f6b7524cd40e38b0cdf7c084e12837ef920f4739))
+* persist session IDs to sessions.json in .stokowski directory ([#124](https://github.com/erikpr1994/stokowski/issues/124)) ([fd4b997](https://github.com/erikpr1994/stokowski/commit/fd4b9976384a44e92423bbfd3d22c124c87447c8))
+* show stage name in run history rows ([#117](https://github.com/erikpr1994/stokowski/issues/117)) ([ba3dd19](https://github.com/erikpr1994/stokowski/commit/ba3dd19647ce80815f0ad3cc5502c4c0c58d92a1))
+* support --mcp-config for explicit MCP server configs in headless mode ([#122](https://github.com/erikpr1994/stokowski/issues/122)) ([1ca586f](https://github.com/erikpr1994/stokowski/commit/1ca586f5abcf4bad1bf3d5e832f04bacb94bbd9c)), closes [#121](https://github.com/erikpr1994/stokowski/issues/121)
+* support agent-driven rework transitions via STOKOWSKI:REWORK signal ([#139](https://github.com/erikpr1994/stokowski/issues/139)) ([#142](https://github.com/erikpr1994/stokowski/issues/142)) ([80aa078](https://github.com/erikpr1994/stokowski/commit/80aa078ebac145b11ffa3e63ce1697e46167549f))
+* track all session IDs across turns, show in dashboard ([#119](https://github.com/erikpr1994/stokowski/issues/119)) ([d150345](https://github.com/erikpr1994/stokowski/commit/d1503455e4e577e6be41ba3313c95da70f2fc72b))
+
+
+### Bug Fixes
+
+* blocker check only applied to Todo state, bypassed for In Progress ([#132](https://github.com/erikpr1994/stokowski/issues/132)) ([#134](https://github.com/erikpr1994/stokowski/issues/134)) ([3811358](https://github.com/erikpr1994/stokowski/commit/381135820077b5b20813d093de23c816b817455d))
+* dashboard runtime label says "cumulative seconds" instead of "cumulative runtime" ([#116](https://github.com/erikpr1994/stokowski/issues/116)) ([2f42ae8](https://github.com/erikpr1994/stokowski/commit/2f42ae86e11a1533da10f86b465fc6054081799d))
+* last_message truncated to 200 chars, blocked comments cut mid-word ([#135](https://github.com/erikpr1994/stokowski/issues/135)) ([#136](https://github.com/erikpr1994/stokowski/issues/136)) ([f9bf060](https://github.com/erikpr1994/stokowski/commit/f9bf0607753a3d913170ee739f9f8dc45311a3f8))
+* make stop/start buttons clearly distinguishable in dashboard ([#114](https://github.com/erikpr1994/stokowski/issues/114)) ([987d0e1](https://github.com/erikpr1994/stokowski/commit/987d0e120f5080924397d317636ad5bd300ff471))
+* prevent garbage collection of fire-and-forget async tasks ([#112](https://github.com/erikpr1994/stokowski/issues/112)) ([8b3a635](https://github.com/erikpr1994/stokowski/commit/8b3a635c4fe9bdd1e0ee9d47baa51299f2443875))
+* re-schedule retry when no agent slots available instead of dropping ([#123](https://github.com/erikpr1994/stokowski/issues/123)) ([da27cd3](https://github.com/erikpr1994/stokowski/commit/da27cd387a3d7d5f2fdecfc6fc5b33a133821bdc))
+* show session IDs above result text in history detail ([#120](https://github.com/erikpr1994/stokowski/issues/120)) ([fb0e98a](https://github.com/erikpr1994/stokowski/commit/fb0e98ab52f37e9f8bc3ad7f2e0576751fdf87c8))
+* skip synthetic IDs in reconciliation, protect main branch from deletion ([#115](https://github.com/erikpr1994/stokowski/issues/115)) ([7cabf2a](https://github.com/erikpr1994/stokowski/commit/7cabf2afa403730a7b772d1c15310a7d3dcf8fcf))
+* state machine silently fails to transition after agent completion ([#129](https://github.com/erikpr1994/stokowski/issues/129)) ([#130](https://github.com/erikpr1994/stokowski/issues/130)) ([fe22895](https://github.com/erikpr1994/stokowski/commit/fe228952c30c97f87f461a84120cfeac32f87c67))
+* update Codex runner to use `codex exec` for headless mode ([#137](https://github.com/erikpr1994/stokowski/issues/137)) ([bed8305](https://github.com/erikpr1994/stokowski/commit/bed830502cd2791215e74090023ddb057ce8efb3))
+* wire up is_rework flag and simplify rework prompt ([#140](https://github.com/erikpr1994/stokowski/issues/140), [#141](https://github.com/erikpr1994/stokowski/issues/141)) ([#143](https://github.com/erikpr1994/stokowski/issues/143)) ([659c260](https://github.com/erikpr1994/stokowski/commit/659c260b21cd4125f94e5cc6d069701eea8137a0))
+
 ## [0.5.0](https://github.com/erikpr1994/stokowski/compare/v0.4.0...v0.5.0) (2026-04-10)
 
 ### Features

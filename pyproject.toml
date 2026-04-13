@@ -1,6 +1,6 @@
 [project]
 name = "stokowski"
-version = "0.6.0"
+version = "0.7.0"
 description = "Orchestrate Claude Code agents driven by Linear issues"
 readme = "README.md"
 license = "Apache-2.0"
