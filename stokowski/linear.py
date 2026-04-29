@@ -41,7 +41,7 @@ query($projectSlug: String!, $states: [String!]!, $after: String) {
       inverseRelations {
         nodes {
           type
-          relatedIssue {
+          issue {
             id
             identifier
             state { name }
@@ -156,7 +156,12 @@ def _normalize_issue(node: dict) -> Issue:
     blockers = []
     for rel in (node.get("inverseRelations", {}) or {}).get("nodes", []):
         if rel.get("type") == "blocks":
-            ri = rel.get("relatedIssue", {}) or {}
+            # In Linear's GraphQL schema, IssueRelation.issue is the source
+            # of the relation and IssueRelation.relatedIssue is the target.
+            # When we query an issue's `inverseRelations`, the relations point
+            # AT this issue, so the source (`issue`) is the blocker and
+            # `relatedIssue` is the issue itself.
+            ri = rel.get("issue", {}) or {}
             blockers.append(
                 BlockerRef(
                     id=ri.get("id"),
