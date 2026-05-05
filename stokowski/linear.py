@@ -156,10 +156,12 @@ def _normalize_issue(node: dict) -> Issue:
     blockers = []
     for rel in (node.get("inverseRelations", {}) or {}).get("nodes", []):
         if rel.get("type") == "blocks":
+
             # Local patch for upstream bug: was rel["relatedIssue"] (which is the
             # current issue, not the blocker). Linear's IssueRelation.issue is
             # the source/blocker; .relatedIssue is the target/blocked.
             # Tracking: https://github.com/Sugar-Coffee/stokowski/issues/20
+        
             ri = rel.get("issue", {}) or {}
             blockers.append(
                 BlockerRef(
