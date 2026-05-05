@@ -37,7 +37,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from .orchestrator import Orchestrator
+from .orchestrator import MultiOrchestrator
 
 console = Console()
 
@@ -94,19 +94,42 @@ HELP_TEXT = """
 
   [bold yellow]q[/bold yellow]   Quit — graceful shutdown, kills all agents
   [bold yellow]s[/bold yellow]   Status — show running agents and token usage
+  [bold yellow]p[/bold yellow]   Pause/resume a project (toggle dispatch for one project)
   [bold yellow]h[/bold yellow]   Help — show this message
   [bold yellow]r[/bold yellow]   Refresh — force an immediate Linear poll
 """
 
 
-def print_status(orch: Orchestrator):
+def print_status(orch: MultiOrchestrator):
     snap = orch.get_state_snapshot()
     running  = snap["counts"]["running"]
     retrying = snap["counts"]["retrying"]
+    queued   = snap["counts"]["queued"]
     total_tok = snap["totals"]["total_tokens"]
     secs = snap["totals"]["seconds_running"]
 
+    # Per-project summary
+    proj_table = Table(box=None, padding=(0, 2), show_header=True, header_style="dim")
+    proj_table.add_column("Project", style="cyan")
+    proj_table.add_column("Pause", justify="center", width=8)
+    proj_table.add_column("Run", justify="right", width=5)
+    proj_table.add_column("Gates", justify="right", width=6)
+    proj_table.add_column("Queue", justify="right", width=6)
+    proj_table.add_column("Tokens", justify="right", width=10)
+    for p in snap["projects"]:
+        paused = "[red]●[/red]" if p["paused"] else "[green]○[/green]"
+        proj_table.add_row(
+            p["name"],
+            paused,
+            str(p["counts"]["running"]),
+            str(p["counts"]["gates"]),
+            str(p["counts"].get("queued", 0)),
+            f"{p['totals']['total_tokens']:,}",
+        )
+
+    # Per-issue table
     table = Table(box=None, padding=(0, 2), show_header=True, header_style="dim")
+    table.add_column("Project", style="cyan")
     table.add_column("Issue",  style="cyan",  width=12)
     table.add_column("Status", style="green", width=12)
     table.add_column("Turns",  justify="right", width=6)
@@ -115,6 +138,7 @@ def print_status(orch: Orchestrator):
 
     for r in snap["running"]:
         table.add_row(
+            r.get("project_name", "—"),
             r["issue_identifier"],
             r["status"],
             str(r["turn_count"]),
@@ -123,32 +147,58 @@ def print_status(orch: Orchestrator):
         )
     for r in snap["retrying"]:
         table.add_row(
+            r.get("project_name", "—"),
             r["issue_identifier"],
             f"[blue]retry #{r['attempt']}[/blue]",
             "—", "—",
             r["error"] or "waiting",
         )
     if not snap["running"] and not snap["retrying"]:
-        table.add_row("—", "idle", "—", "—", "no active agents")
+        table.add_row("—", "—", "idle", "—", "—", "no active agents")
 
     console.print()
+    console.print(Panel(
+        proj_table,
+        title=f"[bold]Projects[/bold]  "
+              f"[dim]global_cap={snap['pool']['global_cap']}  "
+              f"in_use={snap['pool']['global_running']}[/dim]",
+        border_style="yellow",
+    ))
     console.print(Panel(
         table,
         title=f"[bold]Stokowski Status[/bold]  "
               f"[dim]running={running}  retrying={retrying}  "
+              f"queued={queued}  "
               f"tokens={total_tok:,}  uptime={secs:.0f}s[/dim]",
         border_style="yellow",
     ))
     console.print()
 
 
+def print_pause_menu(orch: MultiOrchestrator):
+    """Show numbered list of projects with current pause state."""
+    names = orch.project_names
+    if not names:
+        console.print("[dim]No projects loaded.[/dim]")
+        return
+    console.print()
+    console.print("[bold]Toggle pause for project[/bold] [dim](press number, any other key cancels)[/dim]")
+    for i, name in enumerate(names, start=1):
+        marker = "[red]paused[/red]" if orch.is_paused(name) else "[green]running[/green]"
+        console.print(f"  [bold yellow]{i}[/bold yellow]  {name}  {marker}")
+    console.print()
+
+
 class KeyboardHandler:
     """Reads single keypresses from stdin in a background thread."""
 
-    def __init__(self, orch: Orchestrator, loop: asyncio.AbstractEventLoop):
+    def __init__(self, orch: MultiOrchestrator, loop: asyncio.AbstractEventLoop):
         self._orch = orch
         self._loop = loop
         self._stop = threading.Event()
+        # When non-None, the next keypress is consumed as a pause-menu choice
+        # rather than a top-level command.
+        self._pause_menu_active: bool = False
 
     def start(self):
         t = threading.Thread(target=self._run, daemon=True)
@@ -173,21 +223,42 @@ class KeyboardHandler:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
     def _handle(self, ch: str):
+        if self._pause_menu_active:
+            self._pause_menu_active = False
+            self._handle_pause_choice(ch)
+            return
+
         if ch == "q":
             console.print("\n[yellow]Shutting down...[/yellow]")
             asyncio.run_coroutine_threadsafe(self._orch.stop(), self._loop)
             self._stop.set()
         elif ch == "s":
             print_status(self._orch)
+        elif ch == "p":
+            print_pause_menu(self._orch)
+            self._pause_menu_active = True
         elif ch == "h":
             console.print(HELP_TEXT)
         elif ch == "r":
-            console.print("[dim]Forcing poll...[/dim]")
-            if hasattr(self._orch, '_stop_event'):
-                # Wake the poll loop early
-                self._loop.call_soon_threadsafe(
-                    lambda: self._loop.create_task(self._orch._tick())
-                )
+            console.print("[dim]Forcing poll on all projects...[/dim]")
+            self._loop.call_soon_threadsafe(
+                lambda: self._loop.create_task(self._orch.force_tick())
+            )
+
+    def _handle_pause_choice(self, ch: str):
+        names = self._orch.project_names
+        try:
+            idx = int(ch) - 1
+        except ValueError:
+            console.print("[dim]Cancelled.[/dim]")
+            return
+        if idx < 0 or idx >= len(names):
+            console.print("[dim]Cancelled (out of range).[/dim]")
+            return
+        name = names[idx]
+        now_paused = self._orch.toggle(name)
+        state = "[red]paused[/red]" if now_paused else "[green]resumed[/green]"
+        console.print(f"Project [cyan]{name}[/cyan] is now {state}")
 
     def stop(self):
         self._stop.set()
@@ -195,12 +266,13 @@ class KeyboardHandler:
 
 # ── Main orchestrator runner ─────────────────────────────────────────────────
 
-def _make_footer(orch: Orchestrator) -> Text:
+def _make_footer(orch: MultiOrchestrator) -> Text:
     """Build the persistent footer line."""
     try:
         snap = orch.get_state_snapshot()
         running = snap["counts"]["running"]
         retrying = snap["counts"]["retrying"]
+        queued = snap["counts"].get("queued", 0)
         tokens = snap["totals"]["total_tokens"]
         if running:
             status = f"[green]●[/green] {running} running"
@@ -208,7 +280,12 @@ def _make_footer(orch: Orchestrator) -> Text:
             status = f"[blue]●[/blue] {retrying} retrying"
         else:
             status = "[dim]● idle[/dim]"
-        meta = f"  [dim]tokens={tokens:,}[/dim]" if tokens else ""
+        # Surface paused projects in the footer so it's obvious at a glance.
+        paused = [p["name"] for p in snap.get("projects", []) if p.get("paused")]
+        paused_meta = f"  [red]⏸ {','.join(paused)}[/red]" if paused else ""
+        queue_meta = f"  [dim]queued={queued}[/dim]" if queued else ""
+        token_meta = f"  [dim]tokens={tokens:,}[/dim]" if tokens else ""
+        meta = paused_meta + queue_meta + token_meta
     except Exception:
         status = "[dim]● idle[/dim]"
         meta = ""
@@ -218,6 +295,7 @@ def _make_footer(orch: Orchestrator) -> Text:
     return Text.from_markup(
         f"  [bold yellow]q[/bold yellow] quit  "
         f"[bold yellow]s[/bold yellow] status  "
+        f"[bold yellow]p[/bold yellow] pause  "
         f"[bold yellow]r[/bold yellow] refresh  "
         f"[bold yellow]h[/bold yellow] help"
         f"     {status}{meta}{update}"
@@ -225,7 +303,7 @@ def _make_footer(orch: Orchestrator) -> Text:
 
 
 async def run_orchestrator(workflow_path: str, port: int | None = None):
-    orch = Orchestrator(workflow_path)
+    orch = MultiOrchestrator(workflow_path)
     loop = asyncio.get_running_loop()
 
     # Start keyboard handler
@@ -387,62 +465,71 @@ async def dry_run(workflow_path: str):
 
     cfg = workflow.config
     console.print("[green]Config valid[/green]")
-    console.print(f"  Tracker: {cfg.tracker.kind}")
-    console.print(f"  Project: {cfg.tracker.project_slug}")
-    console.print(f"  Max agents: {cfg.agent.max_concurrent_agents}")
-    console.print(f"  Claude model: {cfg.claude.model or 'default'}")
-    console.print(f"  Permission mode: {cfg.claude.permission_mode}")
-    console.print(f"  Workspace root: {cfg.workspace.resolved_root()}")
-
-    if cfg.states:
-        console.print(f"\n  [bold]State machine[/bold] ({len(cfg.states)} states):")
-        console.print(f"    Entry state: {cfg.entry_state}")
-        console.print(f"    Linear states: active={cfg.linear_states.active}, review={cfg.linear_states.review}")
-        for name, state in cfg.states.items():
-            transitions = ", ".join(f"{k}->{v}" for k, v in state.transitions.items())
-            console.print(f"    {name} ({state.type}) -> {transitions or 'terminal'}")
-    else:
-        console.print(f"\n  [dim]Legacy mode (no state machine)[/dim]")
-
+    console.print(f"  Global max_concurrent_agents: {cfg.agent.max_concurrent_agents}")
+    console.print(f"  Polling interval: {cfg.polling.interval_ms}ms")
+    console.print(f"  Projects: {len(cfg.projects)}")
     console.print()
 
     from .linear import LinearClient
 
-    client = LinearClient(
-        endpoint=cfg.tracker.endpoint,
-        api_key=cfg.resolved_api_key(),
-    )
-
-    try:
-        candidates = await client.fetch_candidate_issues(
-            cfg.tracker.project_slug,
-            cfg.active_linear_states(),
+    for project in cfg.projects:
+        per_project_cap = (
+            project.max_concurrent
+            if project.max_concurrent is not None
+            else cfg.agent.max_concurrent_per_project.get(project.name)
         )
-    except Exception as e:
-        console.print(f"[red]Failed to fetch candidates: {e}[/red]")
+        cap_str = f", per-project cap: {per_project_cap}" if per_project_cap else ""
+        console.print(f"[bold cyan]Project '{project.name}'[/bold cyan]")
+        console.print(f"  Tracker: {project.tracker.kind}  slug={project.tracker.project_slug}{cap_str}")
+        console.print(f"  Claude model: {project.claude.model or 'default'}  permission={project.claude.permission_mode}")
+        console.print(f"  Workspace root: {project.workspace.resolved_root()}")
+        if project.paused:
+            console.print(f"  [red]Paused at startup[/red]")
+
+        if project.states:
+            console.print(f"  [bold]State machine[/bold] ({len(project.states)} states):")
+            console.print(f"    Entry state: {project.entry_state}")
+            console.print(
+                f"    Linear states: active={project.linear_states.active}, "
+                f"review={project.linear_states.review}"
+            )
+            for name, state in project.states.items():
+                transitions = ", ".join(f"{k}->{v}" for k, v in state.transitions.items())
+                console.print(f"    {name} ({state.type}) -> {transitions or 'terminal'}")
+
+        client = LinearClient(
+            endpoint=project.tracker.endpoint,
+            api_key=project.resolved_api_key(),
+        )
+        try:
+            candidates = await client.fetch_candidate_issues(
+                project.tracker.project_slug,
+                project.active_linear_states(),
+            )
+        except Exception as e:
+            console.print(f"  [red]Failed to fetch candidates: {e}[/red]")
+            await client.close()
+            continue
+
+        console.print(f"  [bold]{len(candidates)} candidate issue(s):[/bold]")
+        if candidates:
+            table = Table()
+            table.add_column("ID", style="cyan")
+            table.add_column("State", style="green")
+            table.add_column("Priority")
+            table.add_column("Title")
+            table.add_column("Labels", style="dim")
+            for issue in candidates:
+                table.add_row(
+                    issue.identifier,
+                    issue.state,
+                    str(issue.priority or "—"),
+                    issue.title[:60],
+                    ", ".join(issue.labels) if issue.labels else "",
+                )
+            console.print(table)
         await client.close()
-        sys.exit(1)
-
-    console.print(f"[bold]Found {len(candidates)} candidate issues:[/bold]\n")
-
-    table = Table()
-    table.add_column("ID", style="cyan")
-    table.add_column("State", style="green")
-    table.add_column("Priority")
-    table.add_column("Title")
-    table.add_column("Labels", style="dim")
-
-    for issue in candidates:
-        table.add_row(
-            issue.identifier,
-            issue.state,
-            str(issue.priority or "—"),
-            issue.title[:60],
-            ", ".join(issue.labels) if issue.labels else "",
-        )
-
-    console.print(table)
-    await client.close()
+        console.print()
 
 
 if __name__ == "__main__":

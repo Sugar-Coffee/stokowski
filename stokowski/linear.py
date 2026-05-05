@@ -156,11 +156,12 @@ def _normalize_issue(node: dict) -> Issue:
     blockers = []
     for rel in (node.get("inverseRelations", {}) or {}).get("nodes", []):
         if rel.get("type") == "blocks":
-            # In Linear's GraphQL schema, IssueRelation.issue is the source
-            # of the relation and IssueRelation.relatedIssue is the target.
-            # When we query an issue's `inverseRelations`, the relations point
-            # AT this issue, so the source (`issue`) is the blocker and
-            # `relatedIssue` is the issue itself.
+
+            # Local patch for upstream bug: was rel["relatedIssue"] (which is the
+            # current issue, not the blocker). Linear's IssueRelation.issue is
+            # the source/blocker; .relatedIssue is the target/blocked.
+            # Tracking: https://github.com/Sugar-Coffee/stokowski/issues/20
+        
             ri = rel.get("issue", {}) or {}
             blockers.append(
                 BlockerRef(

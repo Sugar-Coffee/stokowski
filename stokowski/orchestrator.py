@@ -16,15 +16,18 @@ from jinja2 import Environment, StrictUndefined, TemplateSyntaxError
 from .config import (
     ClaudeConfig,
     HooksConfig,
+    ProjectConfig,
     ServiceConfig,
     StateConfig,
     WorkflowDefinition,
+    _resolve_linear_state_name,
     merge_state_config,
     parse_workflow_file,
     validate_config,
 )
 from .linear import LinearClient
 from .models import Issue, RetryEntry, RunAttempt
+from .pool import ConcurrencyPool
 from .prompt import assemble_prompt, build_lifecycle_section
 from .runner import run_agent_turn, run_turn
 from .tracking import make_gate_comment, make_state_comment, parse_latest_tracking
@@ -34,9 +37,28 @@ logger = logging.getLogger("stokowski")
 
 
 class Orchestrator:
-    def __init__(self, workflow_path: str | Path):
+    def __init__(
+        self,
+        workflow_path: str | Path,
+        project_name: str | None = None,
+        pool: ConcurrencyPool | None = None,
+    ):
+        """Run one project's dispatch loop.
+
+        `project_name` selects which project block in the workflow file
+        this orchestrator owns. If None, defaults to the first project
+        (legacy single-project setups always have exactly one).
+
+        `pool` is a shared ConcurrencyPool. When provided, slot decisions
+        funnel through it so the global cap and per-project caps are
+        honoured across all orchestrators. When None, falls back to the
+        legacy behaviour of `agent.max_concurrent_agents - len(running)`.
+        """
         self.workflow_path = Path(workflow_path)
         self.workflow: WorkflowDefinition | None = None
+        self.project_name = project_name
+        self.project: ProjectConfig | None = None
+        self.pool = pool
 
         # Runtime state
         self.running: dict[str, RunAttempt] = {}  # issue_id -> RunAttempt
@@ -66,18 +88,103 @@ class Orchestrator:
         self._issue_state_runs: dict[str, int] = {}       # issue_id -> run number for current state
         self._pending_gates: dict[str, str] = {}           # issue_id -> gate state name
 
+        # Eligible-but-not-dispatched (queue panel data, refreshed each tick)
+        self._queued: list[dict] = []
+
+        # Issues that currently hold a pool slot. Used to ensure each
+        # try_claim has exactly one matching release, even when the
+        # worker is cancelled mid-flight from multiple paths.
+        self._slot_held: set[str] = set()
+
     @property
     def cfg(self) -> ServiceConfig:
         assert self.workflow is not None
         return self.workflow.config
 
+    def _project_view(self, full: WorkflowDefinition, project: ProjectConfig) -> WorkflowDefinition:
+        """Build a per-project ServiceConfig view so existing self.cfg.X reads keep working."""
+        project_cfg = ServiceConfig(
+            tracker=project.tracker,
+            polling=full.config.polling,
+            workspace=project.workspace,
+            hooks=project.hooks,
+            claude=project.claude,
+            agent=full.config.agent,
+            server=full.config.server,
+            linear_states=project.linear_states,
+            prompts=project.prompts,
+            states=project.states,
+            projects=[project],
+            workflow_dir=full.config.workflow_dir,
+        )
+        return WorkflowDefinition(config=project_cfg, prompt_template=full.prompt_template)
+
     def _load_workflow(self) -> list[str]:
-        """Load/reload workflow file. Returns validation errors."""
+        """Load/reload workflow file. Returns validation errors.
+
+        Resolves `self.project_name` to the matching ProjectConfig and
+        builds a per-project ServiceConfig view that the rest of the
+        orchestrator can read from via `self.cfg`.
+        """
         try:
-            self.workflow = parse_workflow_file(self.workflow_path)
+            full = parse_workflow_file(self.workflow_path)
         except Exception as e:
             return [f"Workflow load error: {e}"]
-        return validate_config(self.cfg)
+        errors = validate_config(full.config)
+        if errors:
+            return errors
+
+        # Resolve project
+        if self.project_name is None:
+            if not full.config.projects:
+                return ["No projects defined"]
+            project = full.config.projects[0]
+            self.project_name = project.name
+        else:
+            project = next(
+                (p for p in full.config.projects if p.name == self.project_name),
+                None,
+            )
+            if project is None:
+                return [f"Project '{self.project_name}' not found in workflow file"]
+
+        self.workflow = self._project_view(full, project)
+        self.project = project
+        return []
+
+    # ── Slot management ────────────────────────────────────────────────────
+
+    def _has_slot(self) -> tuple[bool, str | None]:
+        """Return (can_dispatch, reason_if_not). Considers pause + global cap."""
+        name = self.project_name or ""
+        if self.pool is not None:
+            if self.pool.is_paused(name):
+                return False, "paused"
+            if self.pool.available_for(name) <= 0:
+                return False, "no global slot"
+            return True, None
+        # Legacy single-project path (no shared pool)
+        if max(self.cfg.agent.max_concurrent_agents - len(self.running), 0) <= 0:
+            return False, "no global slot"
+        return True, None
+
+    def _claim_slot(self, issue_id: str) -> bool:
+        """Claim a pool slot for this issue. No-op for legacy path."""
+        if issue_id in self._slot_held:
+            return True
+        if self.pool is not None:
+            if not self.pool.try_claim(self.project_name or ""):
+                return False
+        self._slot_held.add(issue_id)
+        return True
+
+    def _release_slot(self, issue_id: str) -> None:
+        """Release a pool slot. Idempotent — safe to call from cancellation paths."""
+        if issue_id not in self._slot_held:
+            return
+        self._slot_held.discard(issue_id)
+        if self.pool is not None:
+            self.pool.release(self.project_name or "")
 
     def _ensure_linear_client(self) -> LinearClient:
         if self._linear is None:
@@ -96,8 +203,9 @@ class Orchestrator:
             raise RuntimeError(f"Startup validation failed: {errors}")
 
         logger.info(
-            f"Starting Stokowski "
-            f"project={self.cfg.tracker.project_slug} "
+            f"Starting orchestrator "
+            f"project={self.project_name} "
+            f"slug={self.cfg.tracker.project_slug} "
             f"max_agents={self.cfg.agent.max_concurrent_agents} "
             f"poll_ms={self.cfg.polling.interval_ms}"
         )
@@ -107,6 +215,10 @@ class Orchestrator:
 
         # Startup terminal cleanup
         await self._startup_cleanup()
+
+        # Rebuild gates from Linear so the dashboard is accurate immediately
+        # after restart, not only after Stokowski dispatches in-flight tickets
+        await self._rebuild_gates_from_linear()
 
         # Main poll loop
         while self._running:
@@ -268,11 +380,17 @@ class Orchestrator:
         )
         await client.post_comment(issue.id, comment)
 
-        review_state = self.cfg.linear_states.review
-        moved = await client.update_issue_state(issue.id, review_state)
+        # Use the gate's own linear_state (per workflow.yaml), not a global one.
+        # Previously this hardcoded `linear_states.review`, which forced every
+        # gate entry — including `await_ci_and_review` — straight to "Human
+        # Review", bypassing the CI+reviewer poller entirely.
+        linear_key = state_cfg.linear_state if state_cfg else "review"
+        target_linear_state = _resolve_linear_state_name(linear_key, self.cfg.linear_states)
+        moved = await client.update_issue_state(issue.id, target_linear_state)
         if not moved:
             logger.error(
-                f"Failed to move {issue.identifier} to review state '{review_state}' "
+                f"Failed to move {issue.identifier} to gate linear state "
+                f"'{target_linear_state}' (gate={state_name}) "
                 f"— issue will remain claimed to prevent re-dispatch loop"
             )
             # Keep claimed so the issue doesn't get re-dispatched while
@@ -283,6 +401,7 @@ class Orchestrator:
             self._issue_current_state[issue.id] = state_name
             self.running.pop(issue.id, None)
             self._tasks.pop(issue.id, None)
+            self._release_slot(issue.id)
             # Schedule a retry to attempt the state move again
             self._schedule_retry(issue, attempt_num=0, delay_ms=10_000)
             return
@@ -293,6 +412,7 @@ class Orchestrator:
         self.running.pop(issue.id, None)
         self._tasks.pop(issue.id, None)
         self.claimed.discard(issue.id)
+        self._release_slot(issue.id)
 
         logger.info(
             f"Gate entered issue={issue.identifier} gate={state_name} "
@@ -513,6 +633,134 @@ class Orchestrator:
                     f"rework_to={rework_to} run={new_run}"
                 )
 
+    async def _evict_terminal_gates(self):
+        """Evict gate entries for tickets that have moved to terminal states.
+
+        Runs each tick so stale Done/Canceled/Duplicate entries are removed
+        within one poll cycle without requiring a manual POST /api/v1/refresh.
+        This fixes the failure mode where tickets advanced to Done in Linear
+        remain in the gates list indefinitely.
+        """
+        if not self._pending_gates:
+            return
+
+        gate_ids = list(self._pending_gates.keys())
+        try:
+            client = self._ensure_linear_client()
+            states = await client.fetch_issue_states_by_ids(gate_ids)
+        except Exception as e:
+            logger.warning(f"Gate eviction state fetch failed: {e}")
+            return
+
+        terminal_lower = {s.strip().lower() for s in self.cfg.terminal_linear_states()}
+
+        for issue_id in gate_ids:
+            current_state = states.get(issue_id)
+            if current_state is None:
+                continue
+            if current_state.strip().lower() in terminal_lower:
+                gate_state = self._pending_gates.pop(issue_id, None)
+                self._issue_current_state.pop(issue_id, None)
+                self._issue_state_runs.pop(issue_id, None)
+                self._last_session_ids.pop(issue_id, None)
+                self.claimed.discard(issue_id)
+                ident = self._last_issues.get(
+                    issue_id, Issue(id="", identifier=issue_id, title="")
+                ).identifier
+                logger.info(
+                    f"Gate evicted issue={ident} was={gate_state} "
+                    f"(moved to terminal: {current_state})"
+                )
+
+    async def _rebuild_gates_from_linear(self):
+        """Rebuild _pending_gates from Linear state on startup.
+
+        Fetches all tickets currently in gate-flagged Linear states (Awaiting CI,
+        Human Review, Rework) and reconstructs their gate tracking by reading the
+        most recent stokowski tracking comment on each issue.  This ensures the
+        dashboard is accurate immediately after a restart, not only after
+        Stokowski itself dispatches them in the new process lifetime.
+
+        Fallback: if no tracking comment is found, derives the gate state from
+        the ticket's current Linear state by matching against configured gate
+        states' linear_state keys.  This handles tickets that were moved to a
+        gate-flagged state by an agent (via Linear MCP) before Stokowski's own
+        gate-entry comment was posted.
+        """
+        gate_states = self.cfg.gate_linear_states()
+        if not gate_states:
+            return
+
+        # Also include Rework — reworked tickets still hold pending gate context
+        all_gate_states = list(gate_states)
+        rework_state = self.cfg.linear_states.rework
+        if rework_state and rework_state not in all_gate_states:
+            all_gate_states.append(rework_state)
+
+        try:
+            client = self._ensure_linear_client()
+            issues = await client.fetch_issues_by_states(
+                self.cfg.tracker.project_slug, all_gate_states
+            )
+        except Exception as e:
+            logger.warning(f"Gate rebuild from Linear failed: {e}")
+            return
+
+        rebuilt = 0
+        for issue in issues:
+            if issue.id in self._pending_gates:
+                continue  # Already tracked
+
+            # Store minimal issue record so the dashboard can show the identifier
+            if issue.id not in self._last_issues:
+                self._last_issues[issue.id] = issue
+
+            # Try to recover gate state and run counter from tracking comments
+            gate_state: str | None = None
+            run = 1
+            try:
+                comments = await client.fetch_comments(issue.id)
+                tracking = parse_latest_tracking(comments)
+            except Exception as e:
+                logger.warning(
+                    f"Failed to fetch comments for gate rebuild "
+                    f"{issue.identifier}: {e}"
+                )
+                tracking = None
+
+            if tracking and tracking.get("type") == "gate":
+                tracked_name = tracking.get("state", "")
+                run = tracking.get("run", 1)
+                if tracked_name in self.cfg.states:
+                    gate_state = tracked_name
+
+            # Fallback: derive gate state from the current Linear state name by
+            # matching against configured gate states' linear_state keys
+            if not gate_state:
+                current_linear = issue.state.strip().lower()
+                for gname, gcfg in self.cfg.states.items():
+                    if gcfg.type == "gate":
+                        gate_linear = _resolve_linear_state_name(
+                            gcfg.linear_state, self.cfg.linear_states
+                        )
+                        if gate_linear.strip().lower() == current_linear:
+                            gate_state = gname
+                            run = 1
+                            break
+
+            if gate_state:
+                self._pending_gates[issue.id] = gate_state
+                self._issue_current_state[issue.id] = gate_state
+                self._issue_state_runs[issue.id] = run
+                rebuilt += 1
+                logger.info(
+                    f"Gate rebuilt issue={issue.identifier} "
+                    f"gate={gate_state} run={run} (recovered from Linear)"
+                )
+
+        if rebuilt:
+            logger.info(f"Gate rebuild complete: {rebuilt} gate(s) recovered from Linear")
+
     async def _tick(self):
         """Single poll tick: reconcile, validate, fetch, dispatch."""
         # Reload workflow (supports hot-reload)
@@ -521,8 +769,11 @@ class Orchestrator:
         # Part 1: Reconcile running issues
         await self._reconcile()
 
-        # Handle gate responses
+        # Handle gate responses (approve / rework transitions)
         await self._handle_gate_responses()
+
+        # Evict gate entries whose tickets have moved to terminal states
+        await self._evict_terminal_gates()
 
         # Part 2: Validate config
         if errors:
@@ -562,14 +813,22 @@ class Orchestrator:
                     logger.warning(f"Failed to resolve state for {issue.identifier}: {e}")
 
         # Part 5: Dispatch
-        available_slots = max(
-            self.cfg.agent.max_concurrent_agents - len(self.running), 0
-        )
+        self._queued = []  # reset per-tick queue snapshot
 
         for issue in candidates:
-            if available_slots <= 0:
-                break
             if not self._is_eligible(issue):
+                continue
+
+            can, reason = self._has_slot()
+            if not can:
+                self._queued.append({
+                    "issue_id": issue.id,
+                    "issue_identifier": issue.identifier,
+                    "title": issue.title,
+                    "priority": issue.priority,
+                    "state": issue.state,
+                    "reason": reason or "blocked",
+                })
                 continue
 
             # Per-state concurrency check
@@ -583,10 +842,30 @@ class Orchestrator:
                     == state_key
                 )
                 if state_count >= state_limit:
+                    self._queued.append({
+                        "issue_id": issue.id,
+                        "issue_identifier": issue.identifier,
+                        "title": issue.title,
+                        "priority": issue.priority,
+                        "state": issue.state,
+                        "reason": f"per-state cap ({state_key})",
+                    })
                     continue
 
+            # Reserve the global slot before _dispatch so the pool stays
+            # consistent with what we believe is in flight.
+            if not self._claim_slot(issue.id):
+                self._queued.append({
+                    "issue_id": issue.id,
+                    "issue_identifier": issue.identifier,
+                    "title": issue.title,
+                    "priority": issue.priority,
+                    "state": issue.state,
+                    "reason": "no global slot",
+                })
+                continue
+
             self._dispatch(issue)
-            available_slots -= 1
 
     def _is_eligible(self, issue: Issue) -> bool:
         """Check if an issue is eligible for dispatch."""
@@ -622,9 +901,11 @@ class Orchestrator:
         if not state_name:
             state_name = self.cfg.entry_state
 
-        # If at a gate, enter it instead of dispatching a worker
+        # If at a gate, enter it instead of dispatching a worker.
+        # Release the slot we reserved — the gate path doesn't run an agent.
         state_cfg = self.cfg.states.get(state_name) if state_name else None
         if state_cfg and state_cfg.type == "gate":
+            self._release_slot(issue.id)
             asyncio.create_task(self._safe_enter_gate(issue, state_name))
             return
 
@@ -944,6 +1225,7 @@ class Orchestrator:
 
         self.running.pop(issue.id, None)
         self._tasks.pop(issue.id, None)
+        self._release_slot(issue.id)
 
         if attempt.status == "succeeded":
             if attempt.state_name and attempt.state_name in self.cfg.states:
@@ -1033,12 +1315,17 @@ class Orchestrator:
             logger.info(f"Retry: issue {entry.identifier} no longer active, releasing")
             return
 
-        # Check slots
-        available = max(
-            self.cfg.agent.max_concurrent_agents - len(self.running), 0
-        )
-        if available <= 0:
-            # Re-queue
+        # Check slots via the same path as the dispatch loop
+        can, reason = self._has_slot()
+        if not can:
+            self._schedule_retry(
+                issue,
+                attempt_num=entry.attempt,
+                delay_ms=10_000,
+                error=reason or "no available orchestrator slots",
+            )
+            return
+        if not self._claim_slot(issue.id):
             self._schedule_retry(
                 issue,
                 attempt_num=entry.attempt,
@@ -1097,6 +1384,12 @@ class Orchestrator:
                 self.running.pop(issue_id, None)
                 self._tasks.pop(issue_id, None)
                 self.claimed.discard(issue_id)
+                self._release_slot(issue_id)
+                # Clean up state caches so stale entries don't accumulate
+                self._issue_current_state.pop(issue_id, None)
+                self._issue_state_runs.pop(issue_id, None)
+                self._pending_gates.pop(issue_id, None)
+                self._last_session_ids.pop(issue_id, None)
 
             elif state_lower == review_lower:
                 # In review/gate state — stop worker but keep gate tracking
@@ -1105,6 +1398,7 @@ class Orchestrator:
                     task.cancel()
                 self.running.pop(issue_id, None)
                 self._tasks.pop(issue_id, None)
+                self._release_slot(issue_id)
 
             elif state_lower not in active_lower:
                 # Neither active nor terminal nor review - stop without cleanup
@@ -1117,6 +1411,7 @@ class Orchestrator:
                 self.running.pop(issue_id, None)
                 self._tasks.pop(issue_id, None)
                 self.claimed.discard(issue_id)
+                self._release_slot(issue_id)
 
     def get_state_snapshot(self) -> dict[str, Any]:
         """Get current runtime state for observability."""
@@ -1126,16 +1421,21 @@ class Orchestrator:
             for r in self.running.values()
             if r.started_at
         )
+        project_name = self.project_name or ""
 
         return {
             "generated_at": now.isoformat(),
+            "project_name": project_name,
+            "paused": self.pool.is_paused(project_name) if self.pool is not None else False,
             "counts": {
                 "running": len(self.running),
                 "retrying": len(self.retry_attempts),
                 "gates": len(self._pending_gates),
+                "queued": len(self._queued),
             },
             "running": [
                 {
+                    "project_name": project_name,
                     "issue_id": r.issue_id,
                     "issue_identifier": r.issue_identifier,
                     "session_id": r.session_id,
@@ -1158,6 +1458,7 @@ class Orchestrator:
             ],
             "retrying": [
                 {
+                    "project_name": project_name,
                     "issue_id": e.issue_id,
                     "issue_identifier": e.identifier,
                     "attempt": e.attempt,
@@ -1167,12 +1468,16 @@ class Orchestrator:
             ],
             "gates": [
                 {
+                    "project_name": project_name,
                     "issue_id": issue_id,
                     "issue_identifier": self._last_issues.get(issue_id, Issue(id="", identifier=issue_id, title="")).identifier,
                     "gate_state": gate_state,
                     "run": self._issue_state_runs.get(issue_id, 1),
                 }
                 for issue_id, gate_state in self._pending_gates.items()
+            ],
+            "queued": [
+                {**q, "project_name": project_name} for q in self._queued
             ],
             "totals": {
                 "input_tokens": self.total_input_tokens,
@@ -1181,5 +1486,207 @@ class Orchestrator:
                 "seconds_running": round(
                     self.total_seconds_running + active_seconds, 1
                 ),
+            },
+        }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Multi-project coordinator
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class MultiOrchestrator:
+    """Owns N per-project Orchestrators sharing one ConcurrencyPool.
+
+    Both single-project and multi-project workflows are run through this
+    coordinator — single-project just means N=1. The coordinator handles
+    shared concurrency, aggregated dashboard state, pause/resume,
+    keyboard handler context, and cooperative startup/shutdown.
+    """
+
+    def __init__(self, workflow_path: str | Path):
+        self.workflow_path = Path(workflow_path)
+        self.pool = ConcurrencyPool()
+        self.orchestrators: dict[str, Orchestrator] = {}  # project_name -> Orchestrator
+        self._tasks: list[asyncio.Task] = []
+        self._stop_event: asyncio.Event | None = None
+
+    # ── Config wiring ──────────────────────────────────────────────────────
+
+    def _initial_load(self) -> tuple[list[ProjectConfig], list[str]]:
+        """Parse the workflow file. Returns (projects, errors)."""
+        try:
+            full = parse_workflow_file(self.workflow_path)
+        except Exception as e:
+            return [], [f"Workflow load error: {e}"]
+        errors = validate_config(full.config)
+        if errors:
+            return [], errors
+        return list(full.config.projects), []
+
+    def _refresh_pool_caps(self) -> None:
+        """Pull global cap + per-project caps from the latest workflow file."""
+        try:
+            full = parse_workflow_file(self.workflow_path)
+        except Exception:
+            return
+        agent = full.config.agent
+        self.pool.global_cap = agent.max_concurrent_agents
+        # Per-project caps: project block override wins, then agent map
+        caps: dict[str, int] = {}
+        for p in full.config.projects:
+            if p.max_concurrent is not None:
+                caps[p.name] = int(p.max_concurrent)
+        for name, val in agent.max_concurrent_per_project.items():
+            caps.setdefault(str(name), int(val))
+        self.pool.per_project_caps = caps
+        # Initial pause states (only applied for newly-seen projects;
+        # don't clobber a runtime toggle by re-reading workflow.yaml)
+        for p in full.config.projects:
+            if p.paused and p.name not in self.pool.running_per_project:
+                self.pool.pause(p.name)
+
+    # ── Lifecycle ──────────────────────────────────────────────────────────
+
+    async def start(self):
+        projects, errors = self._initial_load()
+        if errors:
+            for e in errors:
+                logger.error(f"Config error: {e}")
+            raise RuntimeError(f"Startup validation failed: {errors}")
+
+        self._refresh_pool_caps()
+
+        for project in projects:
+            orch = Orchestrator(
+                workflow_path=self.workflow_path,
+                project_name=project.name,
+                pool=self.pool,
+            )
+            self.orchestrators[project.name] = orch
+
+        logger.info(
+            f"Starting MultiOrchestrator "
+            f"projects=[{', '.join(self.orchestrators.keys())}] "
+            f"global_cap={self.pool.global_cap}"
+        )
+
+        self._stop_event = asyncio.Event()
+
+        # Start a periodic pool refresher so global cap and per-project
+        # caps track hot-reloaded workflow.yaml changes.
+        self._tasks.append(asyncio.create_task(self._pool_refresh_loop()))
+
+        # Run all per-project orchestrators concurrently
+        for orch in self.orchestrators.values():
+            self._tasks.append(asyncio.create_task(orch.start()))
+
+        # Block until stop()
+        await self._stop_event.wait()
+
+    async def _pool_refresh_loop(self):
+        """Re-read workflow.yaml periodically to pick up cap changes."""
+        try:
+            while True:
+                await asyncio.sleep(30)
+                self._refresh_pool_caps()
+        except asyncio.CancelledError:
+            return
+
+    async def stop(self):
+        """Stop all orchestrators in parallel."""
+        if self._stop_event is not None:
+            self._stop_event.set()
+        # Stop all per-project orchestrators
+        await asyncio.gather(
+            *(o.stop() for o in self.orchestrators.values()),
+            return_exceptions=True,
+        )
+        for t in self._tasks:
+            t.cancel()
+
+    # ── Pause / resume ─────────────────────────────────────────────────────
+
+    @property
+    def project_names(self) -> list[str]:
+        return list(self.orchestrators.keys())
+
+    def is_paused(self, project_name: str) -> bool:
+        return self.pool.is_paused(project_name)
+
+    def pause(self, project_name: str) -> bool:
+        if project_name not in self.orchestrators:
+            return False
+        self.pool.pause(project_name)
+        return True
+
+    def resume(self, project_name: str) -> bool:
+        if project_name not in self.orchestrators:
+            return False
+        self.pool.resume(project_name)
+        return True
+
+    def toggle(self, project_name: str) -> bool:
+        if project_name not in self.orchestrators:
+            return False
+        return self.pool.toggle(project_name)
+
+    # ── Aggregated state for dashboard / status table ──────────────────────
+
+    async def force_tick(self):
+        """Trigger an immediate tick on every orchestrator."""
+        await asyncio.gather(
+            *(o._tick() for o in self.orchestrators.values()),
+            return_exceptions=True,
+        )
+
+    def get_state_snapshot(self) -> dict[str, Any]:
+        """Aggregate all orchestrator snapshots into one combined view."""
+        now = datetime.now(timezone.utc)
+        per_project: list[dict[str, Any]] = []
+        running: list[dict] = []
+        retrying: list[dict] = []
+        gates: list[dict] = []
+        queued: list[dict] = []
+        total_input = 0
+        total_output = 0
+        total_tokens = 0
+        total_seconds = 0.0
+        for name, orch in self.orchestrators.items():
+            snap = orch.get_state_snapshot()
+            per_project.append({
+                "name": name,
+                "paused": snap["paused"],
+                "counts": snap["counts"],
+                "totals": snap["totals"],
+            })
+            running.extend(snap["running"])
+            retrying.extend(snap["retrying"])
+            gates.extend(snap["gates"])
+            queued.extend(snap["queued"])
+            total_input += snap["totals"]["input_tokens"]
+            total_output += snap["totals"]["output_tokens"]
+            total_tokens += snap["totals"]["total_tokens"]
+            total_seconds += snap["totals"]["seconds_running"]
+        return {
+            "generated_at": now.isoformat(),
+            "projects": per_project,
+            "pool": self.pool.snapshot(),
+            "counts": {
+                "running": len(running),
+                "retrying": len(retrying),
+                "gates": len(gates),
+                "queued": len(queued),
+                "projects": len(per_project),
+            },
+            "running": running,
+            "retrying": retrying,
+            "gates": gates,
+            "queued": queued,
+            "totals": {
+                "input_tokens": total_input,
+                "output_tokens": total_output,
+                "total_tokens": total_tokens,
+                "seconds_running": round(total_seconds, 1),
             },
         }
