@@ -430,20 +430,21 @@ class Orchestrator:
                 )
                 await client.post_comment(issue.id, comment)
 
-                # Follow approve transition
+                # Set current state to the gate so _transition can read FROM it,
+                # then route through _transition. This dispatches the approve
+                # transition through the existing target-type logic, which
+                # correctly handles terminal targets (move to terminal Linear
+                # state + clean up workspace), gate targets (enter the new
+                # gate), and agent targets (post state comment + move to active
+                # Linear state + schedule retry).
+                #
+                # Previously this branch unconditionally moved the Linear ticket
+                # to `active` regardless of the approve target's type, which left
+                # tickets stuck in `In Progress` forever for any workflow whose
+                # gate transitions directly to a terminal state.
                 self._issue_current_state[issue.id] = gate_state
-                gate_cfg = self.cfg.states.get(gate_state)
-                if gate_cfg and "approve" in gate_cfg.transitions:
-                    target = gate_cfg.transitions["approve"]
-                    self._issue_current_state[issue.id] = target
-
-                active_state = self.cfg.linear_states.active
-                moved = await client.update_issue_state(issue.id, active_state)
-                if moved:
-                    issue.state = active_state
-                else:
-                    logger.warning(f"Failed to move {issue.identifier} to active after gate approval")
                 self._last_issues[issue.id] = issue
+                await self._transition(issue, "approve")
                 logger.info(f"Gate approved issue={issue.identifier} gate={gate_state}")
 
         # Fetch rework issues
