@@ -441,10 +441,14 @@ def _parse_states(raw: dict[str, Any]) -> dict[str, StateConfig]:
     return out
 
 
-def _merge_dict(default: dict[str, Any] | None, override: dict[str, Any] | None) -> dict[str, Any]:
-    """Shallow merge two YAML dicts; override wins on conflict."""
-    out: dict[str, Any] = dict(default or {})
-    out.update(override or {})
+def _deep_merge_dict(base: dict[str, Any] | None, override: dict[str, Any] | None) -> dict[str, Any]:
+    """Deep merge two dicts; override wins on conflict."""
+    out: dict[str, Any] = dict(base or {})
+    for k, v in (override or {}).items():
+        if k in out and isinstance(out[k], dict) and isinstance(v, dict):
+            out[k] = _deep_merge_dict(out[k], v)
+        else:
+            out[k] = v
     return out
 
 
@@ -453,20 +457,58 @@ def _build_project(
     raw: dict[str, Any],
     defaults: dict[str, Any],
     workflow_dir: Path,
+    templates: dict[str, dict[str, Any]] | None = None,
 ) -> ProjectConfig:
-    """Build a ProjectConfig by merging top-level defaults with per-project overrides."""
-    # tracker / workspace / hooks / prompts / states are project-scoped;
-    # they may inherit nothing from top-level when `projects:` is used,
-    # so use the project block directly. linear_states / claude inherit
-    # from top-level defaults and are overlaid with per-project values.
-    tracker_raw = raw.get("tracker", {}) or defaults.get("tracker", {}) or {}
-    workspace_raw = raw.get("workspace", {}) or defaults.get("workspace", {}) or {}
-    hooks_raw = raw.get("hooks", {}) or defaults.get("hooks", {}) or {}
-    prompts_raw = raw.get("prompts", {}) or defaults.get("prompts", {}) or {}
-    states_raw = raw.get("states") or defaults.get("states") or {}
+    """Build a ProjectConfig by merging template + top-level defaults + per-project overrides.
 
-    linear_states_raw = _merge_dict(defaults.get("linear_states"), raw.get("linear_states"))
-    claude_raw = _merge_dict(defaults.get("claude"), raw.get("claude"))
+    Merge priority (highest wins):
+      1. Per-project block fields
+      2. Template fields (if template: is set)
+      3. Top-level defaults (linear_states, claude only)
+
+    For fields that are dicts of dicts (linear_states, claude), a deep merge is
+    applied so projects can override individual sub-keys without repeating the rest.
+    For simple dicts (tracker, workspace, hooks, prompts, states), the override
+    completely replaces the default — except for `states`, where individual state
+    keys are merged (project can override one state without touching others).
+    """
+    templates = templates or {}
+
+    # Resolve template reference
+    template_name = str(raw.get("template") or "")
+    template_raw: dict[str, Any] = {}
+    if template_name:
+        if template_name not in templates:
+            raise ValueError(
+                f"project '{name}': template '{template_name}' not found "
+                f"(available: {', '.join(sorted(templates.keys())) or 'none'})"
+            )
+        template_raw = templates[template_name]
+
+    # Simple override fields (tracker, workspace, hooks, prompts):
+    # Merge dicts so project partially overrides template (project wins on conflict).
+    # Priority: raw > defaults > template
+    tracker_raw = {**template_raw.get("tracker", {}), **(defaults.get("tracker") or {}), **(raw.get("tracker") or {})}
+    workspace_raw = {**template_raw.get("workspace", {}), **(defaults.get("workspace") or {}), **(raw.get("workspace") or {})}
+    hooks_raw = {**template_raw.get("hooks", {}), **(defaults.get("hooks") or {}), **(raw.get("hooks") or {})}
+    prompts_raw = {**template_raw.get("prompts", {}), **(defaults.get("prompts") or {}), **(raw.get("prompts") or {})}
+
+    # Deep-merge fields (linear_states, claude): project > template > defaults
+    linear_states_raw = _deep_merge_dict(
+        template_raw.get("linear_states"),
+        _deep_merge_dict(defaults.get("linear_states"), raw.get("linear_states")),
+    )
+    claude_raw = _deep_merge_dict(
+        template_raw.get("claude"),
+        _deep_merge_dict(defaults.get("claude"), raw.get("claude")),
+    )
+
+    # States: merge individual state keys. Project overrides specific states;
+    # template states not mentioned in project are preserved.
+    # Priority: raw > defaults > template
+    states_raw: dict[str, Any] = dict(template_raw.get("states") or {})
+    states_raw.update(defaults.get("states") or {})
+    states_raw.update(raw.get("states") or {})
 
     return ProjectConfig(
         name=name,
@@ -545,6 +587,12 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
     projects_raw = config_raw.get("projects")
     projects: list[ProjectConfig] = []
 
+    # Parse top-level templates (available to all projects)
+    templates_raw: dict[str, dict[str, Any]] = {}
+    for tname, tval in (config_raw.get("templates") or {}).items():
+        if isinstance(tval, dict):
+            templates_raw[str(tname)] = tval
+
     if projects_raw is not None:
         # Multi-project mode. Top-level tracker/workspace/hooks/prompts/states
         # are not allowed in this mode (would be ambiguous). Top-level claude
@@ -572,7 +620,7 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
             if name in seen_names:
                 raise ValueError(f"Duplicate project name: {name}")
             seen_names.add(name)
-            projects.append(_build_project(name, raw, defaults, workflow_dir))
+            projects.append(_build_project(name, raw, defaults, workflow_dir, templates_raw))
     else:
         # Legacy single-project mode. Build one ProjectConfig from top-level.
         tracker_raw = config_raw.get("tracker", {}) or {}
@@ -586,7 +634,7 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
             "claude": config_raw.get("claude") or {},
         }
         name = _legacy_project_name(tracker_raw, path)
-        projects.append(_build_project(name, synthetic_raw, {}, workflow_dir))
+        projects.append(_build_project(name, synthetic_raw, {}, workflow_dir, templates_raw))
 
     # Populate top-level fields from projects[0] for backward compat.
     p0 = projects[0]

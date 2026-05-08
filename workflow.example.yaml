@@ -66,6 +66,66 @@
 #
 # In the terminal, `p` opens a numbered pause menu; in the web dashboard, each
 # project tile gets a Pause/Resume button and a per-project filter dropdown.
+#
+# -----------------------------------------------------------------------------
+# Project templates (optional — reduces duplication across similar projects)
+# -----------------------------------------------------------------------------
+#
+# When multiple projects share most of their configuration, define a reusable
+# `templates:` block and reference it with `template:` in each project.
+# Merge priority (highest wins): project block > template > top-level defaults.
+#
+# Simple fields (tracker, workspace, hooks, prompts) are shallow-merged:
+# a project can override individual sub-fields without repeating the rest.
+#
+# Deep fields (linear_states, claude) are deep-merged: a project can override
+# individual keys (e.g. claude.model) while keeping the rest from the template.
+#
+# States are merged by key: a project can override one state while keeping all
+# other states from the template intact.
+#
+# Templates cannot reference other templates (single-layer only).
+#
+#   templates:
+#     default-project:
+#       tracker:
+#         kind: linear
+#         api_key: "$LINEAR_API_KEY"           # shared by all projects
+#       hooks:
+#         after_create: git clone git@github.com:org/repo.git .
+#       prompts:
+#         global_prompt: prompts/global.md
+#       claude:
+#         model: claude-sonnet-4-6
+#         max_turns: 20
+#       linear_states:
+#         todo: "Todo"
+#         active: "In Progress"
+#         terminal: ["Done", "Closed"]
+#       states:
+#         investigate:
+#           type: agent
+#           prompt: prompts/investigate.md
+#           linear_state: active
+#           transitions:
+#             complete: done
+#         done:
+#           type: terminal
+#           linear_state: terminal
+#
+#   projects:
+#     - name: project-a
+#       template: default-project               # inherit from template
+#       tracker:
+#         project_slug: "abc123"                # only override project_slug
+#     - name: project-b
+#       template: default-project
+#       tracker:
+#         project_slug: "def456"
+#       workspace:
+#         root: /tmp/project-b                  # override workspace root
+#       claude:
+#         model: claude-opus-4-7               # override model for this project
 # =============================================================================
 
 # ---------------------------------------------------------------------------
