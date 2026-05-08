@@ -30,7 +30,23 @@ an investigation summary posted as a Linear comment — not code changes.
    - **Affected files** with brief explanation of needed changes
    - **Risks or open questions**
    - **Proposed approach** (high-level, 3-5 bullet points)
-6. Post the summary as a Linear comment titled `## Investigation`.
+6. Post the summary as a Linear comment titled `## Investigation`:
+   ```
+   gh issue comment {{ issue.identifier }} --body "$(cat <<'COMMENT'
+   ## Investigation
+
+   <root cause / requirements>
+
+   ### Affected files
+   - ...
+
+   ### Proposed approach
+   - ...
+
+   <!-- END STOKOWSKI LIFECYCLE -->
+   COMMENT
+   )"
+   ```
 7. Update the workpad with investigation status.
 
 ## Rework run
@@ -41,8 +57,22 @@ If this is a rework run (the workspace already has investigation content):
 2. Read your prior investigation summary.
 3. Address the specific feedback — expand analysis, correct mistakes, or
    investigate additional areas as requested.
-4. Update the `## Investigation` comment with revised findings.
-5. Append a rework note to the workpad.
+4. Update the `## Investigation` comment (append rework note):
+   ```
+   gh issue comment {{ issue.identifier }} --body "$(cat <<'COMMENT'
+   ## Investigation
+
+   [Prior findings]
+
+   ### Rework (Run N, YYYY-MM-DD)
+
+   [Updated findings]
+
+   <!-- END STOKOWSKI LIFECYCLE -->
+   COMMENT
+   )"
+   ```
+5. Append a rework section to the workpad.
 
 ## Do NOT
 

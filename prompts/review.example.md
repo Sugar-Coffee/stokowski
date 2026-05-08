@@ -39,9 +39,18 @@ the implementer missed — not to rubber-stamp the PR.
    - Linting
    - Tests
 6. Post your review as a Linear comment titled `## Code Review`:
+   ```
+   gh issue comment {{ issue.identifier }} --body "$(cat <<'COMMENT'
+   ## Code Review
+
    - List issues found (critical, major, minor)
    - Note anything that looks good
-   - Give an overall assessment: approve, request changes, or flag concerns
+   - Overall assessment: approve / request changes / flag concerns
+
+   <!-- END STOKOWSKI LIFECYCLE -->
+   COMMENT
+   )"
+   ```
 
 ## Rework run
 
@@ -54,7 +63,21 @@ If this is a rework run (the review stage is being re-run after changes):
    ```
 3. Verify that previously raised issues have been addressed.
 4. Check for any new issues introduced by the rework.
-5. Post an updated `## Code Review` comment with your revised assessment.
+5. Post an updated `## Code Review` comment:
+   ```
+   gh issue comment {{ issue.identifier }} --body "$(cat <<'COMMENT'
+   ## Code Review
+
+   [Prior findings]
+
+   ### Updated (Run N)
+
+   [Revised assessment]
+
+   <!-- END STOKOWSKI LIFECYCLE -->
+   COMMENT
+   )"
+   ```
 
 ## Guidelines
 
