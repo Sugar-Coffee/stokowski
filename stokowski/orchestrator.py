@@ -1001,6 +1001,7 @@ class Orchestrator:
                     comment = make_state_comment(
                         state=state_name,
                         run=run,
+                        workspace_path=str(ws.path),
                     )
                     await client.post_comment(issue.id, comment)
 
