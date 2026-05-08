@@ -108,6 +108,18 @@ def build_template_context(
         "issue_state": issue.state,
         "issue_branch": issue.branch_name or "",
         "issue_labels": issue.labels,
+        # Nested `issue` dict for templates that use `{{ issue.identifier }}` etc.
+        "issue": {
+            "id": issue.id,
+            "identifier": issue.identifier,
+            "title": issue.title,
+            "description": issue.description or "",
+            "url": issue.url or "",
+            "priority": issue.priority,
+            "state": issue.state,
+            "branch": issue.branch_name or "",
+            "labels": issue.labels,
+        },
         "state_name": state_name,
         "run": run,
         "attempt": attempt,
