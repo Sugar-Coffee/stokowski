@@ -1654,8 +1654,56 @@ class MultiOrchestrator:
 
     # ── Aggregated state for dashboard / status table ──────────────────────
 
+    def _sync_orchestrators(self) -> None:
+        """Sync orchestrator instances to match current workflow.yaml.
+
+        Creates new Orchestrator instances for newly added projects and
+        removes stale ones for deleted projects. Shares the same
+        ConcurrencyPool with all instances so global + per-project caps
+        are honoured across the full set.
+
+        Safe to call while the orchestrators are running — only adds or
+        removes entries; existing running workers are unaffected.
+        """
+        try:
+            full = parse_workflow_file(self.workflow_path)
+        except Exception:
+            return
+
+        current_names = set(full.config.projects)
+        existing_names = set(self.orchestrators)
+
+        # Add new orchestrators for projects not yet tracked
+        for project in full.config.projects:
+            if project.name not in existing_names:
+                logger.info(f"New project detected, adding orchestrator: {project.name}")
+                orch = Orchestrator(
+                    workflow_path=self.workflow_path,
+                    project_name=project.name,
+                    pool=self.pool,
+                )
+                self.orchestrators[project.name] = orch
+                # Start the new orchestrator's poll loop so it can receive ticks
+                asyncio.create_task(orch.start())
+                logger.info(f"Orchestrator started for new project: {project.name}")
+
+        # Remove stale orchestrators for projects deleted from config
+        stale = existing_names - current_names
+        for name in stale:
+            logger.info(f"Project removed from config, stopping orchestrator: {name}")
+            orch = self.orchestrators.pop(name, None)
+            if orch is not None:
+                asyncio.create_task(orch.stop())
+
     async def force_tick(self):
-        """Trigger an immediate tick on every orchestrator."""
+        """Refresh project list and trigger an immediate tick on every orchestrator.
+
+        Refreshes the pool caps and syncs the orchestrator list from the
+        latest workflow.yaml, then dispatches a poll tick on all active
+        orchestrators. Called when the user presses 'r' in the TUI.
+        """
+        self._refresh_pool_caps()
+        self._sync_orchestrators()
         await asyncio.gather(
             *(o._tick() for o in self.orchestrators.values()),
             return_exceptions=True,
