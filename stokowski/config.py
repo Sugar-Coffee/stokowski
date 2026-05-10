@@ -31,11 +31,19 @@ class PollingConfig:
 @dataclass
 class WorkspaceConfig:
     root: str = ""
+    base_clone: str = ""          # git URL for the shared base clone (worktree mode)
+    use_worktree: bool = False     # use git worktree instead of repeated clone
 
     def resolved_root(self) -> Path:
         if self.root:
             return Path(os.path.expandvars(os.path.expanduser(self.root)))
         return Path(tempfile.gettempdir()) / "stokowski_workspaces"
+
+    def resolved_base_clone(self) -> Path | None:
+        """Path to the shared base clone directory, or None if not configured."""
+        if not self.base_clone:
+            return None
+        return self.resolved_root() / ".stokowski-base-clone"
 
 
 @dataclass
@@ -389,7 +397,11 @@ def _parse_tracker(raw: dict[str, Any]) -> TrackerConfig:
 
 
 def _parse_workspace(raw: dict[str, Any]) -> WorkspaceConfig:
-    return WorkspaceConfig(root=str(raw.get("root", "")))
+    return WorkspaceConfig(
+        root=str(raw.get("root", "")),
+        base_clone=str(raw.get("base_clone", "")),
+        use_worktree=bool(raw.get("use_worktree", False)),
+    )
 
 
 def _parse_full_hooks(raw: dict[str, Any]) -> HooksConfig:

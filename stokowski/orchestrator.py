@@ -287,7 +287,7 @@ class Orchestrator:
             )
             ws_root = self.cfg.workspace.resolved_root()
             for issue in terminal:
-                await remove_workspace(ws_root, issue.identifier, self.cfg.hooks)
+                await remove_workspace(ws_root, issue.identifier, self.cfg.hooks, self.cfg.workspace)
             if terminal:
                 logger.info(f"Cleaned {len(terminal)} terminal workspaces")
         except Exception as e:
@@ -492,7 +492,7 @@ class Orchestrator:
             # Clean up workspace
             try:
                 ws_root = self.cfg.workspace.resolved_root()
-                await remove_workspace(ws_root, issue.identifier, self.cfg.hooks)
+                await remove_workspace(ws_root, issue.identifier, self.cfg.hooks, self.cfg.workspace)
             except Exception as e:
                 logger.warning(f"Failed to remove workspace for {issue.identifier}: {e}")
             # Clean up tracking state
@@ -982,7 +982,7 @@ class Orchestrator:
                 runner_type = state_cfg.runner
 
             ws_root = self.cfg.workspace.resolved_root()
-            ws = await ensure_workspace(ws_root, issue.identifier, self.cfg.hooks)
+            ws = await ensure_workspace(ws_root, issue.identifier, self.cfg.hooks, self.cfg.workspace)
             attempt.workspace_path = str(ws.path)
 
             # Move issue from Todo to In Progress if needed
@@ -1399,7 +1399,7 @@ class Orchestrator:
                 if attempt:
                     ws_root = self.cfg.workspace.resolved_root()
                     await remove_workspace(
-                        ws_root, attempt.issue_identifier, self.cfg.hooks
+                        ws_root, attempt.issue_identifier, self.cfg.hooks, self.cfg.workspace
                     )
 
                 self.running.pop(issue_id, None)
