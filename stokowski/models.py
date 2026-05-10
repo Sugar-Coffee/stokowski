@@ -48,6 +48,7 @@ class RunAttempt:
     last_message: str = ""
     completed_at: datetime | None = None
     state_name: str | None = None       # current internal state machine state
+    full_result: str = ""               # full result text for auto-posting to Linear
 
 
 @dataclass

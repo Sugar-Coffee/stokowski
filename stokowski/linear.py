@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime
 
@@ -304,17 +305,59 @@ class LinearClient:
 
         return issues
 
-    async def post_comment(self, issue_id: str, body: str) -> bool:
-        """Post a comment on a Linear issue. Returns True on success."""
-        try:
-            data = await self._graphql(
-                COMMENT_CREATE_MUTATION,
-                {"issueId": issue_id, "body": body},
-            )
-            return data.get("commentCreate", {}).get("success", False)
-        except Exception as e:
-            logger.error(f"Failed to post comment on {issue_id}: {e}")
-            return False
+    async def post_comment(self, issue_id: str, body: str, max_retries: int = 3) -> bool:
+        """Post a comment on a Linear issue. Returns True on success.
+
+        Retries on transient failures (network, rate limit) with exponential backoff.
+        """
+        last_error: str | None = None
+        for attempt in range(max_retries):
+            try:
+                data = await self._graphql(
+                    COMMENT_CREATE_MUTATION,
+                    {"issueId": issue_id, "body": body},
+                )
+                success = data.get("commentCreate", {}).get("success", False)
+                if success:
+                    return True
+                # Non-success response (e.g. Linear validation failure) — don't retry
+                logger.warning(
+                    f"post_comment failed (non-success) issue={issue_id} "
+                    f"attempt={attempt + 1}/{max_retries}"
+                )
+                return False
+            except httpx.HTTPStatusError as e:
+                # Retry on 429 (rate limit) and 5xx server errors
+                if e.response.status_code in (429, 502, 503, 504):
+                    last_error = f"HTTP {e.response.status_code}"
+                    delay_ms = min(1000 * (2 ** attempt), 8000)
+                    logger.warning(
+                        f"post_comment retryable error issue={issue_id} "
+                        f"attempt={attempt + 1}/{max_retries}: {last_error} — "
+                        f"retrying in {delay_ms}ms"
+                    )
+                    await asyncio.sleep(delay_ms / 1000)
+                    continue
+                # 4xx client errors (except 429) — don't retry
+                logger.error(f"post_comment non-retryable error issue={issue_id}: {e}")
+                return False
+            except Exception as e:
+                last_error = str(e)
+                if attempt < max_retries - 1:
+                    delay_ms = min(1000 * (2 ** attempt), 8000)
+                    logger.warning(
+                        f"post_comment error issue={issue_id} "
+                        f"attempt={attempt + 1}/{max_retries}: {last_error} — "
+                        f"retrying in {delay_ms}ms"
+                    )
+                    await asyncio.sleep(delay_ms / 1000)
+                else:
+                    logger.error(
+                        f"post_comment failed after {max_retries} attempts issue={issue_id}: "
+                        f"{last_error}",
+                        exc_info=True,
+                    )
+        return False
 
     async def fetch_comments(self, issue_id: str) -> list[dict]:
         """Fetch all comments on a Linear issue. Returns list of {id, body, createdAt}."""

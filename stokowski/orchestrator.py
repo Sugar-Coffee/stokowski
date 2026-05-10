@@ -194,6 +194,18 @@ class Orchestrator:
             )
         return self._linear
 
+    async def _safe_post_comment(self, issue_id: str, body: str, context: str = "") -> bool:
+        """Post a comment, logging errors without propagating. Returns True on success."""
+        try:
+            client = self._ensure_linear_client()
+            return await client.post_comment(issue_id, body)
+        except Exception as e:
+            logger.error(
+                f"Failed to post comment on {issue_id}{f' ({context})' if context else ''}: {e}",
+                exc_info=True,
+            )
+            return False
+
     async def start(self):
         """Start the orchestration loop."""
         errors = self._load_workflow()
@@ -378,7 +390,7 @@ class Orchestrator:
             prompt=prompt or "",
             run=run,
         )
-        await client.post_comment(issue.id, comment)
+        await self._safe_post_comment(issue.id, comment, "gate-enter")
 
         # Use the gate's own linear_state (per workflow.yaml), not a global one.
         # Previously this hardcoded `linear_states.review`, which forced every
@@ -503,7 +515,7 @@ class Orchestrator:
                 state=target_name,
                 run=run,
             )
-            await client.post_comment(issue.id, comment)
+            await self._safe_post_comment(issue.id, comment, "state-transition")
 
             # Ensure issue is in active Linear state
             active_state = self.cfg.linear_states.active
@@ -548,7 +560,7 @@ class Orchestrator:
                 comment = make_gate_comment(
                     state=gate_state, status="approved", run=run,
                 )
-                await client.post_comment(issue.id, comment)
+                await self._safe_post_comment(issue.id, comment, "gate-approved")
 
                 # Set current state to the gate so _transition can read FROM it,
                 # then route through _transition. This dispatches the approve
@@ -603,7 +615,7 @@ class Orchestrator:
                     comment = make_gate_comment(
                         state=gate_state, status="escalated", run=run,
                     )
-                    await client.post_comment(issue.id, comment)
+                    await self._safe_post_comment(issue.id, comment, "gate-escalated")
                     logger.warning(
                         f"Max rework exceeded issue={issue.identifier} "
                         f"gate={gate_state} run={run} max={max_rework}"
@@ -617,7 +629,7 @@ class Orchestrator:
                     state=gate_state, status="rework",
                     rework_to=rework_to, run=new_run,
                 )
-                await client.post_comment(issue.id, comment)
+                await self._safe_post_comment(issue.id, comment, "gate-rework")
 
                 self._issue_current_state[issue.id] = rework_to
 
@@ -997,13 +1009,12 @@ class Orchestrator:
             if state_name:
                 run = self._issue_state_runs.get(issue.id, 1)
                 if run == 1 and (attempt.attempt is None or attempt.attempt == 0):
-                    client = self._ensure_linear_client()
                     comment = make_state_comment(
                         state=state_name,
                         run=run,
                         workspace_path=str(ws.path),
                     )
-                    await client.post_comment(issue.id, comment)
+                    await self._safe_post_comment(issue.id, comment, "state-enter")
 
             # Run on_stage_enter hook if defined
             if state_cfg and state_cfg.hooks and state_cfg.hooks.on_stage_enter:
@@ -1017,7 +1028,7 @@ class Orchestrator:
                 if not ok:
                     attempt.status = "failed"
                     attempt.error = f"on_stage_enter hook failed for state {state_name}"
-                    self._on_worker_exit(issue, attempt)
+                    await self._on_worker_exit(issue, attempt)
                     return
 
             prompt = await self._render_prompt_async(issue, attempt.attempt, state_name)
@@ -1088,17 +1099,17 @@ class Orchestrator:
                     if attempt.status != "succeeded":
                         break
 
-            self._on_worker_exit(issue, attempt)
+            await self._on_worker_exit(issue, attempt)
 
         except asyncio.CancelledError:
             logger.info(f"Worker cancelled issue={issue.identifier}")
             attempt.status = "canceled"
-            self._on_worker_exit(issue, attempt)
+            await self._on_worker_exit(issue, attempt)
         except Exception as e:
             logger.error(f"Worker error issue={issue.identifier}: {e}")
             attempt.status = "failed"
             attempt.error = str(e)
-            self._on_worker_exit(issue, attempt)
+            await self._on_worker_exit(issue, attempt)
 
     async def _render_prompt_async(
         self, issue: Issue, attempt_num: int | None, state_name: str | None = None
@@ -1207,7 +1218,7 @@ class Orchestrator:
         """Callback for agent events."""
         logger.debug(f"Agent event issue={identifier} type={event_type}")
 
-    def _on_worker_exit(self, issue: Issue, attempt: RunAttempt):
+    async def _on_worker_exit(self, issue: Issue, attempt: RunAttempt):
         """Handle worker completion."""
         self.total_input_tokens += attempt.input_tokens
         self.total_output_tokens += attempt.output_tokens
@@ -1227,6 +1238,15 @@ class Orchestrator:
         self.running.pop(issue.id, None)
         self._tasks.pop(issue.id, None)
         self._release_slot(issue.id)
+
+        # Auto-post agent results to Linear so work is never lost even if the
+        # agent doesn't use Linear MCP. Only post meaningful non-empty content.
+        if attempt.status == "succeeded" and attempt.full_result:
+            result_text = attempt.full_result.strip()
+            # Skip trivial single-word completions (agent probably already posted)
+            if len(result_text) > 10 and result_text.lower() not in ("done", "completed", "done.", "completed."):
+                auto_post = f"**[Stokowski]** State **{attempt.state_name or 'unknown'}** completed.\n\n---\n\n{result_text[:4000]}"
+                await self._safe_post_comment(issue.id, auto_post, "auto-result")
 
         if attempt.status == "succeeded":
             if attempt.state_name and attempt.state_name in self.cfg.states:
