@@ -92,6 +92,9 @@ class Orchestrator:
         # Eligible-but-not-dispatched (queue panel data, refreshed each tick)
         self._queued: list[dict] = []
 
+        # Issues pending slot allocation from MultiOrchestrator pool (multi-project mode)
+        self._pending_slot_request: set[str] = set()
+
         # Issues that currently hold a pool slot. Used to ensure each
         # try_claim has exactly one matching release, even when the
         # worker is cancelled mid-flight from multiple paths.
@@ -1564,8 +1567,32 @@ class MultiOrchestrator:
         self.orchestrators: dict[str, Orchestrator] = {}  # project_name -> Orchestrator
         self._tasks: list[asyncio.Task] = []
         self._stop_event: asyncio.Event | None = None
+        self._linear: LinearClient | None = None
+        self._linear_endpoint: str = "https://api.linear.app/graphql"
+        self._linear_api_key: str = ""
 
     # ── Config wiring ──────────────────────────────────────────────────────
+
+    def _ensure_linear_client(self) -> LinearClient:
+        """Lazily create a LinearClient from the first project's config."""
+        if self._linear is None:
+            if not self.orchestrators:
+                raise RuntimeError("No orchestrators initialized")
+            cfg = next(iter(self.orchestrators.values())).cfg
+            self._linear = LinearClient(
+                endpoint=cfg.tracker.endpoint,
+                api_key=cfg.resolved_api_key(),
+            )
+        return self._linear
+
+    def _get_linear_client_unchecked(self) -> LinearClient:
+        """Create a LinearClient without requiring orchestrators to exist yet."""
+        if self._linear is None:
+            self._linear = LinearClient(
+                endpoint=self._linear_endpoint,
+                api_key=self._linear_api_key,
+            )
+        return self._linear
 
     def _initial_load(self) -> tuple[list[ProjectConfig], list[str]]:
         """Parse the workflow file. Returns (projects, errors)."""
@@ -1600,6 +1627,38 @@ class MultiOrchestrator:
             if p.paused and p.name not in self.pool.running_per_project:
                 self.pool.pause(p.name)
 
+    async def _refresh_project_priorities(self) -> None:
+        """Fetch Linear project priorities and update the pool.
+
+        Builds a slugId->priority map, then resolves project names via
+        workflow.yaml project_slug. Projects with priority 0 (unset) sort last.
+        """
+        if not self.orchestrators:
+            return
+        try:
+            client = self._ensure_linear_client()
+            slug_priorities = await client.fetch_project_priorities()
+        except Exception as e:
+            logger.warning(f"Failed to refresh project priorities: {e}")
+            return
+
+        # Map project name -> priority via project_slug in workflow
+        priorities: dict[str, int] = {}
+        try:
+            full = parse_workflow_file(self.workflow_path)
+        except Exception:
+            return
+        for p in full.config.projects:
+            slug = p.tracker.project_slug
+            if slug and slug in slug_priorities:
+                priorities[p.name] = slug_priorities[slug]
+        self.pool.project_priority = priorities
+        if priorities:
+            logger.debug(
+                f"Project priorities updated: "
+                f"{', '.join(f'{n}={p}' for n, p in sorted(priorities.items(), key=lambda x: x[1]))}"
+            )
+
     # ── Lifecycle ──────────────────────────────────────────────────────────
 
     async def start(self):
@@ -1618,6 +1677,9 @@ class MultiOrchestrator:
                 pool=self.pool,
             )
             self.orchestrators[project.name] = orch
+
+        # Fetch initial project priorities from Linear (requires orchestrators to exist)
+        await self._refresh_project_priorities()
 
         logger.info(
             f"Starting MultiOrchestrator "
@@ -1639,11 +1701,12 @@ class MultiOrchestrator:
         await self._stop_event.wait()
 
     async def _pool_refresh_loop(self):
-        """Re-read workflow.yaml periodically to pick up cap changes."""
+        """Re-read workflow.yaml periodically to pick up cap and priority changes."""
         try:
             while True:
                 await asyncio.sleep(30)
                 self._refresh_pool_caps()
+                await self._refresh_project_priorities()
         except asyncio.CancelledError:
             return
 

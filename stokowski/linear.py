@@ -137,6 +137,19 @@ query($issueId: String!) {
 }
 """
 
+PROJECTS_QUERY = """
+query {
+  projects(first: 50) {
+    nodes {
+      id
+      name
+      slugId
+      priority
+    }
+  }
+}
+"""
+
 
 def _parse_datetime(val: str | None) -> datetime | None:
     if not val:
@@ -409,3 +422,26 @@ class LinearClient:
         except Exception as e:
             logger.error(f"Failed to update state for {issue_id}: {e}")
             return False
+
+    async def fetch_project_priorities(self) -> dict[str, int]:
+        """Fetch all projects' priorities. Returns {slugId: priority}.
+
+        Linear priority: 0=none, 1=urgent, 2=high, 3=medium, 4=low.
+        Lower number = higher priority.
+        Projects with priority 0 (unset) are returned but sort last.
+        """
+        try:
+            data = await self._graphql(PROJECTS_QUERY, {})
+            result: dict[str, int] = {}
+            for node in data.get("projects", {}).get("nodes", []):
+                slug_id = node.get("slugId")
+                priority = node.get("priority")
+                if slug_id and priority is not None:
+                    try:
+                        result[slug_id] = int(priority)
+                    except (ValueError, TypeError):
+                        pass
+            return result
+        except Exception as e:
+            logger.error(f"Failed to fetch project priorities: {e}")
+            return {}
