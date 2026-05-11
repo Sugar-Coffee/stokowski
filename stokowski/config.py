@@ -147,6 +147,10 @@ class ProjectConfig:
     workflow_dir: Path = field(default_factory=lambda: Path("."))
     # Per-project cap (overrides AgentConfig.max_concurrent_per_project[name]).
     max_concurrent: int | None = None
+    # Label routing: maps lowercased label name -> template name.
+    # Used by the orchestrator to select which template's entry_state to use
+    # when dispatching an issue that has no prior tracking comment.
+    label_routing: dict[str, str] = field(default_factory=dict)
 
     def resolved_api_key(self) -> str:
         key = self.tracker.api_key
@@ -228,6 +232,9 @@ class ServiceConfig:
     states: dict[str, StateConfig] = field(default_factory=dict)
     projects: list[ProjectConfig] = field(default_factory=list)
     workflow_dir: Path = field(default_factory=lambda: Path("."))
+    # Raw templates dict: template_name -> template dict.
+    # Used by the orchestrator for label_routing template lookups.
+    templates: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def resolved_api_key(self) -> str:
         # Legacy passthrough — delegates to first project.
@@ -464,6 +471,16 @@ def _deep_merge_dict(base: dict[str, Any] | None, override: dict[str, Any] | Non
     return out
 
 
+def get_template_entry_state(templates: dict[str, dict[str, Any]], template_name: str) -> str | None:
+    """Return the first agent state's name for a given template, or None."""
+    t = templates.get(template_name, {})
+    states = t.get("states", {})
+    for name, sc in states.items():
+        if sc.get("type") == "agent":
+            return name
+    return None
+
+
 def _build_project(
     name: str,
     raw: dict[str, Any],
@@ -522,6 +539,13 @@ def _build_project(
     states_raw.update(defaults.get("states") or {})
     states_raw.update(raw.get("states") or {})
 
+    # Label routing: maps lowercased label -> template name.
+    # Project overrides template; no top-level defaults (routing only lives at project level).
+    label_routing_raw: dict[str, str] = {
+        **template_raw.get("label_routing", {}),
+        **raw.get("label_routing", {}),
+    }
+
     return ProjectConfig(
         name=name,
         paused=bool(raw.get("paused", False)),
@@ -534,6 +558,7 @@ def _build_project(
         claude=_parse_claude(claude_raw),
         workflow_dir=workflow_dir,
         max_concurrent=raw.get("max_concurrent"),
+        label_routing=label_routing_raw,
     )
 
 
@@ -663,6 +688,7 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
         states=p0.states,
         projects=projects,
         workflow_dir=workflow_dir,
+        templates=templates_raw,
     )
 
     return WorkflowDefinition(config=cfg, prompt_template=prompt_template)

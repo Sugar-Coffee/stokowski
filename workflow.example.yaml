@@ -126,6 +126,86 @@
 #         root: /tmp/project-b                  # override workspace root
 #       claude:
 #         model: claude-opus-4-7               # override model for this project
+#
+# -----------------------------------------------------------------------------
+# Label routing (optional — select a template by issue label)
+# -----------------------------------------------------------------------------
+#
+# When multiple flows coexist within the same Linear project, use `label_routing`
+# to select which template's state machine applies to each issue, based on its
+# Linear labels. An issue with no matching label falls back to the project's
+# `template:` (or the first agent state in the project's own states).
+#
+# Example: the same project handles bug, feature, and idea tickets:
+#
+#   templates:
+#     bug-flow:
+#       states:
+#         debug:
+#           type: agent
+#           prompt: prompts/debug.md
+#           transitions: { complete: review }
+#         review:
+#           type: gate; linear_state: review; rework_to: debug
+#           transitions: { approve: merge }
+#         merge:
+#           type: agent; prompt: prompts/merge.md
+#           transitions: { complete: done }
+#         done:
+#           type: terminal; linear_state: terminal
+#
+#     feature-flow:
+#       states:
+#         plan:
+#           type: agent; prompt: prompts/plan.md
+#           transitions: { complete: work }
+#         work:
+#           type: agent; prompt: prompts/work.md
+#           transitions: { complete: review }
+#         review:
+#           type: gate; linear_state: review; rework_to: work
+#           transitions: { approve: merge }
+#         merge:
+#           type: agent; prompt: prompts/merge.md
+#           transitions: { complete: done }
+#         done:
+#           type: terminal; linear_state: terminal
+#
+#     idea-flow:
+#       states:
+#         brainstorm:
+#           type: agent; prompt: prompts/brainstorm.md
+#           transitions: { complete: plan }
+#         plan:
+#           type: agent; prompt: prompts/plan.md
+#           transitions: { complete: work }
+#         work:
+#           type: agent; prompt: prompts/work.md
+#           transitions: { complete: review }
+#         review:
+#           type: gate; linear_state: review; rework_to: work
+#           transitions: { approve: merge }
+#         merge:
+#           type: agent; prompt: prompts/merge.md
+#           transitions: { complete: done }
+#         done:
+#           type: terminal; linear_state: terminal
+#
+#   label_routing:
+#     bug: bug-flow
+#     feature: feature-flow
+#     idea: idea-flow
+#
+#   projects:
+#     - name: default
+#       tracker:
+#         project_slug: "abc123def456"
+#         api_key: "$LINEAR_API_KEY"
+#       template: bug-flow              # default fallback for unmatched labels
+#       label_routing:
+#         bug: bug-flow
+#         feature: feature-flow
+#         idea: idea-flow
 # =============================================================================
 
 # ---------------------------------------------------------------------------

@@ -9,7 +9,7 @@ import signal
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from jinja2 import Environment, StrictUndefined, TemplateSyntaxError
 
@@ -21,6 +21,7 @@ from .config import (
     StateConfig,
     WorkflowDefinition,
     _resolve_linear_state_name,
+    get_template_entry_state,
     merge_state_config,
     parse_workflow_file,
     validate_config,
@@ -116,6 +117,7 @@ class Orchestrator:
             states=project.states,
             projects=[project],
             workflow_dir=full.config.workflow_dir,
+            templates=full.config.templates,
         )
         return WorkflowDefinition(config=project_cfg, prompt_template=full.prompt_template)
 
@@ -148,6 +150,8 @@ class Orchestrator:
             if project is None:
                 return [f"Project '{self.project_name}' not found in workflow file"]
 
+        # project is guaranteed non-None here (either projects[0] or found by name)
+        project = cast(ProjectConfig, project)
         self.workflow = self._project_view(full, project)
         self.project = project
         return []
@@ -293,6 +297,29 @@ class Orchestrator:
         except Exception as e:
             logger.warning(f"Startup cleanup failed (continuing): {e}")
 
+    def _resolve_label_entry_state(self, issue: Issue) -> str | None:
+        """Resolve entry state for a new issue based on label routing.
+
+        Iterates over issue.labels (already lowercase) in order and returns
+        the entry state of the first matching template. Falls back to None
+        (caller uses the project's default entry_state).
+        """
+        label_routing = self.project.label_routing if self.project else {}
+        if not label_routing:
+            return None
+        templates = self.cfg.templates
+        for label in issue.labels:
+            template_name = label_routing.get(label)
+            if template_name:
+                entry = get_template_entry_state(templates, template_name)
+                if entry:
+                    logger.debug(
+                        f"Label routing issue={issue.identifier} "
+                        f"label={label} → template={template_name} entry={entry}"
+                    )
+                    return entry
+        return None
+
     async def _resolve_current_state(self, issue: Issue) -> tuple[str, int]:
         """Resolve current state machine state for an issue.
         Returns (state_name, run).
@@ -308,12 +335,18 @@ class Orchestrator:
         comments = await client.fetch_comments(issue.id)
         tracking = parse_latest_tracking(comments)
 
-        entry = self.cfg.entry_state
-        if entry is None:
-            raise RuntimeError("No entry state defined in config")
+        # Default entry (used as fallback throughout the method)
+        # validate_config ensures states is non-empty so entry is rarely None,
+        # but we assert to satisfy type checker.
+        _default_entry = self.cfg.entry_state
+        assert _default_entry is not None, "entry_state must not be None — validate_config should have caught this"
+        entry: str = _default_entry
 
-        # No tracking → entry state, run 1
+        # No tracking → resolve entry state via label routing, then fallback
         if tracking is None:
+            routed = self._resolve_label_entry_state(issue)
+            if routed is not None:
+                entry = routed
             self._issue_current_state[issue.id] = entry
             self._issue_state_runs[issue.id] = 1
             return entry, 1
