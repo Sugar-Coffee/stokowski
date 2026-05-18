@@ -354,11 +354,27 @@ def check_ci_status(checks, required_contexts=None):
     return "pass", gating
 
 
+# Matches the same pattern the CI workflow uses:
+#   gh api ... --jq '[.[] | select(.user.login | test("claude"; "i")) | .body]'
+# Only accept REVIEW_VERDICT lines from accounts whose login contains "claude"
+# (case-insensitive). This prevents false-positive reworks when the Linear bot
+# posts an issue description that quotes a prior REVIEW_VERDICT: REQUEST_CHANGES
+# from a different PR — the linear[bot] login does not contain "claude", so it
+# is filtered out.
+REVIEWER_LOGIN_RE = re.compile(r"claude", re.IGNORECASE)
+
+
 def reviewer_verdict(comments, after=None):
     """Return ``(verdict, body)`` from the most recent ``REVIEW_VERDICT:`` comment.
 
     *comments* is the list of comment dicts from
-    ``fetch_symphony_pr_full``: each has ``body`` and ``createdAt``.
+    ``fetch_symphony_pr_full``: each has ``body``, ``createdAt``, and
+    ``author { login }``.
+
+    Only accepts verdict comments from authors whose login matches
+    ``REVIEWER_LOGIN_RE`` (contains "claude", case-insensitive). This filters
+    out the Linear bot's issue-description comment, which may quote prior
+    ``REVIEW_VERDICT: REQUEST_CHANGES`` lines from unrelated PRs.
 
     Returns ``(None, None)`` when no verdict is found or when the latest
     verdict predates *after* (an ISO-8601 timestamp). A verdict older
@@ -371,6 +387,10 @@ def reviewer_verdict(comments, after=None):
     # Walk newest-first so the most recent verdict wins (reviewer can re-review
     # after a push). The GraphQL query returns oldest-first, so reverse here.
     for c in reversed(comments):
+        author = c.get("author") or {}
+        login = author.get("login", "")
+        if not REVIEWER_LOGIN_RE.search(login):
+            continue
         body = c.get("body", "")
         m = VERDICT_RE.search(body)
         if m:
@@ -610,6 +630,12 @@ def _count_retrigger_markers(issue_id, pr_num):
     markers gives the attempt number without any external state — the Linear
     comment thread IS the durable counter, consistent with how every other
     idempotency guard in this script works (rescue-, ci-fail-, review-fail-).
+
+    Note: the Linear query is capped at ``first: 100`` comments. On tickets
+    with more than 100 comments the retrigger markers may be outside the
+    window, causing the cap (``CI_RETRIGGER_MAX_ATTEMPTS``) to be silently
+    bypassed. In practice this only affects very busy tickets; the 60-min
+    Rework gate provides a backstop.
     """
     data = gql(
         """
@@ -684,14 +710,20 @@ def _retrigger_ci(pr):
             # reviewer confusion between `-f` (raw string) and `-F` (typed bool).
         ])
     except subprocess.TimeoutExpired:
-        print(f"warning: re-trigger timeout on PR #{pr.get('number')}", file=sys.stderr)
+        # Printed to stdout so it appears in the poller's systemd journal
+        # (stderr is often swallowed by the rate-limit wrapper). A timeout
+        # here points at a GitHub API issue, not a stuck runner.
+        print(f"[retrigger] FAIL PR #{pr.get('number')}: gh api timed out (>30s) — possible GitHub API issue")
         return None
     except subprocess.CalledProcessError as e:
         err = (e.stderr or "").strip().replace("\n", " ")[:200]
+        # Printed to stdout for the same journal visibility reason. A non-zero
+        # exit from gh api usually means a 422 (branch protection, wrong token
+        # scope, or the ref no longer exists) — distinct from "CI is just slow".
         print(
-            f"warning: re-trigger failed for PR #{pr.get('number')} "
-            f"(rc={e.returncode}): {err}",
-            file=sys.stderr,
+            f"[retrigger] FAIL PR #{pr.get('number')} "
+            f"(gh api rc={e.returncode}): {err} — "
+            f"check token scope / branch protection; this is not a stuck runner"
         )
         return None
     except (KeyError, ValueError) as e:

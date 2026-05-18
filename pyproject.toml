@@ -15,6 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 web = ["fastapi>=0.115", "uvicorn>=0.32"]
+dev = ["pytest>=8.0"]
 
 [project.urls]
 Homepage = "https://github.com/Sugar-Coffee/stokowski"
@@ -22,6 +23,9 @@ Repository = "https://github.com/Sugar-Coffee/stokowski"
 
 [tool.setuptools.packages.find]
 include = ["stokowski*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [project.scripts]
 stokowski = "stokowski.main:cli"

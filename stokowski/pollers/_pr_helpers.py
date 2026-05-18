@@ -284,7 +284,7 @@ query SymphonyPRs($owner: String!, $name: String!) {
       labels: ["symphony"]
       states: [OPEN]
       orderBy: { field: UPDATED_AT, direction: DESC }
-      first: 50
+      first: 100
     ) {
       pageInfo { hasNextPage }
       nodes {
@@ -329,6 +329,9 @@ query SymphonyPRs($owner: String!, $name: String!) {
           nodes {
             body
             createdAt
+            author {
+              login
+            }
           }
         }
       }
@@ -337,7 +340,7 @@ query SymphonyPRs($owner: String!, $name: String!) {
       labels: ["symphony"]
       states: [CLOSED, MERGED]
       orderBy: { field: UPDATED_AT, direction: DESC }
-      first: 50
+      first: 100
     ) {
       nodes {
         number
