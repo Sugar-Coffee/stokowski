@@ -201,6 +201,7 @@ def _resolve_linear_state_name(key: str, ls: LinearStatesConfig) -> str:
     """Resolve a logical state key to the actual Linear state name."""
     mapping: dict[str, str] = {
         "active": ls.active,
+        "awaiting_ci": ls.awaiting_ci,
         "review": ls.review,
         "gate_approved": ls.gate_approved,
         "rework": ls.rework,

@@ -19,6 +19,7 @@ from .config import (
     ServiceConfig,
     StateConfig,
     WorkflowDefinition,
+    _resolve_linear_state_name,
     merge_state_config,
     parse_workflow_file,
     validate_config,
@@ -268,11 +269,17 @@ class Orchestrator:
         )
         await client.post_comment(issue.id, comment)
 
-        review_state = self.cfg.linear_states.review
-        moved = await client.update_issue_state(issue.id, review_state)
+        # Use the gate's own linear_state (per workflow.yaml), not a global one.
+        # Previously this hardcoded `linear_states.review`, which forced every
+        # gate entry — including `await_ci_and_review` — straight to "Human
+        # Review", bypassing the CI+reviewer poller entirely.
+        linear_key = state_cfg.linear_state if state_cfg else "review"
+        target_linear_state = _resolve_linear_state_name(linear_key, self.cfg.linear_states)
+        moved = await client.update_issue_state(issue.id, target_linear_state)
         if not moved:
             logger.error(
-                f"Failed to move {issue.identifier} to review state '{review_state}' "
+                f"Failed to move {issue.identifier} to gate linear state "
+                f"'{target_linear_state}' (gate={state_name}) "
                 f"— issue will remain claimed to prevent re-dispatch loop"
             )
             # Keep claimed so the issue doesn't get re-dispatched while
