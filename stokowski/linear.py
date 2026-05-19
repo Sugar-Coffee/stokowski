@@ -378,7 +378,21 @@ class LinearClient:
             return False
 
     async def fetch_comments(self, issue_id: str) -> list[dict]:
-        """Fetch all comments on a Linear issue. Returns list of {id, body, createdAt}."""
+        """Fetch all comments on a Linear issue. Returns list of {id, body, createdAt}.
+
+        Consults the warm cache first (if configured and fresh). Falls through
+        to direct Linear API calls when the cache is absent, stale, or returns
+        no results.
+
+        Unlike fetch_candidate_issues / fetch_issues_by_states, the cache
+        lookup here is by issue UUID — no slug/UUID mismatch — so this is the
+        primary steady-state win once the warm cache is populated.
+        """
+        if self._cache and self._cache.is_fresh():
+            rows = self._cache.get_comments_for_issue(issue_id)
+            if rows:
+                return rows
+        # ── original Linear path below, unchanged ──
         try:
             data = await self._graphql(COMMENTS_QUERY, {"issueId": issue_id})
             issue = data.get("issue", {})

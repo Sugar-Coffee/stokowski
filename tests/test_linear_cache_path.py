@@ -77,3 +77,21 @@ class TestFetchByStates:
         client._graphql = AsyncMock(side_effect=AssertionError("should not hit Linear"))
         issues = await client.fetch_issues_by_states("p1", ["Todo", "In Progress"])
         assert {i.identifier for i in issues} == {"SYN-100", "SYN-101"}
+
+
+class TestFetchComments:
+    @pytest.mark.asyncio
+    async def test_reads_from_cache(self, cache_db):
+        conn = sqlite3.connect(cache_db)
+        for cid, body in (("c1", "first"), ("c2", "second")):
+            conn.execute(
+                "INSERT INTO comment VALUES (?,?,?,?,?,?,?)",
+                (cid, "u1", body, "a1", ISO_NOW, ISO_NOW, ISO_NOW),
+            )
+        conn.commit()
+        conn.close()
+
+        client = LinearClient("https://api.linear.app/graphql", "k1", cache_db_path=cache_db)
+        client._graphql = AsyncMock(side_effect=AssertionError("should not hit Linear"))
+        comments = await client.fetch_comments("u1")
+        assert {c["body"] for c in comments} == {"first", "second"}
