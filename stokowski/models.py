@@ -48,6 +48,12 @@ class RunAttempt:
     last_message: str = ""
     completed_at: datetime | None = None
     state_name: str | None = None       # current internal state machine state
+    # HEAD SHA of the agent's workspace branch when the worker was spawned.
+    # Used by _on_worker_exit to detect whether the agent actually committed:
+    # if the post-exit HEAD == this value, the agent ran but didn't make any
+    # commits — we treat that as "no real work happened" and stay in the
+    # current state instead of transitioning forward. Keeps Rework "sticky".
+    head_sha_at_dispatch: str | None = None
 
 
 @dataclass

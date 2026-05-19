@@ -707,6 +707,22 @@ class Orchestrator:
             ws = await ensure_workspace(ws_root, issue.identifier, self.cfg.hooks)
             attempt.workspace_path = str(ws.path)
 
+            # Capture HEAD SHA at dispatch so _on_worker_exit can detect whether
+            # the agent actually committed. If the SHA is unchanged on exit, the
+            # agent ran without producing any new code — we keep the issue in
+            # its current state (no transition forward), which makes Rework
+            # "sticky" until real work lands.
+            try:
+                import subprocess
+                head_result = subprocess.run(
+                    ["git", "-C", str(ws.path), "rev-parse", "HEAD"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                if head_result.returncode == 0:
+                    attempt.head_sha_at_dispatch = head_result.stdout.strip()
+            except Exception as e:
+                logger.warning(f"Failed to capture head SHA for {issue.identifier}: {e}")
+
             # Move issue from Todo to In Progress if needed
             todo_state = self.cfg.linear_states.todo
             if todo_state and issue.state.strip().lower() == todo_state.strip().lower():
@@ -961,7 +977,38 @@ class Orchestrator:
         self._tasks.pop(issue.id, None)
 
         if attempt.status == "succeeded":
-            if attempt.state_name and attempt.state_name in self.cfg.states:
+            # Sticky Rework: if the agent didn't actually commit anything,
+            # don't transition forward. A "succeeded" status with no commits
+            # means the agent exited cleanly but did no work (e.g. early
+            # return on a misread ticket, no-op rebase exit, fast cancellation
+            # mid-tick). Without this guard, the orchestrator would advance
+            # the ticket through await_ci_and_review → which stalls in
+            # Awaiting CI until a human bounces it back.
+            no_commits = False
+            if attempt.head_sha_at_dispatch and attempt.workspace_path:
+                try:
+                    import subprocess
+                    post = subprocess.run(
+                        ["git", "-C", attempt.workspace_path, "rev-parse", "HEAD"],
+                        capture_output=True, text=True, timeout=5,
+                    )
+                    if post.returncode == 0:
+                        post_sha = post.stdout.strip()
+                        if post_sha == attempt.head_sha_at_dispatch:
+                            no_commits = True
+                            logger.warning(
+                                f"Agent for {issue.identifier} succeeded but produced no commits "
+                                f"(HEAD unchanged at {post_sha[:7]}). "
+                                f"Skipping forward transition — staying in current state for retry."
+                            )
+                except Exception as e:
+                    logger.warning(f"Failed to check post-exit HEAD for {issue.identifier}: {e}")
+
+            if no_commits:
+                # Stay in current state — schedule a retry. This makes Rework
+                # sticky: an unproductive agent run doesn't drain the queue.
+                self._schedule_retry(issue, attempt_num=(attempt.attempt or 0) + 1, delay_ms=30_000)
+            elif attempt.state_name and attempt.state_name in self.cfg.states:
                 # State machine mode: transition via "complete"
                 asyncio.create_task(self._safe_transition(issue, "complete"))
             else:
