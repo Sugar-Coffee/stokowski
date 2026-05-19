@@ -41,7 +41,7 @@ query($projectSlug: String!, $states: [String!]!, $after: String) {
       inverseRelations {
         nodes {
           type
-          relatedIssue {
+          issue {
             id
             identifier
             state { name }
@@ -156,7 +156,13 @@ def _normalize_issue(node: dict) -> Issue:
     blockers = []
     for rel in (node.get("inverseRelations", {}) or {}).get("nodes", []):
         if rel.get("type") == "blocks":
-            ri = rel.get("relatedIssue", {}) or {}
+
+            # Local patch for upstream bug: was rel["relatedIssue"] (which is the
+            # current issue, not the blocker). Linear's IssueRelation.issue is
+            # the source/blocker; .relatedIssue is the target/blocked.
+            # Tracking: https://github.com/Sugar-Coffee/stokowski/issues/20
+        
+            ri = rel.get("issue", {}) or {}
             blockers.append(
                 BlockerRef(
                     id=ri.get("id"),

@@ -149,6 +149,7 @@ Linear issue → isolated git clone → agent (Claude or Codex) → PR + Human R
 
 ## Features
 
+- **Multi-project orchestration** — monitor any number of Linear projects from one Stokowski process. Each project has its own repo/workspace/hooks/prompts/state machine but shares one global concurrency pool, with optional per-project caps for fairness. Single-project workflows keep working unchanged.
 - **Configurable state machine** — define agent stages, human gates, and transitions in `workflow.yaml`; issues flow through your pipeline automatically
 - **Multi-runner** — Claude Code and Codex in the same pipeline; different states can use different runners and models (e.g. Opus for investigation, Sonnet for implementation, Codex for review)
 - **Three-layer prompt assembly** — global prompt + per-stage prompt + auto-injected lifecycle context; each layer is a Jinja2 template with full issue variables
@@ -452,7 +453,8 @@ Open `http://localhost:4200` for the live dashboard.
 |-----|--------|
 | `q` | Graceful shutdown — kills all agents, exits cleanly |
 | `s` | Status table — running agents, token usage |
-| `r` | Force an immediate Linear poll |
+| `p` | Pause/resume a project — opens a numbered menu of projects to toggle dispatch on/off |
+| `r` | Force an immediate Linear poll on every project |
 | `h` | Help |
 
 ---
@@ -460,7 +462,91 @@ Open `http://localhost:4200` for the live dashboard.
 ## Configuration reference
 
 <details>
-<summary><strong>Full workflow.yaml schema</strong></summary>
+<summary><strong>Multi-project schema (one daemon, many Linear projects)</strong></summary>
+
+To monitor multiple Linear projects from one Stokowski process, replace the
+top-level `tracker / workspace / hooks / prompts / states` blocks with a
+`projects:` list. Each project carries its own tracker, workspace, hooks,
+prompts, and state machine. Top-level `polling`, `agent`, `claude`,
+`linear_states`, and `server` stay global — every project inherits them and
+may override `claude` or `linear_states` per project.
+
+```yaml
+polling: { interval_ms: 30000 }
+
+agent:
+  max_concurrent_agents: 8           # global pool across all projects
+  max_concurrent_per_project:        # optional per-project fairness caps
+    synced-sport: 6
+    client-site:  2
+
+claude:                              # default; per-project blocks may override
+  permission_mode: auto
+  model: claude-sonnet-4-6
+  max_turns: 30
+
+linear_states:                       # default Linear state names
+  todo: "Todo"
+  active: "In Progress"
+  review: "Human Review"
+  gate_approved: "Gate Approved"
+  rework: "Rework"
+  terminal: [Done, Cancelled]
+
+server: { port: 4200 }
+
+projects:
+  - name: synced-sport               # required, used in dashboard + `p` menu
+    tracker:
+      kind: linear
+      project_slug: "abc123def456"
+      api_key: "$LINEAR_API_KEY"
+    workspace:
+      root: ~/.local/share/stokowski/workspaces/synced-sport
+    hooks:
+      after_create: |
+        git clone --depth 1 git@github.com:org/synced-sport.git .
+    prompts:
+      global_prompt: prompts/synced-sport/global.md
+    states: { ... }                  # state machine (same as single-project)
+
+  - name: client-site
+    paused: true                     # start paused; toggle with `p`
+    tracker:
+      kind: linear
+      project_slug: "def456abc789"
+      api_key: "$LINEAR_API_KEY"
+    workspace:
+      root: ~/.local/share/stokowski/workspaces/client-site
+    hooks:
+      after_create: |
+        git clone --depth 1 git@github.com:org/client-site.git .
+    prompts:
+      global_prompt: prompts/client-site/global.md
+    claude: { model: claude-opus-4-7 }   # per-project override
+    max_concurrent: 2                    # per-project cap (alt to agent map above)
+    states: { ... }
+```
+
+Per-project knobs:
+
+| Field | Description |
+|-------|-------------|
+| `name` (required) | Identifier — appears in the dashboard, the `p` pause menu, the `STOKOWSKI_PROJECT` env var, and the per-project workspace key |
+| `paused` | Start paused at boot (true/false). Toggle at runtime with `p` or the dashboard pause button |
+| `max_concurrent` | Per-project cap; takes precedence over `agent.max_concurrent_per_project[name]`. Both still bounded by global `agent.max_concurrent_agents` |
+| `tracker / workspace / hooks / prompts / states` | Required, same shape as single-project mode |
+| `claude / linear_states` | Optional; merged on top of the top-level defaults |
+
+The web dashboard adds a project filter dropdown, per-project tiles with
+Pause/Resume buttons, and a "Queued" panel showing eligible-but-not-dispatched
+issues with the reason (paused, no global slot, per-state cap). Single-project
+setups still work unchanged — the `projects:` block is optional.
+
+</details>
+
+<details>
+<summary><strong>Single-project schema (legacy / backward-compat)</strong></summary>
 
 ```yaml
 tracker:

@@ -21,6 +21,51 @@
 #   agent    — Stokowski dispatches Claude Code in this state
 #   gate     — pauses for human review; approve → next, rework → rework_to
 #   terminal — issue is finished; workspace cleaned up
+#
+# -----------------------------------------------------------------------------
+# Multi-project mode (optional — single-project YAML below still works as-is)
+# -----------------------------------------------------------------------------
+#
+# To monitor multiple Linear projects from one Stokowski process, replace the
+# top-level `tracker / workspace / hooks / prompts / states` blocks with a
+# `projects:` list. Each entry has its own tracker/workspace/hooks/prompts/
+# state machine. Top-level `polling`, `agent`, `claude`, `linear_states`, and
+# `server` stay global and act as defaults each project can override.
+#
+#   agent:
+#     max_concurrent_agents: 8                  # global pool across all projects
+#     max_concurrent_per_project:               # optional fairness caps
+#       synced-sport: 6
+#       client-site:  2
+#
+#   projects:
+#     - name: synced-sport                      # required, used in dashboard + `p` menu
+#       tracker:
+#         kind: linear
+#         project_slug: "abc123def456"
+#         api_key: "$LINEAR_API_KEY"
+#       workspace:
+#         root: ~/.local/share/stokowski/workspaces/synced-sport
+#       hooks: { after_create: "git clone git@github.com:org/synced-sport.git ." }
+#       prompts: { global_prompt: prompts/synced-sport/global.md }
+#       states: { ... }                         # state machine, same as single-project
+#
+#     - name: client-site
+#       paused: true                            # start paused; toggle with `p` key
+#       tracker:
+#         kind: linear
+#         project_slug: "def456abc789"
+#         api_key: "$LINEAR_API_KEY"
+#       workspace:
+#         root: ~/.local/share/stokowski/workspaces/client-site
+#       hooks: { after_create: "git clone git@github.com:org/client-site.git ." }
+#       prompts: { global_prompt: prompts/client-site/global.md }
+#       claude: { model: claude-opus-4-7 }      # per-project override
+#       max_concurrent: 2                       # per-project cap (also via agent map above)
+#       states: { ... }
+#
+# In the terminal, `p` opens a numbered pause menu; in the web dashboard, each
+# project tile gets a Pause/Resume button and a per-project filter dropdown.
 # =============================================================================
 
 # ---------------------------------------------------------------------------

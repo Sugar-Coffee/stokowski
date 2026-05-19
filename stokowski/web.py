@@ -6,7 +6,7 @@ import asyncio
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .orchestrator import Orchestrator
+    from .orchestrator import MultiOrchestrator
 
 try:
     from fastapi import FastAPI
@@ -321,6 +321,170 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     font-weight: 300;
   }
 
+  /* ── Projects tiles ── */
+  .projects-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    margin-bottom: 32px;
+  }
+
+  .project-tile {
+    background: var(--surface);
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    transition: background 0.15s;
+  }
+
+  .project-tile:hover {
+    background: #141414;
+  }
+
+  .project-tile.paused {
+    opacity: 0.55;
+  }
+
+  .project-tile-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .project-tile-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--amber);
+    letter-spacing: 0.02em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 140px;
+  }
+
+  .pause-btn {
+    background: transparent;
+    border: 1px solid var(--border-hi);
+    color: var(--muted);
+    font-family: var(--font);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 2px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .pause-btn:hover {
+    border-color: var(--amber-dim);
+    color: var(--amber);
+  }
+
+  .pause-btn.paused {
+    border-color: var(--red);
+    color: var(--red);
+  }
+
+  .project-tile-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    font-size: 11px;
+  }
+
+  .project-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .project-stat-label {
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .project-stat-value {
+    color: var(--text);
+    font-weight: 500;
+    font-size: 13px;
+  }
+
+  /* ── Filter dropdown ── */
+  .filter-select {
+    background: var(--surface);
+    border: 1px solid var(--border-hi);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 11px;
+    padding: 4px 8px;
+    border-radius: 2px;
+    cursor: pointer;
+  }
+
+  .filter-select:focus {
+    outline: none;
+    border-color: var(--amber-dim);
+  }
+
+  /* ── Queue panel ── */
+  .queue-card {
+    background: var(--surface);
+    padding: 12px 18px;
+    display: grid;
+    grid-template-columns: 100px 1fr auto;
+    gap: 14px;
+    align-items: center;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+
+  .queue-card:last-child {
+    border-bottom: none;
+  }
+
+  .queue-id {
+    color: var(--amber);
+    font-weight: 600;
+    font-size: 12px;
+  }
+
+  .queue-title {
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 600px;
+  }
+
+  .queue-reason {
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border: 1px solid var(--border-hi);
+    border-radius: 2px;
+  }
+
+  .queue-reason.paused {
+    color: var(--red);
+    border-color: var(--red);
+  }
+
+  .agent-project {
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.05em;
+    margin-top: 2px;
+  }
+
   /* ── Empty state ── */
   .empty {
     background: var(--surface);
@@ -462,13 +626,34 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </div>
   </div>
 
+  <div id="projects-section" style="display:none">
+    <div class="section-header">
+      <span class="section-title">Projects</span>
+      <div class="section-line"></div>
+      <span class="section-count" id="project-count">0</span>
+    </div>
+    <div id="projects-grid" class="projects-grid"></div>
+  </div>
+
   <div class="section-header">
     <span class="section-title">Active Agents</span>
     <div class="section-line"></div>
+    <select id="project-filter" class="filter-select" onchange="window.__stokowskiSetFilter(this.value)">
+      <option value="">All projects</option>
+    </select>
     <span class="section-count" id="agent-count">0</span>
   </div>
 
   <div id="agents-container"></div>
+
+  <div id="queue-section" style="display:none">
+    <div class="section-header">
+      <span class="section-title">Queued (eligible, waiting)</span>
+      <div class="section-line"></div>
+      <span class="section-count" id="queue-count">0</span>
+    </div>
+    <div id="queue-container"></div>
+  </div>
 
   <div class="stats-bar">
     <div class="stat-item">
@@ -521,11 +706,111 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     return `<span class="status-pill ${cls}">${label}</span>`;
   }
 
+  // Filter state — null means "all projects". Persisted across refreshes.
+  let activeFilter = '';
+  window.__stokowskiSetFilter = (val) => { activeFilter = val || ''; refresh(); };
+
+  function projectMatches(item) {
+    if (!activeFilter) return true;
+    return (item.project_name || '') === activeFilter;
+  }
+
+  async function togglePause(name) {
+    try {
+      await fetch('/api/v1/projects/' + encodeURIComponent(name) + '/toggle', { method: 'POST' });
+      refresh();
+    } catch (e) { /* ignore */ }
+  }
+  window.__stokowskiTogglePause = togglePause;
+
+  function renderProjects(data) {
+    const projects = data.projects || [];
+    const section = document.getElementById('projects-section');
+    if (projects.length <= 1) {
+      // Hide the projects section for single-project setups — keeps the
+      // dashboard clean when there's no multi-project context to surface.
+      section.style.display = 'none';
+    } else {
+      section.style.display = '';
+    }
+    document.getElementById('project-count').textContent = projects.length;
+
+    // Update filter dropdown options (preserve current selection)
+    const sel = document.getElementById('project-filter');
+    const current = sel.value;
+    const wantedNames = projects.map(p => p.name);
+    const existingOpts = Array.from(sel.options).map(o => o.value);
+    const same = wantedNames.length === existingOpts.length - 1 &&
+      wantedNames.every((n, i) => existingOpts[i + 1] === n);
+    if (!same) {
+      sel.innerHTML = '<option value="">All projects</option>' +
+        wantedNames.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+      sel.value = wantedNames.includes(current) ? current : '';
+      activeFilter = sel.value;
+    }
+
+    document.getElementById('projects-grid').innerHTML = projects.map(p => {
+      const tokens = p.totals?.total_tokens || 0;
+      const pauseLabel = p.paused ? 'Resume' : 'Pause';
+      const pauseClass = p.paused ? 'pause-btn paused' : 'pause-btn';
+      return `
+        <div class="project-tile ${p.paused ? 'paused' : ''}">
+          <div class="project-tile-head">
+            <span class="project-tile-name" title="${esc(p.name)}">${esc(p.name)}</span>
+            <button class="${pauseClass}" onclick="window.__stokowskiTogglePause('${esc(p.name)}')">${pauseLabel}</button>
+          </div>
+          <div class="project-tile-stats">
+            <div class="project-stat">
+              <span class="project-stat-label">Run</span>
+              <span class="project-stat-value">${p.counts?.running || 0}</span>
+            </div>
+            <div class="project-stat">
+              <span class="project-stat-label">Gates</span>
+              <span class="project-stat-value">${p.counts?.gates || 0}</span>
+            </div>
+            <div class="project-stat">
+              <span class="project-stat-label">Queue</span>
+              <span class="project-stat-value">${p.counts?.queued || 0}</span>
+            </div>
+            <div class="project-stat">
+              <span class="project-stat-label">Tokens</span>
+              <span class="project-stat-value">${fmt(tokens)}</span>
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  function renderQueue(data) {
+    const queue = (data.queued || []).filter(projectMatches);
+    const section = document.getElementById('queue-section');
+    if (queue.length === 0) {
+      section.style.display = 'none';
+      return;
+    }
+    section.style.display = '';
+    document.getElementById('queue-count').textContent = queue.length;
+    document.getElementById('queue-container').innerHTML =
+      `<div class="agents">` + queue.map(q => {
+        const pausedReason = (q.reason || '').toLowerCase().includes('paused');
+        return `
+          <div class="queue-card">
+            <div>
+              <div class="queue-id">${esc(q.issue_identifier)}</div>
+              ${q.project_name ? `<div class="agent-project">${esc(q.project_name)}</div>` : ''}
+            </div>
+            <div class="queue-title">${esc(q.title || '—')}</div>
+            <div class="queue-reason ${pausedReason ? 'paused' : ''}">${esc(q.reason || '')}</div>
+          </div>`;
+      }).join('') + `</div>`;
+  }
+
   function renderAgents(data) {
     const all = [
       ...(data.running || []),
       ...(data.retrying || []).map(r => ({
         issue_identifier: r.issue_identifier,
+        project_name: r.project_name,
         status: 'retrying',
         turn_count: r.attempt,
         tokens: { total_tokens: 0 },
@@ -534,6 +819,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       })),
       ...(data.gates || []).map(g => ({
         issue_identifier: g.issue_identifier,
+        project_name: g.project_name,
         status: 'gate',
         state_name: g.gate_state,
         turn_count: g.run,
@@ -541,7 +827,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         last_message: 'Awaiting human review',
         session_id: null,
       })),
-    ];
+    ].filter(projectMatches);
 
     document.getElementById('agent-count').textContent = all.length;
 
@@ -556,10 +842,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
     const rows = all.map(r => {
       const stateInfo = r.state_name ? `<span style="color:var(--muted);font-size:11px;margin-left:8px">${esc(r.state_name)}</span>` : '';
+      const projTag = r.project_name ? `<div class="agent-project">${esc(r.project_name)}</div>` : '';
       return `
       <div class="agent-card">
         <div>
           <div class="agent-id">${esc(r.issue_identifier)}</div>
+          ${projTag}
         </div>
         <div>
           <div class="agent-status-row">
@@ -616,7 +904,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       document.getElementById('footer-gen').textContent =
         'last sync ' + now.toLocaleTimeString('en-US', { hour12: false });
 
+      renderProjects(data);
       renderAgents(data);
+      renderQueue(data);
     } catch(e) {
       document.getElementById('status-dot').className = 'status-dot idle';
     }
@@ -630,7 +920,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 """
 
 
-def create_app(orchestrator: Orchestrator) -> FastAPI:
+def create_app(orchestrator: "MultiOrchestrator") -> FastAPI:
     app = FastAPI(title="Stokowski", version="0.1.0")
 
     @app.get("/", response_class=HTMLResponse)
@@ -650,6 +940,9 @@ def create_app(orchestrator: Orchestrator) -> FastAPI:
         for r in snap["retrying"]:
             if r["issue_identifier"] == issue_identifier:
                 return JSONResponse(r)
+        for g in snap["gates"]:
+            if g["issue_identifier"] == issue_identifier:
+                return JSONResponse(g)
         return JSONResponse(
             {"error": {"code": "issue_not_found", "message": f"Unknown: {issue_identifier}"}},
             status_code=404,
@@ -657,7 +950,35 @@ def create_app(orchestrator: Orchestrator) -> FastAPI:
 
     @app.post("/api/v1/refresh")
     async def api_refresh():
-        asyncio.create_task(orchestrator._tick())
+        asyncio.create_task(orchestrator.force_tick())
         return JSONResponse({"ok": True})
+
+    @app.post("/api/v1/projects/{project_name}/pause")
+    async def api_project_pause(project_name: str):
+        if not orchestrator.pause(project_name):
+            return JSONResponse(
+                {"error": {"code": "project_not_found", "message": project_name}},
+                status_code=404,
+            )
+        return JSONResponse({"ok": True, "project": project_name, "paused": True})
+
+    @app.post("/api/v1/projects/{project_name}/resume")
+    async def api_project_resume(project_name: str):
+        if not orchestrator.resume(project_name):
+            return JSONResponse(
+                {"error": {"code": "project_not_found", "message": project_name}},
+                status_code=404,
+            )
+        return JSONResponse({"ok": True, "project": project_name, "paused": False})
+
+    @app.post("/api/v1/projects/{project_name}/toggle")
+    async def api_project_toggle(project_name: str):
+        if project_name not in orchestrator.project_names:
+            return JSONResponse(
+                {"error": {"code": "project_not_found", "message": project_name}},
+                status_code=404,
+            )
+        now_paused = orchestrator.toggle(project_name)
+        return JSONResponse({"ok": True, "project": project_name, "paused": now_paused})
 
     return app
