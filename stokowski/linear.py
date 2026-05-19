@@ -205,15 +205,41 @@ class LinearClient:
         await self._client.aclose()
 
     async def _graphql(self, query: str, variables: dict) -> dict:
-        resp = await self._client.post(
-            self.endpoint,
-            json={"query": query, "variables": variables},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        if "errors" in data:
-            raise RuntimeError(f"Linear GraphQL errors: {data['errors']}")
-        return data.get("data", {})
+        # Linear wraps rate-limit responses in HTTP 400 with a RATELIMITED body
+        # (per-user limit is 2500 req/hr rolling). On hit, sleep 60s and retry
+        # once — gives the rolling window time to age requests out so the rest
+        # of stokowski's tick can complete rather than thrashing the quota.
+        import asyncio
+
+        for attempt in (1, 2):
+            resp = await self._client.post(
+                self.endpoint,
+                json={"query": query, "variables": variables},
+            )
+            if resp.status_code == 400:
+                try:
+                    body = resp.json()
+                except Exception:
+                    resp.raise_for_status()
+                    raise
+                msg = str(body)
+                if "ratelimited" in msg.lower() or "rate limit" in msg.lower():
+                    if attempt == 1:
+                        logger.warning(
+                            "Linear rate-limited; sleeping 60s before single retry"
+                        )
+                        await asyncio.sleep(60)
+                        continue
+                    raise RuntimeError(
+                        f"Linear rate-limit persisted after retry: {msg[:200]}"
+                    )
+            resp.raise_for_status()
+            data = resp.json()
+            if "errors" in data:
+                raise RuntimeError(f"Linear GraphQL errors: {data['errors']}")
+            return data.get("data", {})
+        # Unreachable — loop only completes via `return` or `raise`
+        raise RuntimeError("Linear _graphql exited retry loop without resolution")
 
     async def fetch_candidate_issues(
         self, project_slug: str, active_states: list[str]
