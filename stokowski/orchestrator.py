@@ -300,13 +300,31 @@ class Orchestrator:
         except Exception as e:
             logger.warning(f"Startup cleanup failed (continuing): {e}")
 
+    def _issue_is_auto(self, issue: Issue) -> bool:
+        """Return True if the issue has the auto_label label."""
+        auto_label = self.cfg.linear_states.auto_label
+        if not auto_label:
+            return False
+        return auto_label.lower() in issue.labels
+
     def _resolve_label_entry_state(self, issue: Issue) -> str | None:
         """Resolve entry state for a new issue based on label routing.
 
-        Iterates over issue.labels (already lowercase) in order and returns
-        the entry state of the first matching template. Falls back to None
-        (caller uses the project's default entry_state).
+        Priority:
+        1. auto_label → auto_entry_state (fast-track for auto-labeled issues)
+        2. label_routing → template entry state (label-based routing)
         """
+        # Priority 1: auto-labeled issues use the configured auto_entry_state
+        if self._issue_is_auto(issue):
+            auto_entry = self.cfg.linear_states.auto_entry_state
+            if auto_entry and auto_entry in self.cfg.states:
+                logger.debug(
+                    f"Auto flow issue={issue.identifier} "
+                    f"auto_entry_state={auto_entry}"
+                )
+                return auto_entry
+
+        # Priority 2: template-based label routing
         label_routing = self.project.label_routing if self.project else {}
         if not label_routing:
             return None
@@ -466,6 +484,19 @@ class Orchestrator:
             f"Gate entered issue={issue.identifier} gate={state_name} "
             f"run={run}"
         )
+
+        # Auto-approve: if the gate has label_mode=auto and the issue has
+        # the auto_label, immediately auto-approve instead of waiting for a
+        # human. This implements the unattended fast-track flow.
+        if state_cfg and state_cfg.label_mode == "auto" and self._issue_is_auto(issue):
+            logger.info(
+                f"Auto-approving gate issue={issue.identifier} gate={state_name} "
+                f"(label_mode=auto, auto_label present)"
+            )
+            run = self._issue_state_runs.get(issue.id, 1)
+            comment = make_gate_comment(state=state_name, status="approved", run=run)
+            await self._safe_post_comment(issue.id, comment, "gate-auto-approved")
+            await self._transition(issue, "approve")
 
     async def _safe_transition(self, issue: Issue, transition_name: str):
         """Wrapper around _transition that logs errors instead of silently swallowing them."""

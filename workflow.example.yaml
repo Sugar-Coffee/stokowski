@@ -235,6 +235,8 @@ linear_states:
     - Cancelled
     - Canceled
     - Duplicate
+  auto_label: auto                  # label name that triggers the fast-track auto flow
+  auto_entry_state: auto-implement  # state machine state for auto-labeled issues
 
 # ---------------------------------------------------------------------------
 # Polling
@@ -397,3 +399,30 @@ states:
   done:
     type: terminal
     linear_state: terminal
+
+  # ── Auto flow (unattended / fast-track) ───────────────────────────────
+  # Triggered when an issue has the `auto` label (see `auto_entry_state` above).
+  # Fast-track: auto-implement → auto-merge-review (auto-approved) → merge → done.
+  # This bypasses the human-gate stages (research-review, implementation-review).
+  #
+  # Gate `label_mode: auto` instructs Stokowski to auto-approve the gate when
+  # the issue carries the `auto_label` (default: "auto"). Rework stays on the
+  # auto track (rework_to: auto-implement), not the manual implement state.
+  auto-implement:
+    type: agent
+    prompt: prompts/implement.example.md    # reuse the same implement prompt
+    linear_state: active
+    model: claude-sonnet-4-6
+    max_turns: 30
+    session: inherit
+    transitions:
+      complete: auto-merge-review
+
+  auto-merge-review:
+    type: gate
+    linear_state: review
+    label_mode: auto                       # auto-approve for auto-labeled issues
+    rework_to: auto-implement               # rework stays on auto track
+    max_rework: 1
+    transitions:
+      approve: merge
