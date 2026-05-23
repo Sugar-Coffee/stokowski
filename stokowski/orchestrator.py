@@ -239,7 +239,12 @@ class Orchestrator:
             headers["X-Webhook-Signature"] = sig
 
         try:
-            async with httpx.AsyncClient() as client:
+            # trust_env=False: the webhook target is an operator-configured
+            # local/internal endpoint, so never route it through an ambient
+            # proxy (ALL_PROXY/HTTP_PROXY). A proxy that can't reach a loopback
+            # upstream returns 502, which looks like a Hermes-side failure but
+            # never actually reaches it.
+            async with httpx.AsyncClient(trust_env=False) as client:
                 resp = await client.post(
                     wh.url,
                     content=body,
