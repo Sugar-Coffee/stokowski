@@ -76,6 +76,7 @@ class AgentConfig:
 @dataclass
 class ServerConfig:
     port: int | None = None
+    host: str | None = None
 
 
 @dataclass
@@ -539,7 +540,7 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
         max_concurrent_per_project=a.get("max_concurrent_per_project") or {},
     )
     s = config_raw.get("server", {}) or {}
-    server = ServerConfig(port=s.get("port"))
+    server = ServerConfig(port=s.get("port"), host=s.get("host"))
 
     # Resolve projects list (multi-project) or synthesize from top-level (legacy)
     projects_raw = config_raw.get("projects")
