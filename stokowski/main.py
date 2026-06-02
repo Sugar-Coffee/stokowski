@@ -100,6 +100,21 @@ HELP_TEXT = """
 """
 
 
+def _fmt_elapsed(iso: str | None) -> str:
+    if not iso:
+        return "—"
+    from datetime import datetime, timezone
+    try:
+        dt = datetime.fromisoformat(iso)
+        s = int((datetime.now(timezone.utc) - dt).total_seconds())
+        if s < 5:   return "just now"
+        if s < 60:  return f"{s}s ago"
+        if s < 3600: return f"{s // 60}m ago"
+        return f"{s // 3600}h ago"
+    except Exception:
+        return "—"
+
+
 def print_status(orch: MultiOrchestrator):
     snap = orch.get_state_snapshot()
     running  = snap["counts"]["running"]
@@ -134,7 +149,8 @@ def print_status(orch: MultiOrchestrator):
     table.add_column("Status", style="green", width=12)
     table.add_column("Turns",  justify="right", width=6)
     table.add_column("Tokens", justify="right", width=10)
-    table.add_column("Last activity", style="dim")
+    table.add_column("Last activity", style="dim", width=10)
+    table.add_column("Message", style="dim")
 
     for r in snap["running"]:
         table.add_row(
@@ -143,6 +159,7 @@ def print_status(orch: MultiOrchestrator):
             r["status"],
             str(r["turn_count"]),
             f"{r['tokens']['total_tokens']:,}",
+            _fmt_elapsed(r.get("last_event_at")),
             r["last_message"][:60] if r["last_message"] else "—",
         )
     for r in snap["retrying"]:
@@ -150,11 +167,11 @@ def print_status(orch: MultiOrchestrator):
             r.get("project_name", "—"),
             r["issue_identifier"],
             f"[blue]retry #{r['attempt']}[/blue]",
-            "—", "—",
+            "—", "—", "—",
             r["error"] or "waiting",
         )
     if not snap["running"] and not snap["retrying"]:
-        table.add_row("—", "—", "idle", "—", "—", "no active agents")
+        table.add_row("—", "—", "idle", "—", "—", "—", "no active agents")
 
     console.print()
     console.print(Panel(
