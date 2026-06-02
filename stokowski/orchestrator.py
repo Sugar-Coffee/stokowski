@@ -1510,6 +1510,9 @@ class MultiOrchestrator:
         self.orchestrators: dict[str, Orchestrator] = {}  # project_name -> Orchestrator
         self._tasks: list[asyncio.Task] = []
         self._stop_event: asyncio.Event | None = None
+        self.config: "ServiceConfig | None" = None
+        # Eagerly parse config so callers can read server.port etc. before start()
+        self._initial_load()
 
     # ── Config wiring ──────────────────────────────────────────────────────
 
@@ -1522,6 +1525,7 @@ class MultiOrchestrator:
         errors = validate_config(full.config)
         if errors:
             return [], errors
+        self.config = full.config
         return list(full.config.projects), []
 
     def _refresh_pool_caps(self) -> None:
@@ -1530,6 +1534,7 @@ class MultiOrchestrator:
             full = parse_workflow_file(self.workflow_path)
         except Exception:
             return
+        self.config = full.config
         agent = full.config.agent
         self.pool.global_cap = agent.max_concurrent_agents
         # Per-project caps: project block override wins, then agent map
