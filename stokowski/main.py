@@ -302,7 +302,7 @@ def _make_footer(orch: MultiOrchestrator) -> Text:
     )
 
 
-async def run_orchestrator(workflow_path: str, host_ip: str, port: int | None = None):
+async def run_orchestrator(workflow_path: str, host_ip: str | None = None, port: int | None = None):
     orch = MultiOrchestrator(workflow_path)
     loop = asyncio.get_running_loop()
 
@@ -310,7 +310,8 @@ async def run_orchestrator(workflow_path: str, host_ip: str, port: int | None = 
     kb = KeyboardHandler(orch, loop)
     kb.start()
 
-    effective_host_ip = host_ip if host_ip is not None else "127.0.0.1"
+    # Resolve host: explicit CLI flag > config server.host > 127.0.0.1
+    effective_host_ip = host_ip or orch.config.server.host or "127.0.0.1"
 
     # Optional web server
     _uvicorn_server = None
@@ -383,8 +384,8 @@ def cli():
     )
     parser.add_argument(
         "--host",
-        default="127.0.0.1",
-        help="Web dashboard host IP",
+        default=None,
+        help="Web dashboard host IP (overrides server.host in config; default 127.0.0.1)",
     )
     parser.add_argument(
         "--port", type=int, default=None,
