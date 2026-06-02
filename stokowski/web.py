@@ -31,21 +31,28 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     --border:    #1c1c1c;
     --border-hi: #2a2a2a;
     --text:      #e8e8e0;
-    --muted:     #555550;
-    --dim:       #333330;
+    --muted:     #bbbbbb;
+    --dim:       #888880;
     --amber:     #e8b84b;
-    --amber-dim: #6b5220;
+    --amber-dim: #9b6230;
     --green:     #4cba6e;
     --red:       #d95f52;
     --blue:      #5b9cf6;
     --font:      'IBM Plex Mono', monospace;
+    --font-size: 15px;
+  }
+
+  @media (min-width: 900px) {
+    :root {
+        --font-size: 20px;
+    }
   }
 
   html, body {
     background: var(--bg);
     color: var(--text);
     font-family: var(--font);
-    font-size: 13px;
+    font-size: var(--font-size);
     line-height: 1.5;
     min-height: 100vh;
     -webkit-font-smoothing: antialiased;
@@ -90,14 +97,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .logo-name {
-    font-size: 22px;
+    font-size: 1.5rem;
     font-weight: 600;
     letter-spacing: -0.5px;
     color: var(--text);
   }
 
   .logo-tag {
-    font-size: 11px;
+    font-size: 0.8rem;
     font-weight: 300;
     color: var(--muted);
     letter-spacing: 0.08em;
@@ -131,7 +138,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .timestamp {
-    font-size: 11px;
+    font-size: 0.8rem;
     color: var(--muted);
     font-weight: 300;
     letter-spacing: 0.04em;
@@ -168,7 +175,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .metric-label {
-    font-size: 10px;
+    font-size: 0.6rem;
     font-weight: 500;
     letter-spacing: 0.12em;
     text-transform: uppercase;
@@ -177,7 +184,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .metric-value {
-    font-size: 32px;
+    font-size: 2rem;
     font-weight: 600;
     color: var(--text);
     line-height: 1;
@@ -190,7 +197,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .metric-sub {
-    font-size: 11px;
+    font-size: 0.7rem;
     color: var(--muted);
     margin-top: 6px;
     font-weight: 300;
@@ -205,7 +212,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .section-title {
-    font-size: 10px;
+    font-size: 0.6rem;
     font-weight: 500;
     letter-spacing: 0.14em;
     text-transform: uppercase;
@@ -219,7 +226,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .section-count {
-    font-size: 10px;
+    font-size: 0.6rem;
     color: var(--dim);
     font-weight: 300;
   }
@@ -249,7 +256,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .agent-id {
-    font-size: 13px;
+    font-size: 0.8rem;
     font-weight: 600;
     color: var(--amber);
     letter-spacing: 0.02em;
@@ -263,7 +270,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .status-pill {
-    font-size: 10px;
+    font-size: 0.6rem;
     font-weight: 500;
     letter-spacing: 0.1em;
     text-transform: uppercase;
@@ -294,7 +301,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .status-pill.gate { background: rgba(232, 184, 75, 0.08); color: var(--amber-dim); border: 1px solid var(--amber-dim); }
 
   .agent-msg {
-    font-size: 12px;
+    font-size: 0.9rem;
     color: var(--muted);
     font-weight: 300;
     white-space: nowrap;
@@ -309,14 +316,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .agent-tokens {
-    font-size: 12px;
+    font-size: 0.9rem;
     color: var(--text);
     font-weight: 500;
     margin-bottom: 3px;
   }
 
   .agent-turns {
-    font-size: 11px;
+    font-size: 0.7rem;
     color: var(--muted);
     font-weight: 300;
   }
@@ -355,7 +362,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .project-tile-name {
-    font-size: 13px;
+    font-size: 0.8rem;
     font-weight: 600;
     color: var(--amber);
     letter-spacing: 0.02em;
@@ -370,7 +377,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     border: 1px solid var(--border-hi);
     color: var(--muted);
     font-family: var(--font);
-    font-size: 10px;
+    font-size: 0.6rem;
     font-weight: 500;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -394,7 +401,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     gap: 6px;
-    font-size: 11px;
+    font-size: 0.7rem;
   }
 
   .project-stat {
@@ -404,7 +411,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .project-stat-label {
-    font-size: 9px;
+    font-size: 0.6rem;
     color: var(--muted);
     letter-spacing: 0.1em;
     text-transform: uppercase;
@@ -413,7 +420,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .project-stat-value {
     color: var(--text);
     font-weight: 500;
-    font-size: 13px;
+    font-size: 0.8rem;
   }
 
   /* ── Filter dropdown ── */
@@ -422,7 +429,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     border: 1px solid var(--border-hi);
     color: var(--text);
     font-family: var(--font);
-    font-size: 11px;
+    font-size: 0.7rem;
     padding: 4px 8px;
     border-radius: 2px;
     cursor: pointer;
@@ -442,7 +449,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     gap: 14px;
     align-items: center;
     border-bottom: 1px solid var(--border);
-    font-size: 12px;
+    font-size: 0.9rem;
   }
 
   .queue-card:last-child {
@@ -452,7 +459,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .queue-id {
     color: var(--amber);
     font-weight: 600;
-    font-size: 12px;
+    font-size: 0.9rem;
   }
 
   .queue-title {
@@ -464,7 +471,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .queue-reason {
-    font-size: 10px;
+    font-size: 0.6rem;
     color: var(--muted);
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -479,7 +486,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .agent-project {
-    font-size: 10px;
+    font-size: 0.6rem;
     color: var(--muted);
     letter-spacing: 0.05em;
     margin-top: 2px;
@@ -495,7 +502,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .empty-title {
-    font-size: 13px;
+    font-size: 0.8rem;
     color: var(--dim);
     margin-bottom: 6px;
     font-weight: 300;
@@ -503,7 +510,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .empty-sub {
-    font-size: 11px;
+    font-size: 0.7rem;
     color: var(--border-hi);
     font-weight: 300;
   }
@@ -525,7 +532,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .stat-label {
-    font-size: 10px;
+    font-size: 0.6rem;
     color: var(--muted);
     font-weight: 300;
     letter-spacing: 0.1em;
@@ -533,7 +540,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .stat-value {
-    font-size: 12px;
+    font-size: 0.9rem;
     color: var(--text);
     font-weight: 500;
   }
@@ -577,13 +584,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
 
   .footer-left {
-    font-size: 11px;
+    font-size: 0.7rem;
     color: var(--dim);
     font-weight: 300;
   }
 
   .footer-right {
-    font-size: 11px;
+    font-size: 0.7rem;
     color: var(--dim);
     font-weight: 300;
   }
