@@ -302,7 +302,7 @@ def _make_footer(orch: MultiOrchestrator) -> Text:
     )
 
 
-async def run_orchestrator(workflow_path: str, port: int | None = None):
+async def run_orchestrator(workflow_path: str, host_ip: str | None = None, port: int | None = None):
     orch = MultiOrchestrator(workflow_path)
     loop = asyncio.get_running_loop()
 
@@ -313,6 +313,8 @@ async def run_orchestrator(workflow_path: str, port: int | None = None):
     # Resolve effective port: CLI flag overrides config; config alone also starts server
     config_port: int | None = orch.config.server.port if orch.config else None
     effective_port = port if port is not None else config_port
+    # Resolve host: explicit CLI flag > config server.host > 127.0.0.1
+    effective_host_ip = host_ip or orch.config.server.host or "127.0.0.1"
 
     # Optional web server
     _uvicorn_server = None
@@ -324,16 +326,16 @@ async def run_orchestrator(workflow_path: str, port: int | None = None):
 
             app = create_app(orch)
             server_config = uvicorn.Config(
-                app, host="127.0.0.1", port=effective_port, log_level="warning",
+                app, host=effective_host_ip, port=effective_port, log_level="warning",
             )
             _uvicorn_server = uvicorn.Server(server_config)
             _uvicorn_server.install_signal_handlers = lambda: None
             _uvicorn_task = asyncio.create_task(_uvicorn_server.serve())
             logging.getLogger("stokowski").info(
-                f"Web dashboard started on http://127.0.0.1:{effective_port} "
+                f"Web dashboard started on http://{effective_host_ip}:{effective_port} "
                 f"(source={'--port' if port is not None else 'config'})"
             )
-            console.print(f"[green]Web dashboard →[/green] http://127.0.0.1:{effective_port}")
+            console.print(f"[green]Web dashboard →[/green] http://{effective_host_ip}:{effective_port}")
         except ImportError:
             console.print(
                 "[yellow]Install web extras for dashboard: pip install stokowski[web][/yellow]"
@@ -388,6 +390,11 @@ def cli():
         help="Path to workflow.yaml or WORKFLOW.md (auto-detected if not specified)",
     )
     parser.add_argument(
+        "--host",
+        default=None,
+        help="Web dashboard host IP (overrides server.host in config; default 127.0.0.1)",
+    )
+    parser.add_argument(
         "--port", type=int, default=None,
         help="Web dashboard port (overrides server.port in config; server would not start unless port is configured in either way)",
     )
@@ -423,7 +430,7 @@ def cli():
         asyncio.run(dry_run(args.workflow))
     else:
         try:
-            asyncio.run(run_orchestrator(args.workflow, args.port))
+            asyncio.run(run_orchestrator(args.workflow, args.host, args.port))
         except KeyboardInterrupt:
             console.print("\n[yellow]Interrupted — killing all agents...[/yellow]")
             _force_kill_children()
@@ -473,7 +480,8 @@ async def dry_run(workflow_path: str):
 
     cfg = workflow.config
     server_port = cfg.server.port
-    server_info = f"http://127.0.0.1:{server_port}" if server_port else "disabled"
+    server_host = cfg.server.host or "127.0.0.1"
+    server_info = f"http://{server_host}:{server_port}" if server_port else "disabled"
     console.print("[green]Config valid[/green]")
     console.print(f"  Global max_concurrent_agents: {cfg.agent.max_concurrent_agents}")
     console.print(f"  Polling interval: {cfg.polling.interval_ms}ms")
