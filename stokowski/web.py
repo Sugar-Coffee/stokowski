@@ -3,16 +3,103 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+import json
+import logging
+import time
+from collections import deque
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .orchestrator import MultiOrchestrator
 
 try:
     from fastapi import FastAPI
-    from fastapi.responses import HTMLResponse, JSONResponse
+    from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 except ImportError:
     raise ImportError("Install web extras: pip install stokowski[web]")
+
+
+class LogBuffer:
+    """Circular buffer of captured log entries with pub/sub for SSE."""
+
+    def __init__(self, maxlen: int = 500) -> None:
+        self._entries: deque[dict[str, Any]] = deque(maxlen=maxlen)
+        self._seq = 0
+        # list of (loop, queue) pairs — one per active SSE subscriber
+        self._subscribers: list[tuple[asyncio.AbstractEventLoop, asyncio.Queue]] = []
+
+    def append(self, entry: dict[str, Any]) -> None:
+        self._seq += 1
+        entry["seq"] = self._seq
+        self._entries.append(entry)
+        for loop, q in self._subscribers:
+            try:
+                loop.call_soon_threadsafe(q.put_nowait, entry)
+            except Exception:
+                pass
+
+    def subscribe(self) -> asyncio.Queue:
+        """Register a new SSE subscriber. Must be called from a running event loop."""
+        loop = asyncio.get_running_loop()
+        q: asyncio.Queue = asyncio.Queue()
+        self._subscribers.append((loop, q))
+        return q
+
+    def unsubscribe(self, q: asyncio.Queue) -> None:
+        self._subscribers = [(l, sq) for l, sq in self._subscribers if sq is not q]
+
+    def all_entries(self) -> list[dict[str, Any]]:
+        return list(self._entries)
+
+    @property
+    def latest_seq(self) -> int:
+        return self._seq
+
+
+class LogCaptureHandler(logging.Handler):
+    """Logging handler that feeds records into a LogBuffer.
+
+    Drops records whose message starts with 'HTTP Request' (uvicorn access noise).
+    Picks up extra= fields (e.g. capture=True, linked_to='SYN-123') as attributes.
+    """
+
+    _SKIP_PREFIXES = ("HTTP Request",)
+
+    def __init__(self, buffer: LogBuffer) -> None:
+        super().__init__()
+        self._buf = buffer
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = record.getMessage()
+            for prefix in self._SKIP_PREFIXES:
+                if msg.startswith(prefix):
+                    return
+
+            attrs: dict[str, Any] = {}
+            for key in ("capture", "linked_to"):
+                if hasattr(record, key):
+                    attrs[key] = getattr(record, key)
+
+            # Strip redundant "[<linked_to>] " prefix — the tag chip renders it visually
+            linked_to = attrs.get("linked_to")
+            if linked_to:
+                prefix = f"[{linked_to}] "
+                if msg.startswith(prefix):
+                    msg = msg[len(prefix):]
+
+            self._buf.append(
+                {
+                    "ts": record.created,
+                    "level": record.levelname,
+                    "logger": record.name,
+                    "msg": msg,
+                    "attrs": attrs,
+                }
+            )
+        except Exception:
+            self.handleError(record)
+
 
 DASHBOARD_HTML = """<!DOCTYPE html>
 <html lang="en">
@@ -566,6 +653,135 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     100% { transform: scaleX(0) translateX(100%); }
   }
 
+  /* ── Log panel ── */
+  .log-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    margin-bottom: 32px;
+  }
+
+  .log-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .log-filter {
+    background: var(--surface);
+    border: 1px solid var(--border-hi);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 0.65rem;
+    padding: 3px 8px;
+    border-radius: 2px;
+    cursor: pointer;
+    min-width: 160px;
+  }
+
+  .log-filter:focus { outline: none; border-color: var(--amber-dim); }
+
+  .log-clear-btn {
+    background: transparent;
+    border: 1px solid var(--border-hi);
+    color: var(--muted);
+    font-family: var(--font);
+    font-size: 0.6rem;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 3px 10px;
+    border-radius: 2px;
+    cursor: pointer;
+    transition: all 0.15s;
+    margin-left: auto;
+  }
+
+  .log-clear-btn:hover { border-color: var(--amber-dim); color: var(--amber); }
+
+  .log-scroll {
+    height: 260px;
+    overflow-y: auto;
+    font-size: 0.72rem;
+    line-height: 1.6;
+    padding: 8px 0;
+    scroll-behavior: smooth;
+  }
+
+  .log-scroll::-webkit-scrollbar { width: 4px; }
+  .log-scroll::-webkit-scrollbar-track { background: var(--surface); }
+  .log-scroll::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 2px; }
+
+  .log-entry {
+    display: grid;
+    grid-template-columns: 76px 52px 1fr;
+    gap: 12px;
+    padding: 2px 16px;
+    transition: background 0.1s;
+  }
+
+  .log-entry:hover { background: #141414; }
+
+  .log-ts { color: var(--dim); font-weight: 300; white-space: nowrap; }
+
+  .log-lvl {
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-size: 0.6rem;
+    padding-top: 2px;
+  }
+
+  .log-lvl.DEBUG    { color: var(--dim); }
+  .log-lvl.INFO     { color: var(--blue); }
+  .log-lvl.WARNING  { color: var(--amber); }
+  .log-lvl.ERROR    { color: var(--red); }
+  .log-lvl.CRITICAL { color: var(--red); font-weight: 600; }
+
+  .log-msg { color: var(--muted); word-break: break-all; }
+
+  .log-tag {
+    display: inline-block;
+    font-size: 0.55rem;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 0 5px;
+    border-radius: 2px;
+    margin-right: 6px;
+    border: 1px solid var(--amber-dim);
+    color: var(--amber);
+    vertical-align: middle;
+    line-height: 1.6;
+  }
+
+  .log-empty {
+    padding: 32px;
+    text-align: center;
+    font-size: 0.7rem;
+    color: var(--dim);
+    font-weight: 300;
+  }
+
+  .log-autoscroll-btn {
+    background: transparent;
+    border: 1px solid var(--border-hi);
+    color: var(--muted);
+    font-family: var(--font);
+    font-size: 0.6rem;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 3px 10px;
+    border-radius: 2px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .log-autoscroll-btn.on { border-color: var(--amber-dim); color: var(--amber); }
+  .log-autoscroll-btn:hover { border-color: var(--amber-dim); color: var(--amber); }
+
   /* ── Footer ── */
   footer {
     display: flex;
@@ -669,6 +885,25 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <div id="progress-container" style="display:none; flex:1; align-items:center; gap:12px;">
       <span class="stat-label">Working</span>
       <div class="progress-wrap"><div class="progress-bar"></div></div>
+    </div>
+  </div>
+
+
+  <div class="section-header" style="margin-top:8px">
+    <span class="section-title">Log</span>
+    <div class="section-line"></div>
+    <span class="section-count" id="log-count">0</span>
+  </div>
+  <div class="log-panel">
+    <div class="log-toolbar">
+      <select id="log-issue-filter" class="log-filter" onchange="window.__logSetFilter(this.value)">
+        <option value="">All issues</option>
+      </select>
+      <button class="log-autoscroll-btn on" id="log-autoscroll-btn" onclick="window.__logToggleAutoscroll()">&#8593; Auto-scroll</button>
+      <button class="log-clear-btn" onclick="window.__logClear()">Clear</button>
+    </div>
+    <div class="log-scroll" id="log-scroll">
+      <div class="log-empty" id="log-empty">No log entries yet</div>
     </div>
   </div>
 
@@ -914,6 +1149,122 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
   refresh();
   setInterval(refresh, 3000);
+
+  // ── Log panel ──────────────────────────────────────────────────────────────
+  let logEntries = [];
+  let logFilter = '';
+  let logAutoScroll = true;
+  let logKnownIssues = new Set();
+  let logClearedSeq = 0;
+  let logLastRenderedFilter = null;
+
+  window.__logSetFilter = (val) => { logFilter = val || ''; renderLog(); };
+  window.__logClear = () => {
+    const last = logEntries.length > 0 ? logEntries[logEntries.length - 1].seq : 0;
+    logClearedSeq = last;
+    logEntries = [];
+    renderLog();
+  };
+  window.__logToggleAutoscroll = () => {
+    logAutoScroll = !logAutoScroll;
+    const btn = document.getElementById('log-autoscroll-btn');
+    btn.className = 'log-autoscroll-btn' + (logAutoScroll ? ' on' : '');
+    if (logAutoScroll) scrollLogToTop();
+  };
+
+  function fmtLogTs(epochSecs) {
+    const d = new Date(epochSecs * 1000);
+    return String(d.getHours()).padStart(2,'0') + ':' +
+           String(d.getMinutes()).padStart(2,'0') + ':' +
+           String(d.getSeconds()).padStart(2,'0');
+  }
+
+  function scrollLogToTop() {
+    const el = document.getElementById('log-scroll');
+    el.scrollTop = 0;
+  }
+
+  function makeLogRow(e) {
+    const row = document.createElement('div');
+    row.className = 'log-entry';
+    const tag = (e.attrs && e.attrs.linked_to)
+      ? `<span class="log-tag">${esc(e.attrs.linked_to)}</span>` : '';
+    row.innerHTML =
+      `<span class="log-ts">${fmtLogTs(e.ts)}</span>` +
+      `<span class="log-lvl ${esc(e.level)}">${esc(e.level)}</span>` +
+      `<span class="log-msg">${tag}${esc(e.msg)}</span>`;
+    return row;
+  }
+
+  function renderLog() {
+    const visible = logFilter
+      ? logEntries.filter(e => e.attrs && e.attrs.linked_to === logFilter)
+      : logEntries;
+
+    document.getElementById('log-count').textContent = visible.length;
+
+    const scroll = document.getElementById('log-scroll');
+    const empty  = document.getElementById('log-empty');
+
+    if (visible.length === 0) {
+      empty.style.display = '';
+      Array.from(scroll.children).forEach(c => { if (c !== empty) c.remove(); });
+      return;
+    }
+    empty.style.display = 'none';
+
+    const filterChanged = logLastRenderedFilter !== logFilter;
+    if (filterChanged) {
+      Array.from(scroll.children).forEach(c => { if (c !== empty) c.remove(); });
+    }
+    logLastRenderedFilter = logFilter;
+
+    const renderedCount = scroll.querySelectorAll('.log-entry').length;
+    if (visible.length - renderedCount <= 0) return;
+
+    // Newest entries at end of visible[] — prepend in reverse so most recent is at top
+    const firstEntry = scroll.querySelector('.log-entry');
+    for (let i = visible.length - 1; i >= renderedCount; i--) {
+      scroll.insertBefore(makeLogRow(visible[i]), firstEntry);
+    }
+
+    if (logAutoScroll) scrollLogToTop();
+  }
+
+  function ingestEntry(entry) {
+    if (entry.seq <= logClearedSeq) return;
+    logEntries.push(entry);
+    if (logEntries.length > 1000) logEntries = logEntries.slice(-1000);
+
+    if (entry.attrs && entry.attrs.linked_to) {
+      const id = entry.attrs.linked_to;
+      if (!logKnownIssues.has(id)) {
+        logKnownIssues.add(id);
+        const sel = document.getElementById('log-issue-filter');
+        const opt = document.createElement('option');
+        opt.value = id;
+        opt.textContent = id;
+        sel.appendChild(opt);
+      }
+    }
+
+    if (!logFilter || (entry.attrs && entry.attrs.linked_to === logFilter)) {
+      renderLog();
+    }
+  }
+
+  function connectLogStream() {
+    const es = new EventSource('/api/v1/logs/stream');
+    es.onmessage = (ev) => {
+      try { ingestEntry(JSON.parse(ev.data)); } catch(e) {}
+    };
+    es.onerror = () => {
+      es.close();
+      setTimeout(connectLogStream, 3000);
+    };
+  }
+
+  connectLogStream();
 </script>
 </body>
 </html>
@@ -923,6 +1274,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 def create_app(orchestrator: "MultiOrchestrator") -> FastAPI:
     app = FastAPI(title="Stokowski", version="0.1.0")
 
+    log_buffer = LogBuffer(maxlen=500)
+    _handler = LogCaptureHandler(log_buffer)
+    _handler.setLevel(logging.DEBUG)
+    logging.getLogger().addHandler(_handler)
+
     @app.get("/", response_class=HTMLResponse)
     async def dashboard():
         return HTMLResponse(DASHBOARD_HTML)
@@ -930,6 +1286,27 @@ def create_app(orchestrator: "MultiOrchestrator") -> FastAPI:
     @app.get("/api/v1/state")
     async def api_state():
         return JSONResponse(orchestrator.get_state_snapshot())
+
+    @app.get("/api/v1/logs/stream")
+    async def api_logs_stream():
+        async def generate():
+            # Drain buffered entries first
+            for entry in log_buffer.all_entries():
+                yield f"data: {json.dumps(entry)}\n\n"
+
+            q = log_buffer.subscribe()
+            try:
+                while True:
+                    try:
+                        entry = await asyncio.wait_for(q.get(), timeout=25)
+                        yield f"data: {json.dumps(entry)}\n\n"
+                    except asyncio.TimeoutError:
+                        yield ": keepalive\n\n"
+            finally:
+                log_buffer.unsubscribe(q)
+
+        return StreamingResponse(generate(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
     @app.get("/api/v1/{issue_identifier}")
     async def api_issue(issue_identifier: str):
