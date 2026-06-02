@@ -97,7 +97,8 @@ async def run_codex_turn(
 
     logger.info(
         f"Launching codex issue={issue.identifier} "
-        f"turn={attempt.turn_count + 1}"
+        f"turn={attempt.turn_count + 1}",
+        extra={"linked_to": issue.identifier},
     )
 
     # Run before_run hook
@@ -132,7 +133,7 @@ async def run_codex_turn(
     except FileNotFoundError:
         attempt.status = "failed"
         attempt.error = "Codex command not found: codex"
-        logger.error(attempt.error)
+        logger.error(attempt.error, extra={"linked_to": issue.identifier})
         return attempt
 
     loop = asyncio.get_running_loop()
@@ -162,7 +163,8 @@ async def run_codex_turn(
             if stall_timeout_s > 0 and elapsed > stall_timeout_s:
                 logger.warning(
                     f"Codex stall detected issue={issue.identifier} "
-                    f"elapsed={elapsed:.0f}s"
+                    f"elapsed={elapsed:.0f}s",
+                    extra={"linked_to": issue.identifier},
                 )
                 proc.kill()
                 attempt.status = "stalled"
@@ -180,7 +182,7 @@ async def run_codex_turn(
         )
 
         if not done:
-            logger.warning(f"Codex turn timeout issue={issue.identifier}")
+            logger.warning(f"Codex turn timeout issue={issue.identifier}", extra={"linked_to": issue.identifier})
             proc.kill()
             attempt.status = "timed_out"
             attempt.error = f"Turn exceeded {turn_timeout_s}s"
@@ -195,7 +197,7 @@ async def run_codex_turn(
                 pass
 
     except Exception as e:
-        logger.error(f"Codex runner error issue={issue.identifier}: {e}")
+        logger.error(f"Codex runner error issue={issue.identifier}: {e}", extra={"linked_to": issue.identifier})
         proc.kill()
         attempt.status = "failed"
         attempt.error = str(e)
@@ -230,7 +232,8 @@ async def run_codex_turn(
 
     logger.info(
         f"Codex turn complete issue={issue.identifier} "
-        f"status={attempt.status}"
+        f"status={attempt.status}",
+        extra={"linked_to": issue.identifier},
     )
 
     return attempt
@@ -255,7 +258,8 @@ async def run_agent_turn(
     logger.info(
         f"Launching claude issue={issue.identifier} "
         f"session={attempt.session_id or 'new'} "
-        f"turn={attempt.turn_count + 1}"
+        f"turn={attempt.turn_count + 1}",
+        extra={"linked_to": issue.identifier},
     )
 
     # Run before_run hook
@@ -290,7 +294,7 @@ async def run_agent_turn(
     except FileNotFoundError:
         attempt.status = "failed"
         attempt.error = f"Claude command not found: {claude_cfg.command}"
-        logger.error(attempt.error)
+        logger.error(attempt.error, extra={"linked_to": issue.identifier})
         return attempt
 
     # Stream stdout (NDJSON events)
@@ -326,7 +330,8 @@ async def run_agent_turn(
             if stall_timeout_s > 0 and elapsed > stall_timeout_s:
                 logger.warning(
                     f"Stall detected issue={issue.identifier} "
-                    f"elapsed={elapsed:.0f}s"
+                    f"elapsed={elapsed:.0f}s",
+                    extra={"linked_to": issue.identifier},
                 )
                 proc.kill()
                 attempt.status = "stalled"
@@ -346,7 +351,7 @@ async def run_agent_turn(
 
         if not done:
             # Turn timeout
-            logger.warning(f"Turn timeout issue={issue.identifier}")
+            logger.warning(f"Turn timeout issue={issue.identifier}", extra={"linked_to": issue.identifier})
             proc.kill()
             attempt.status = "timed_out"
             attempt.error = f"Turn exceeded {turn_timeout_s}s"
@@ -362,7 +367,7 @@ async def run_agent_turn(
                 pass
 
     except Exception as e:
-        logger.error(f"Runner error issue={issue.identifier}: {e}")
+        logger.error(f"Runner error issue={issue.identifier}: {e}", extra={"linked_to": issue.identifier})
         proc.kill()
         attempt.status = "failed"
         attempt.error = str(e)
@@ -398,7 +403,8 @@ async def run_agent_turn(
     logger.info(
         f"Turn complete issue={issue.identifier} "
         f"status={attempt.status} "
-        f"tokens={attempt.total_tokens}"
+        f"tokens={attempt.total_tokens}",
+        extra={"linked_to": issue.identifier},
     )
 
     return attempt

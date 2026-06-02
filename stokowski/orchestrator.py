@@ -362,6 +362,7 @@ class Orchestrator:
                 f"Enter gate failed issue={issue.identifier} "
                 f"gate={state_name}: {e}",
                 exc_info=True,
+                extra={"linked_to": issue.identifier},
             )
 
     async def _enter_gate(self, issue: Issue, state_name: str):
@@ -391,7 +392,8 @@ class Orchestrator:
             logger.error(
                 f"Failed to move {issue.identifier} to gate linear state "
                 f"'{target_linear_state}' (gate={state_name}) "
-                f"— issue will remain claimed to prevent re-dispatch loop"
+                f"— issue will remain claimed to prevent re-dispatch loop",
+                extra={"linked_to": issue.identifier},
             )
             # Keep claimed so the issue doesn't get re-dispatched while
             # still in the active Linear state. Track the gate so
@@ -416,7 +418,8 @@ class Orchestrator:
 
         logger.info(
             f"Gate entered issue={issue.identifier} gate={state_name} "
-            f"run={run}"
+            f"run={run}",
+            extra={"linked_to": issue.identifier},
         )
 
     async def _safe_transition(self, issue: Issue, transition_name: str):
@@ -428,6 +431,7 @@ class Orchestrator:
                 f"Transition failed issue={issue.identifier} "
                 f"transition={transition_name}: {e}",
                 exc_info=True,
+                extra={"linked_to": issue.identifier},
             )
             # Release claimed so the issue can be retried on next tick
             self.claimed.discard(issue.id)
@@ -442,19 +446,20 @@ class Orchestrator:
         """
         current_state_name = self._issue_current_state.get(issue.id)
         if not current_state_name:
-            logger.warning(f"No current state for {issue.identifier}, cannot transition")
+            logger.warning(f"No current state for {issue.identifier}, cannot transition", extra={"linked_to": issue.identifier})
             return
 
         current_cfg = self.cfg.states.get(current_state_name)
         if not current_cfg:
-            logger.warning(f"Unknown state '{current_state_name}' for {issue.identifier}")
+            logger.warning(f"Unknown state '{current_state_name}' for {issue.identifier}", extra={"linked_to": issue.identifier})
             return
 
         target_name = current_cfg.transitions.get(transition_name)
         if not target_name:
             logger.warning(
                 f"No '{transition_name}' transition from state '{current_state_name}' "
-                f"for {issue.identifier}"
+                f"for {issue.identifier}",
+                extra={"linked_to": issue.identifier},
             )
             return
 
@@ -472,17 +477,17 @@ class Orchestrator:
                 client = self._ensure_linear_client()
                 moved = await client.update_issue_state(issue.id, terminal_state)
                 if moved:
-                    logger.info(f"Moved {issue.identifier} to terminal state '{terminal_state}'")
+                    logger.info(f"Moved {issue.identifier} to terminal state '{terminal_state}'", extra={"linked_to": issue.identifier})
                 else:
-                    logger.warning(f"Failed to move {issue.identifier} to terminal state '{terminal_state}'")
+                    logger.warning(f"Failed to move {issue.identifier} to terminal state '{terminal_state}'", extra={"linked_to": issue.identifier})
             except Exception as e:
-                logger.warning(f"Failed to move {issue.identifier} to terminal: {e}")
+                logger.warning(f"Failed to move {issue.identifier} to terminal: {e}", extra={"linked_to": issue.identifier})
             # Clean up workspace
             try:
                 ws_root = self.cfg.workspace.resolved_root()
                 await remove_workspace(ws_root, issue.identifier, self.cfg.hooks)
             except Exception as e:
-                logger.warning(f"Failed to remove workspace for {issue.identifier}: {e}")
+                logger.warning(f"Failed to remove workspace for {issue.identifier}: {e}", extra={"linked_to": issue.identifier})
             # Clean up tracking state
             self._issue_current_state.pop(issue.id, None)
             self._issue_state_runs.pop(issue.id, None)
@@ -509,7 +514,7 @@ class Orchestrator:
             active_state = self.cfg.linear_states.active
             moved = await client.update_issue_state(issue.id, active_state)
             if not moved:
-                logger.warning(f"Failed to move {issue.identifier} to active state '{active_state}'")
+                logger.warning(f"Failed to move {issue.identifier} to active state '{active_state}'", extra={"linked_to": issue.identifier})
 
             self._schedule_retry(issue, attempt_num=0, delay_ms=1000)
 
@@ -565,7 +570,7 @@ class Orchestrator:
                 self._issue_current_state[issue.id] = gate_state
                 self._last_issues[issue.id] = issue
                 await self._transition(issue, "approve")
-                logger.info(f"Gate approved issue={issue.identifier} gate={gate_state}")
+                logger.info(f"Gate approved issue={issue.identifier} gate={gate_state}", extra={"linked_to": issue.identifier})
 
         # Fetch rework issues
         try:
@@ -606,7 +611,8 @@ class Orchestrator:
                     await client.post_comment(issue.id, comment)
                     logger.warning(
                         f"Max rework exceeded issue={issue.identifier} "
-                        f"gate={gate_state} run={run} max={max_rework}"
+                        f"gate={gate_state} run={run} max={max_rework}",
+                        extra={"linked_to": issue.identifier},
                     )
                     continue
 
@@ -626,11 +632,12 @@ class Orchestrator:
                 if moved:
                     issue.state = active_state
                 else:
-                    logger.warning(f"Failed to move {issue.identifier} to active after rework")
+                    logger.warning(f"Failed to move {issue.identifier} to active after rework", extra={"linked_to": issue.identifier})
                 self._last_issues[issue.id] = issue
                 logger.info(
                     f"Rework issue={issue.identifier} gate={gate_state} "
-                    f"rework_to={rework_to} run={new_run}"
+                    f"rework_to={rework_to} run={new_run}",
+                    extra={"linked_to": issue.identifier},
                 )
 
     async def _evict_terminal_gates(self):
@@ -669,7 +676,8 @@ class Orchestrator:
                 ).identifier
                 logger.info(
                     f"Gate evicted issue={ident} was={gate_state} "
-                    f"(moved to terminal: {current_state})"
+                    f"(moved to terminal: {current_state})",
+                    extra={"linked_to": ident},
                 )
 
     async def _rebuild_gates_from_linear(self):
@@ -724,7 +732,8 @@ class Orchestrator:
             except Exception as e:
                 logger.warning(
                     f"Failed to fetch comments for gate rebuild "
-                    f"{issue.identifier}: {e}"
+                    f"{issue.identifier}: {e}",
+                    extra={"linked_to": issue.identifier},
                 )
                 tracking = None
 
@@ -755,7 +764,8 @@ class Orchestrator:
                 rebuilt += 1
                 logger.info(
                     f"Gate rebuilt issue={issue.identifier} "
-                    f"gate={gate_state} run={run} (recovered from Linear)"
+                    f"gate={gate_state} run={run} (recovered from Linear)",
+                    extra={"linked_to": issue.identifier},
                 )
 
         if rebuilt:
@@ -810,7 +820,7 @@ class Orchestrator:
                 try:
                     await self._resolve_current_state(issue)
                 except Exception as e:
-                    logger.warning(f"Failed to resolve state for {issue.identifier}: {e}")
+                    logger.warning(f"Failed to resolve state for {issue.identifier}: {e}", extra={"linked_to": issue.identifier})
 
         # Part 5: Dispatch
         self._queued = []  # reset per-tick queue snapshot
@@ -940,7 +950,8 @@ class Orchestrator:
             f"machine_state={state_name or 'entry'} "
             f"runner={runner} "
             f"session={'fresh' if use_fresh_session else 'inherit'} "
-            f"attempt={attempt_num}"
+            f"attempt={attempt_num}",
+            extra={"linked_to": issue.identifier},
         )
 
     async def _run_worker(self, issue: Issue, attempt: RunAttempt):
@@ -983,15 +994,17 @@ class Orchestrator:
                     if moved:
                         issue.state = active_state
                         logger.info(
-                            f"Moved {issue.identifier} from '{todo_state}' to '{active_state}'"
+                            f"Moved {issue.identifier} from '{todo_state}' to '{active_state}'",
+                            extra={"linked_to": issue.identifier},
                         )
                     else:
                         logger.warning(
                             f"Failed to move {issue.identifier} from '{todo_state}' to '{active_state}' "
-                            f"— Linear API returned failure"
+                            f"— Linear API returned failure",
+                            extra={"linked_to": issue.identifier},
                         )
                 except Exception as e:
-                    logger.warning(f"Failed to move {issue.identifier} to active: {e}")
+                    logger.warning(f"Failed to move {issue.identifier} to active: {e}", extra={"linked_to": issue.identifier})
 
             # Post state tracking comment (only for first dispatch of a state)
             if state_name:
@@ -1059,7 +1072,8 @@ class Orchestrator:
                             if state_lower not in active_lower:
                                 logger.info(
                                     f"Issue {issue.identifier} no longer active "
-                                    f"(state={current_state}), stopping"
+                                    f"(state={current_state}), stopping",
+                                    extra={"linked_to": issue.identifier},
                                 )
                                 break
                         except Exception as e:
@@ -1090,11 +1104,11 @@ class Orchestrator:
             self._on_worker_exit(issue, attempt)
 
         except asyncio.CancelledError:
-            logger.info(f"Worker cancelled issue={issue.identifier}")
+            logger.info(f"Worker cancelled issue={issue.identifier}", extra={"linked_to": issue.identifier})
             attempt.status = "canceled"
             self._on_worker_exit(issue, attempt)
         except Exception as e:
-            logger.error(f"Worker error issue={issue.identifier}: {e}")
+            logger.error(f"Worker error issue={issue.identifier}: {e}", extra={"linked_to": issue.identifier})
             attempt.status = "failed"
             attempt.error = str(e)
             self._on_worker_exit(issue, attempt)
@@ -1115,7 +1129,7 @@ class Orchestrator:
                 client = self._ensure_linear_client()
                 comments = await client.fetch_comments(issue.id)
             except Exception as e:
-                logger.warning(f"Failed to fetch comments for prompt: {e}")
+                logger.warning(f"Failed to fetch comments for prompt: {e}", extra={"linked_to": issue.identifier})
 
             return assemble_prompt(
                 cfg=self.cfg,
@@ -1203,8 +1217,30 @@ class Orchestrator:
             self._child_pids.discard(pid)
 
     def _on_agent_event(self, identifier: str, event_type: str, event: dict):
-        """Callback for agent events."""
-        logger.debug(f"Agent event issue={identifier} type={event_type}")
+        """Callback for agent events — log notable activity to the log buffer."""
+        extra = {"linked_to": identifier}
+        if event_type == "tool_use":
+            tool_name = event.get("name", event.get("tool", ""))
+            logger.info(f"[{identifier}] tool: {tool_name}", extra=extra)
+        elif event_type == "assistant":
+            msg = event.get("message", {})
+            content = msg.get("content", "")
+            text = ""
+            if isinstance(content, str):
+                text = content
+            elif isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text = block.get("text", "")
+                        break
+            if text:
+                logger.info(f"[{identifier}] {text[:120]}", extra=extra)
+        elif event_type == "result":
+            result_text = event.get("result", "")
+            if isinstance(result_text, str) and result_text:
+                logger.info(f"[{identifier}] result: {result_text[:120]}", extra=extra)
+        else:
+            logger.debug(f"Agent event issue={identifier} type={event_type}", extra=extra)
 
     def _on_worker_exit(self, issue: Issue, attempt: RunAttempt):
         """Handle worker completion."""
@@ -1280,7 +1316,8 @@ class Orchestrator:
         logger.info(
             f"Retry scheduled issue={issue.identifier} "
             f"attempt={attempt_num} delay={delay_ms}ms "
-            f"error={error or 'continuation'}"
+            f"error={error or 'continuation'}",
+            extra={"linked_to": issue.identifier},
         )
 
     async def _handle_retry(self, issue_id: str):
@@ -1312,7 +1349,7 @@ class Orchestrator:
         if issue is None:
             # No longer active
             self.claimed.discard(issue_id)
-            logger.info(f"Retry: issue {entry.identifier} no longer active, releasing")
+            logger.info(f"Retry: issue {entry.identifier} no longer active, releasing", extra={"linked_to": entry.identifier})
             return
 
         # Check slots via the same path as the dispatch loop
@@ -1367,8 +1404,10 @@ class Orchestrator:
 
             if state_lower in terminal_lower:
                 # Terminal - stop worker and clean workspace
+                _ident = self.running[issue_id].issue_identifier if issue_id in self.running else issue_id
                 logger.info(
-                    f"Reconciliation: {issue_id} is terminal ({current_state}), stopping"
+                    f"Reconciliation: {_ident} is terminal ({current_state}), stopping",
+                    extra={"linked_to": _ident},
                 )
                 task = self._tasks.get(issue_id)
                 if task:
@@ -1402,8 +1441,10 @@ class Orchestrator:
 
             elif state_lower not in active_lower:
                 # Neither active nor terminal nor review - stop without cleanup
+                _ident = self.running[issue_id].issue_identifier if issue_id in self.running else issue_id
                 logger.info(
-                    f"Reconciliation: {issue_id} not active ({current_state}), stopping"
+                    f"Reconciliation: {_ident} not active ({current_state}), stopping",
+                    extra={"linked_to": _ident},
                 )
                 task = self._tasks.get(issue_id)
                 if task:
