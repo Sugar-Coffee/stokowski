@@ -238,7 +238,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     background: var(--surface);
     padding: 18px 24px;
     display: grid;
-    grid-template-columns: 100px 1fr auto;
+    grid-template-columns: 100px minmax(0, 1fr) auto;
     gap: 16px;
     align-items: start;
     transition: background 0.15s;
@@ -306,7 +306,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 560px;
   }
 
   .agent-elapsed {
