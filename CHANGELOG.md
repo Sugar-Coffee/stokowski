@@ -8,6 +8,28 @@ All notable changes to Stokowski are documented here.
 
 ---
 
+## [0.5.0] - 2026-06-23
+
+### Added
+
+- feat: auto-start the web dashboard when `server.port` is set in config — no `--port` flag required; adds `server.host` config and a `--host` CLI flag (8f50d3b)
+- feat: structured logging that tags log records with the issue they relate to via a `linked_to` field (66366fc)
+- feat: show last-activity timestamps for running agents in both the dashboard and CLI status table (7611621)
+- feat: live log panel in the dashboard — server-sent-events log stream with per-issue filtering, auto-scroll, and clear (008e121)
+
+### Fixed
+
+- fix: guard `server.host` resolution against an unloaded config so invalid configs fail with the clean startup error instead of an AttributeError (#38)
+- fix: reconcile gates against Linear truth on each tick and at startup (#24)
+- fix: route gate-approve through `_transition` for proper target-type dispatch (#22)
+- fix: read blocker from `IssueRelation.issue`, not `relatedIssue` (#21)
+
+### Changed
+
+- fix: responsive font sizes in the dashboard using rem units and a width breakpoint (4fba2c7)
+
+---
+
 ## [0.4.0] - 2026-03-23
 
 ### Added
@@ -128,7 +150,8 @@ All notable changes to Stokowski are documented here.
 
 ---
 
-[Unreleased]: https://github.com/Sugar-Coffee/stokowski/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/Sugar-Coffee/stokowski/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v0.3.0
 [0.2.2]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v0.2.2
