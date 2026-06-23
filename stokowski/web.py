@@ -245,7 +245,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     background: var(--surface);
     padding: 18px 24px;
     display: grid;
-    grid-template-columns: 100px 1fr auto;
+    grid-template-columns: 100px minmax(0, 1fr) auto;
     gap: 16px;
     align-items: start;
     transition: background 0.15s;
@@ -300,6 +300,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .status-pill.pending    { background: transparent;          color: var(--muted); border: 1px solid var(--border-hi); }
   .status-pill.gate { background: rgba(232, 184, 75, 0.08); color: var(--amber-dim); border: 1px solid var(--amber-dim); }
 
+  .agent-activity {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+
   .agent-msg {
     font-size: 0.9rem;
     color: var(--muted);
@@ -307,7 +313,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 620px;
+  }
+
+  .agent-elapsed {
+    font-size: 0.7rem;
+    color: var(--dim);
+    font-weight: 300;
+    white-space: nowrap;
+    flex-shrink: 0;
   }
 
   .agent-meta {
@@ -707,6 +720,16 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';
   }
 
+  function fmtElapsed(isoStr) {
+    if (!isoStr) return '';
+    const diffMs = Date.now() - new Date(isoStr).getTime();
+    const s = Math.floor(diffMs / 1000);
+    if (s < 5)  return 'just now';
+    if (s < 60) return s + 's ago';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    return Math.floor(s / 3600) + 'h ago';
+  }
+
   function statusPill(status) {
     const cls = ['streaming','succeeded','failed','retrying','pending','gate'].includes(status) ? status : 'pending';
     const label = status === 'streaming' ? 'live' : status === 'gate' ? 'awaiting gate' : status;
@@ -860,7 +883,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           <div class="agent-status-row">
             ${statusPill(r.status)}${stateInfo}
           </div>
-          <div class="agent-msg">${esc(r.last_message || '—')}</div>
+          <div class="agent-activity">
+            <span class="agent-msg">${esc(r.last_message || '—')}</span>
+            ${r.last_event_at ? `<span class="agent-elapsed">${fmtElapsed(r.last_event_at)}</span>` : ''}
+          </div>
         </div>
         <div class="agent-meta">
           <div class="agent-tokens">${fmt(r.tokens?.total_tokens || 0)} tok</div>
