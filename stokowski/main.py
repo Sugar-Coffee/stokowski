@@ -331,7 +331,8 @@ async def run_orchestrator(workflow_path: str, host_ip: str | None = None, port:
     config_port: int | None = orch.config.server.port if orch.config else None
     effective_port = port if port is not None else config_port
     # Resolve host: explicit CLI flag > config server.host > 127.0.0.1
-    effective_host_ip = host_ip or orch.config.server.host or "127.0.0.1"
+    config_host: str | None = orch.config.server.host if orch.config else None
+    effective_host_ip = host_ip or config_host or "127.0.0.1"
 
     # Optional web server
     _uvicorn_server = None
