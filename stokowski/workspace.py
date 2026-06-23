@@ -97,5 +97,5 @@ async def remove_workspace(
     if hooks.before_remove:
         await run_hook(hooks.before_remove, ws_path, hooks.timeout_ms, "before_remove")
 
-    logger.info(f"Removing workspace issue={issue_identifier} path={ws_path}")
+    logger.info(f"Removing workspace issue={issue_identifier} path={ws_path}", extra={"linked_to": issue_identifier})
     shutil.rmtree(ws_path, ignore_errors=True)
