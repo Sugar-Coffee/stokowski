@@ -21,6 +21,7 @@ class TrackerConfig:
     endpoint: str = "https://api.linear.app/graphql"
     api_key: str = ""
     project_slug: str = ""
+    assignee: str | None = None
 
 
 @dataclass
@@ -381,11 +382,19 @@ def merge_state_config(
 # ── Helpers for parsing the per-project block ───────────────────────────────
 
 def _parse_tracker(raw: dict[str, Any]) -> TrackerConfig:
+    raw_assignee = raw.get("assignee")
+    assignee = (
+        str(raw_assignee).strip().lower() or None
+        if raw_assignee is not None
+        else None
+    )
+
     return TrackerConfig(
         kind=str(raw.get("kind", "linear")),
         endpoint=str(raw.get("endpoint", "https://api.linear.app/graphql")),
         api_key=str(raw.get("api_key", "")),
         project_slug=str(raw.get("project_slug", "")),
+        assignee=assignee,
     )
 
 
@@ -619,6 +628,11 @@ def _validate_project(project: ProjectConfig, errors: list[str]) -> None:
         errors.append(f"{prefix}: missing tracker API key")
     if not project.tracker.project_slug:
         errors.append(f"{prefix}: missing tracker.project_slug")
+    if project.tracker.assignee not in (None, "me"):
+        errors.append(
+            f"{prefix}: unsupported tracker.assignee: "
+            f"{project.tracker.assignee!r} (only 'me' is supported)"
+        )
 
     if not project.states:
         errors.append(f"{prefix}: no states defined")

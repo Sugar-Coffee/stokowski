@@ -6,6 +6,10 @@ All notable changes to Stokowski are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- feat: optionally scope each Linear tracker to issues assigned to the API key's authenticated user with `tracker.assignee: me`
+
 ---
 
 ## [0.5.0] - 2026-06-23

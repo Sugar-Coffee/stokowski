@@ -82,7 +82,7 @@ Every first-turn launch appends a system prompt via `--append-system-prompt` tha
 
 ### config.py
 Parses `workflow.yaml` (or legacy `.md` with front matter) into typed dataclasses:
-- `TrackerConfig` — Linear endpoint, API key, project slug
+- `TrackerConfig` — Linear endpoint, API key, project slug, optional assignee scope
 - `PollingConfig` — interval
 - `WorkspaceConfig` — root path (supports `~` and `$VAR` expansion)
 - `HooksConfig` — shell scripts for lifecycle events + timeout (includes `on_stage_enter`)
@@ -100,6 +100,10 @@ Parses `workflow.yaml` (or legacy `.md` with front matter) into typed dataclasse
 `parse_workflow_file()` detects format by file extension: `.yaml`/`.yml` files are parsed as pure YAML; `.md` files are split on `---` delimiters for front matter + body.
 
 `validate_config()` checks state machine integrity: all transitions point to existing states, gates have `rework_to` and `approve` transition, at least one agent and one terminal state exist, warns about unreachable states.
+
+Set `tracker.assignee: me` to scope issue polling and reconciliation to the
+currently authenticated Linear user. The setting is project-scoped, including
+in multi-project workflows; omitting it preserves project-wide polling.
 
 `ServiceConfig.resolved_api_key()` resolves the key in priority order:
 1. Literal value in YAML
@@ -264,9 +268,14 @@ stokowski -v
 
 # Run with web dashboard
 stokowski --port 4200
+
+# Run unit tests
+python -m unittest discover -s tests -v
 ```
 
-There are no automated tests beyond `--dry-run`. The system is best verified by running against a real Linear project with a test ticket.
+Focused unit tests cover config parsing, Linear query filters, and assignee
+reconciliation. End-to-end behavior is best verified by running `--dry-run`
+against a real Linear project with a test ticket.
 
 ---
 

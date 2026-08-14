@@ -44,6 +44,7 @@
 #         kind: linear
 #         project_slug: "abc123def456"
 #         api_key: "$LINEAR_API_KEY"
+#         assignee: me                            # optional: only my issues
 #       workspace:
 #         root: ~/.local/share/stokowski/workspaces/synced-sport
 #       hooks: { after_create: "git clone git@github.com:org/synced-sport.git ." }
@@ -75,6 +76,7 @@ tracker:
   kind: linear
   project_slug: "abc123def456"    # hex slugId from your Linear project URL
   api_key: "lin_api_your_key_here"  # your Linear API key — agents inherit this
+  # assignee: me                  # optional: only issues assigned to the API key's user
 
 # ---------------------------------------------------------------------------
 # Linear state name mapping

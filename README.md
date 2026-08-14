@@ -399,6 +399,13 @@ https://linear.app/your-team/project/my-project-abc123def456
                                               this part, not the name
 ```
 
+**`tracker.assignee`** *(optional)* — set this to `me` to process only issues
+assigned to the user authenticated by that tracker's API key. Stokowski applies
+the scope to dispatch, retries, gate/rework handling, and reconciliation. If a
+running issue is reassigned away, its agent stops on the next poll. Omit the
+field to keep the default project-wide behavior. `me` is currently the only
+supported value.
+
 **`hooks.after_create`** — how to clone your repo into a fresh workspace:
 
 ```yaml
@@ -501,6 +508,7 @@ projects:
       kind: linear
       project_slug: "abc123def456"
       api_key: "$LINEAR_API_KEY"
+      assignee: me                   # optional: only this API user's issues
     workspace:
       root: ~/.local/share/stokowski/workspaces/synced-sport
     hooks:
@@ -553,6 +561,7 @@ tracker:
   kind: linear                          # only "linear" supported
   project_slug: "abc123def456"          # hex slugId from your Linear project URL
   api_key: "lin_api_your_key_here"      # your Linear API key — agents inherit this
+  assignee: me                           # optional: only this API user's issues
 
 # These map Stokowski's internal lifecycle roles to your Linear state names.
 # You can rename values to match your team's Linear setup (e.g. todo: "Ready"),

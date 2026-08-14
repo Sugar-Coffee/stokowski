@@ -516,8 +516,16 @@ async def dry_run(workflow_path: str):
             else cfg.agent.max_concurrent_per_project.get(project.name)
         )
         cap_str = f", per-project cap: {per_project_cap}" if per_project_cap else ""
+        assignee_str = (
+            f"  assignee={project.tracker.assignee}"
+            if project.tracker.assignee
+            else ""
+        )
         console.print(f"[bold cyan]Project '{project.name}'[/bold cyan]")
-        console.print(f"  Tracker: {project.tracker.kind}  slug={project.tracker.project_slug}{cap_str}")
+        console.print(
+            f"  Tracker: {project.tracker.kind}  "
+            f"slug={project.tracker.project_slug}{assignee_str}{cap_str}"
+        )
         console.print(f"  Claude model: {project.claude.model or 'default'}  permission={project.claude.permission_mode}")
         console.print(f"  Workspace root: {project.workspace.resolved_root()}")
         if project.paused:
@@ -542,6 +550,7 @@ async def dry_run(workflow_path: str):
             candidates = await client.fetch_candidate_issues(
                 project.tracker.project_slug,
                 project.active_linear_states(),
+                assignee=project.tracker.assignee,
             )
         except Exception as e:
             console.print(f"  [red]Failed to fetch candidates: {e}[/red]")
