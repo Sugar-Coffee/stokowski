@@ -69,10 +69,23 @@ def build_codex_args(
     workspace_path: Path,
 ) -> list[str]:
     """Build the codex CLI argument list."""
-    args = ["codex", "--quiet"]
+    args = [
+        "codex",
+        "exec",
+        "--sandbox",
+        "workspace-write",
+        "--ephemeral",
+        "--json",
+        "--cd",
+        str(workspace_path),
+        "--config",
+        'approval_policy="never"',
+        "--config",
+        "sandbox_workspace_write.network_access=true",
+    ]
     if model:
         args.extend(["--model", model])
-    args.extend(["--prompt", prompt])
+    args.append(prompt)
     return args
 
 
@@ -90,8 +103,8 @@ async def run_codex_turn(
 ) -> RunAttempt:
     """Run a single Codex turn. Returns updated RunAttempt.
 
-    Codex doesn't support session resumption or stream-json output.
-    We capture stdout/stderr and use exit code for status.
+    Codex sessions are ephemeral here, so each state gets a fresh run. JSONL
+    output keeps the activity monitor updated during long-running turns.
     """
     args = build_codex_args(model, prompt, workspace_path)
 
