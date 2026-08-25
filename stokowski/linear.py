@@ -12,12 +12,9 @@ from .models import BlockerRef, Issue
 logger = logging.getLogger("stokowski.linear")
 
 CANDIDATE_QUERY = """
-query($projectSlug: String!, $states: [String!]!, $after: String) {
+query($filter: IssueFilter!, $after: String) {
   issues(
-    filter: {
-      project: { slugId: { eq: $projectSlug } }
-      state: { name: { in: $states } }
-    }
+    filter: $filter
     first: 50
     after: $after
     orderBy: createdAt
@@ -54,8 +51,8 @@ query($projectSlug: String!, $states: [String!]!, $after: String) {
 """
 
 ISSUES_BY_IDS_QUERY = """
-query($ids: [ID!]!) {
-  issues(filter: { id: { in: $ids } }) {
+query($filter: IssueFilter!) {
+  issues(filter: $filter) {
     nodes {
       id
       identifier
@@ -66,12 +63,9 @@ query($ids: [ID!]!) {
 """
 
 ISSUES_BY_STATES_QUERY = """
-query($projectSlug: String!, $states: [String!]!, $after: String) {
+query($filter: IssueFilter!, $after: String) {
   issues(
-    filter: {
-      project: { slugId: { eq: $projectSlug } }
-      state: { name: { in: $states } }
-    }
+    filter: $filter
     first: 50
     after: $after
   ) {
@@ -144,6 +138,31 @@ def _parse_datetime(val: str | None) -> datetime | None:
         return datetime.fromisoformat(val.replace("Z", "+00:00"))
     except (ValueError, AttributeError):
         return None
+
+
+def _issue_filter(
+    *,
+    project_slug: str | None = None,
+    states: list[str] | None = None,
+    issue_ids: list[str] | None = None,
+    assignee: str | None = None,
+) -> dict:
+    """Build a Linear issue filter, optionally scoped to the API key's user."""
+    issue_filter: dict = {}
+
+    if project_slug is not None:
+        issue_filter["project"] = {"slugId": {"eq": project_slug}}
+    if states is not None:
+        issue_filter["state"] = {"name": {"in": states}}
+    if issue_ids is not None:
+        issue_filter["id"] = {"in": issue_ids}
+
+    if assignee == "me":
+        issue_filter["assignee"] = {"isMe": {"eq": True}}
+    elif assignee is not None:
+        raise ValueError(f"Unsupported assignee filter: {assignee!r}")
+
+    return issue_filter
 
 
 def _normalize_issue(node: dict) -> Issue:
@@ -222,7 +241,11 @@ class LinearClient:
         return data.get("data", {})
 
     async def fetch_candidate_issues(
-        self, project_slug: str, active_states: list[str]
+        self,
+        project_slug: str,
+        active_states: list[str],
+        *,
+        assignee: str | None = None,
     ) -> list[Issue]:
         """Fetch all issues in active states for the project."""
         issues: list[Issue] = []
@@ -230,8 +253,11 @@ class LinearClient:
 
         while True:
             variables: dict = {
-                "projectSlug": project_slug,
-                "states": active_states,
+                "filter": _issue_filter(
+                    project_slug=project_slug,
+                    states=active_states,
+                    assignee=assignee,
+                ),
             }
             if cursor:
                 variables["after"] = cursor
@@ -255,13 +281,14 @@ class LinearClient:
         return issues
 
     async def fetch_issue_states_by_ids(
-        self, issue_ids: list[str]
+        self, issue_ids: list[str], *, assignee: str | None = None
     ) -> dict[str, str]:
         """Fetch current states for given issue IDs. Returns {id: state_name}."""
         if not issue_ids:
             return {}
 
-        data = await self._graphql(ISSUES_BY_IDS_QUERY, {"ids": issue_ids})
+        issue_filter = _issue_filter(issue_ids=issue_ids, assignee=assignee)
+        data = await self._graphql(ISSUES_BY_IDS_QUERY, {"filter": issue_filter})
         result = {}
         for node in data.get("issues", {}).get("nodes", []):
             if node and node.get("id") and node.get("state"):
@@ -269,7 +296,11 @@ class LinearClient:
         return result
 
     async def fetch_issues_by_states(
-        self, project_slug: str, states: list[str]
+        self,
+        project_slug: str,
+        states: list[str],
+        *,
+        assignee: str | None = None,
     ) -> list[Issue]:
         """Fetch issues in specific states (for terminal cleanup)."""
         issues: list[Issue] = []
@@ -277,8 +308,11 @@ class LinearClient:
 
         while True:
             variables: dict = {
-                "projectSlug": project_slug,
-                "states": states,
+                "filter": _issue_filter(
+                    project_slug=project_slug,
+                    states=states,
+                    assignee=assignee,
+                ),
             }
             if cursor:
                 variables["after"] = cursor

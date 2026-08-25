@@ -272,6 +272,7 @@ class Orchestrator:
             terminal = await client.fetch_issues_by_states(
                 self.cfg.tracker.project_slug,
                 self.cfg.terminal_linear_states(),
+                assignee=self.cfg.tracker.assignee,
             )
             ws_root = self.cfg.workspace.resolved_root()
             for issue in terminal:
@@ -532,6 +533,7 @@ class Orchestrator:
             approved_issues = await client.fetch_issues_by_states(
                 self.cfg.tracker.project_slug,
                 [self.cfg.linear_states.gate_approved],
+                assignee=self.cfg.tracker.assignee,
             )
         except Exception as e:
             logger.warning(f"Failed to fetch gate-approved issues: {e}")
@@ -577,6 +579,7 @@ class Orchestrator:
             rework_issues = await client.fetch_issues_by_states(
                 self.cfg.tracker.project_slug,
                 [self.cfg.linear_states.rework],
+                assignee=self.cfg.tracker.assignee,
             )
         except Exception as e:
             logger.warning(f"Failed to fetch rework issues: {e}")
@@ -654,7 +657,10 @@ class Orchestrator:
         gate_ids = list(self._pending_gates.keys())
         try:
             client = self._ensure_linear_client()
-            states = await client.fetch_issue_states_by_ids(gate_ids)
+            states = await client.fetch_issue_states_by_ids(
+                gate_ids,
+                assignee=self.cfg.tracker.assignee,
+            )
         except Exception as e:
             logger.warning(f"Gate eviction state fetch failed: {e}")
             return
@@ -663,9 +669,12 @@ class Orchestrator:
 
         for issue_id in gate_ids:
             current_state = states.get(issue_id)
-            if current_state is None:
+            outside_assignee_scope = (
+                current_state is None and self.cfg.tracker.assignee == "me"
+            )
+            if current_state is None and not outside_assignee_scope:
                 continue
-            if current_state.strip().lower() in terminal_lower:
+            if outside_assignee_scope or current_state.strip().lower() in terminal_lower:
                 gate_state = self._pending_gates.pop(issue_id, None)
                 self._issue_current_state.pop(issue_id, None)
                 self._issue_state_runs.pop(issue_id, None)
@@ -674,9 +683,14 @@ class Orchestrator:
                 ident = self._last_issues.get(
                     issue_id, Issue(id="", identifier=issue_id, title="")
                 ).identifier
+                reason = (
+                    "no longer assigned to the authenticated user"
+                    if outside_assignee_scope
+                    else f"moved to terminal: {current_state}"
+                )
                 logger.info(
                     f"Gate evicted issue={ident} was={gate_state} "
-                    f"(moved to terminal: {current_state})",
+                    f"({reason})",
                     extra={"linked_to": ident},
                 )
 
@@ -708,7 +722,9 @@ class Orchestrator:
         try:
             client = self._ensure_linear_client()
             issues = await client.fetch_issues_by_states(
-                self.cfg.tracker.project_slug, all_gate_states
+                self.cfg.tracker.project_slug,
+                all_gate_states,
+                assignee=self.cfg.tracker.assignee,
             )
         except Exception as e:
             logger.warning(f"Gate rebuild from Linear failed: {e}")
@@ -796,6 +812,7 @@ class Orchestrator:
             candidates = await client.fetch_candidate_issues(
                 self.cfg.tracker.project_slug,
                 self.cfg.active_linear_states(),
+                assignee=self.cfg.tracker.assignee,
             )
         except Exception as e:
             logger.error(f"Failed to fetch candidates: {e}")
@@ -1063,8 +1080,22 @@ class Orchestrator:
                         current_state = issue.state
                         try:
                             client = self._ensure_linear_client()
-                            states = await client.fetch_issue_states_by_ids([issue.id])
-                            current_state = states.get(issue.id, issue.state)
+                            states = await client.fetch_issue_states_by_ids(
+                                [issue.id],
+                                assignee=self.cfg.tracker.assignee,
+                            )
+                            current_state = states.get(issue.id)
+                            if (
+                                current_state is None
+                                and self.cfg.tracker.assignee == "me"
+                            ):
+                                logger.info(
+                                    f"Issue {issue.identifier} is no longer assigned "
+                                    "to the authenticated user, stopping",
+                                    extra={"linked_to": issue.identifier},
+                                )
+                                break
+                            current_state = current_state or issue.state
                             state_lower = current_state.strip().lower()
                             active_lower = [
                                 s.strip().lower() for s in self.cfg.active_linear_states()
@@ -1334,6 +1365,7 @@ class Orchestrator:
             candidates = await client.fetch_candidate_issues(
                 self.cfg.tracker.project_slug,
                 self.cfg.active_linear_states(),
+                assignee=self.cfg.tracker.assignee,
             )
         except Exception as e:
             logger.warning(f"Retry candidate fetch failed: {e}")
@@ -1382,7 +1414,10 @@ class Orchestrator:
 
         try:
             client = self._ensure_linear_client()
-            states = await client.fetch_issue_states_by_ids(running_ids)
+            states = await client.fetch_issue_states_by_ids(
+                running_ids,
+                assignee=self.cfg.tracker.assignee,
+            )
         except Exception as e:
             logger.warning(f"Reconciliation state fetch failed: {e}")
             return
@@ -1398,6 +1433,26 @@ class Orchestrator:
         for issue_id in running_ids:
             current_state = states.get(issue_id)
             if current_state is None:
+                if self.cfg.tracker.assignee != "me":
+                    continue
+
+                ident = (
+                    self.running[issue_id].issue_identifier
+                    if issue_id in self.running
+                    else issue_id
+                )
+                logger.info(
+                    f"Reconciliation: {ident} is no longer assigned to the "
+                    "authenticated user, stopping",
+                    extra={"linked_to": ident},
+                )
+                task = self._tasks.get(issue_id)
+                if task:
+                    task.cancel()
+                self.running.pop(issue_id, None)
+                self._tasks.pop(issue_id, None)
+                self.claimed.discard(issue_id)
+                self._release_slot(issue_id)
                 continue
 
             state_lower = current_state.strip().lower()
