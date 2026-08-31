@@ -8,6 +8,64 @@ All notable changes to Stokowski are documented here.
 
 ---
 
+## [1.0.0] - 2026-08-31
+
+First release where Stokowski can account for what its agents did, prove it,
+and show its working.
+
+### Added
+
+- feat: parse the real stream-json event shape — tool calls, thinking, tool
+  errors, rate-limit windows and per-run cost, split into `events.py` and
+  tested against an unedited capture (4e5231d)
+- feat: expandable per-agent activity timelines in the dashboard, plus real
+  cost, cache read/write split and the five-hour rate-limit window in both the
+  dashboard and the CLI footer (4e5231d)
+- feat: agent evidence — screenshots and exports written to
+  `.stokowski/artifacts/`, uploaded to the Linear issue and cleared locally,
+  isolated from the project repo via `.git/info/exclude` (4e5231d)
+- feat: Stokowski renders Linear comments from a structured agent report;
+  unsourced claims are published with a warning marker rather than dropped
+  (4e5231d)
+- feat: run classification applied as a Linear label — `stokowski/bug-fix`,
+  `stokowski/improvement`, `stokowski/prototype` and others (4e5231d)
+- feat: `ground-check` stage between investigation and the first human gate,
+  running a fresh session to reproduce data sources and re-derive headline
+  numbers (4e5231d)
+- ci: run the test suite on pushes and pull requests across Python 3.11 and
+  3.13, and dry-run the shipped example workflow (4e5231d)
+
+### Fixed
+
+- fix: token accounting ignored cache tokens and read a `total_tokens` field
+  that does not exist, understating usage by roughly two orders of magnitude;
+  usage was also overwritten per turn rather than accumulated, so multi-turn
+  runs reported only their final turn. Cost was not reported at all
+  (4e5231d)
+- fix: tool activity never reached the dashboard — the parser looked for a
+  top-level `tool_use` event the CLI does not emit (4e5231d)
+- fix: the session id is now taken from `system/init`, so a stalled or
+  timed-out turn stays resumable instead of restarting from scratch
+  (4e5231d)
+- fix: slash commands and skills are no longer banned in headless runs; the
+  constraint is interactivity, not tooling (4e5231d)
+- fix: example workspace hooks — `npm install` fails outright on a pnpm or
+  yarn workspace, `--depth 1` breaks the review stage's diff, `before_run`
+  exited 128 on a dirty working tree and failed every turn, and the hook
+  timeout was too short for a cold install (4e5231d)
+- fix: example prompts told agents to post Linear comments Stokowski now posts
+  itself, and to run a code review skill the system prompt forbade
+  (4e5231d)
+
+### Changed
+
+- **Breaking:** agents no longer author their own Linear summary comments.
+  Custom prompts instructing them to do so will produce duplicates — remove
+  those instructions, as the reporting contract is injected automatically
+  (4e5231d)
+
+---
+
 ## [0.5.0] - 2026-06-23
 
 ### Added
@@ -150,7 +208,8 @@ All notable changes to Stokowski are documented here.
 
 ---
 
-[Unreleased]: https://github.com/Sugar-Coffee/stokowski/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/Sugar-Coffee/stokowski/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v1.0.0
 [0.5.0]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v0.3.0
