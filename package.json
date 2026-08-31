@@ -1,0 +1,12 @@
+{
+  "name": "stokowski",
+  "private": true,
+  "description": "Script aliases for the Python CLI — see pyproject.toml for the real package",
+  "scripts": {
+    "start": "./scripts/stokowski.sh start",
+    "studio": "./scripts/stokowski.sh studio",
+    "check": "./scripts/stokowski.sh check",
+    "stats": "./scripts/stokowski.sh stats",
+    "test": "./scripts/test.sh"
+  }
+}

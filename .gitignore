@@ -20,3 +20,6 @@ prompts/*.md
 
 # Playwright MCP writes here (it refuses paths outside the repo root)
 .playwright-mcp/
+
+# Run ledger (operator-local)
+.stokowski/

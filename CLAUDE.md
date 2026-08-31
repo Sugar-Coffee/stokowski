@@ -28,11 +28,13 @@ stokowski/
   artifacts.py     Agent evidence: collection, git isolation, cleanup
   config.py        workflow.yaml parser + typed config dataclasses
   events.py        stream-json event parsing -> RunAttempt state
+  ledger.py        Append-only run log + approval-rate summary
   linear.py        Linear GraphQL client (httpx async)
   models.py        Domain models: Issue, RunAttempt, RetryEntry
   orchestrator.py  Main poll loop, dispatch, reconciliation, retry
   prompt.py        Three-layer prompt assembly + the agent reporting contract
   report.py        Structured run reports -> rendered Linear comments
+  studio.py        Comment-preserving config editing behind the dashboard
   runner.py        Claude Code CLI integration, subprocess lifecycle
   tracking.py      State machine tracking via structured Linear comments
   workspace.py     Per-issue workspace lifecycle and hooks
@@ -229,6 +231,55 @@ absent. This is how the board gets filterable by what the work turned out to be.
 The prompt side of this contract is `prompt.build_reporting_contract()`, which
 is injected into every agent prompt.
 
+### ledger.py
+Append-only JSONL at `<workflow-dir>/.stokowski/ledger.jsonl`, recording each
+stage, each gate decision, and each terminal outcome.
+
+Stokowski keeps no database, which is fine for scheduling and useless for the
+question that matters once you are running dozens of tickets a week: is this
+working, and for what? A Linear issue holds one run's report; it cannot tell
+you that `bug-fix` work lands 95% of the time while `improvement` lands 50%,
+or whether the agent's own `high` confidence predicts anything.
+
+The human verdict is taken from gate decisions already in the workflow —
+approved means accepted, rework means sent back. No separate rating step: the
+judgement was always being made, it just was not written down.
+
+Attribution uses the FIRST stage that declared a classification (the
+investigation that framed the work). A later stage's self-assessment is not
+independent of the work it just did.
+
+`stokowski --stats` prints the summary. Rates below 10 decisions are shown with
+their sample size rather than as a bare percentage, because a 1-for-1 reading
+as 100% is how a ledger starts lying to you.
+
+### studio.py
+Backs `/studio` on the dashboard: the pipeline at a glance, plus editing for
+the obvious knobs. Modelled on the content-pipeline studio — the config file
+stays the source of truth and this is a view onto it that can write back.
+
+Two properties do the work:
+
+**Comments survive.** The comments in a workflow file are its documentation.
+PyYAML keeps 7 of 193 on the shipped example and collapses 310 lines to 131, so
+round-tripping goes through `ruamel.yaml` with `indent(mapping=2, sequence=4,
+offset=2)` — which reproduces the hand-written file byte for byte. A single
+field edit changes exactly one line.
+
+**An invalid config is never written.** Every edit is rendered, written to a
+temp file *inside the workflow directory* (so relative prompt paths resolve as
+they will at runtime), parsed and validated. Only then is it committed, via
+`os.replace`. The orchestrator re-parses config on every poll tick, so a bad or
+torn write is a live failure.
+
+Edits are confined to a whitelist (`ROOT_FIELDS`, `STATE_FIELDS`). Structural
+changes — adding states, rewiring transitions — stay in the file where a diff
+shows what happened. `tracker.api_key` is deliberately absent.
+
+Note the route ordering constraint in `web.py`: `/api/v1/{issue_identifier}`
+matches any single segment, so every literal `/api/v1/...` route must be
+declared before it.
+
 ### web.py
 Optional FastAPI app returned by `create_app(orch)`. Routes:
 - `GET /` — HTML dashboard (IBM Plex Mono font, dark theme, amber accents)
@@ -337,6 +388,30 @@ the exit code alone is not sufficient.
 
 ---
 
+## Running it
+
+`package.json` carries script aliases for people who reach for `pnpm` first;
+they wrap `scripts/stokowski.sh`, which finds the CLI (activated venv → local
+`.venv` → PATH) and the workflow file, so nothing depends on remembering where
+the virtualenv lives. Run them from the directory holding your `workflow.yaml`
+— usually the operator directory, not this repo.
+
+```bash
+pnpm start      # run the orchestrator; opens the dashboard
+pnpm studio     # same process, opens /studio instead
+pnpm check      # --dry-run
+pnpm stats      # ledger summary
+pnpm test       # pytest
+```
+
+The dashboard and the studio are one process — `/studio` is a route on it, not
+a second server. `pnpm studio` differs from `pnpm start` only in which page it
+opens, reading `server.port` out of the config to build the URL.
+
+The local `.venv` is checked before PATH deliberately: a stale global install
+silently running old code against new config is a genuinely confusing failure,
+and it happened during development.
+
 ## Development setup
 
 ```bash
@@ -401,6 +476,10 @@ preference to anything installed, silently running old code against new config.
 - **Headless bans interactivity, not tooling.** Slash commands, skills and
   subagents all work under `claude -p` and are usually the best work available.
   Only plan mode, brainstorming and confirmation prompts must be excluded.
+- **`/api/v1/{issue_identifier}` is a catch-all.** Any literal route under
+  `/api/v1` must be declared before it or it will 404 as an unknown issue.
+- **Never round-trip a workflow file through PyYAML.** It destroys the comments
+  that document it. Use `studio._yaml()`.
 - **`--resume` needs a session id captured from `system/init`.** Reading it
   only from `result` loses the session on any turn that stalls or times out.
 - **`tty.setraw` vs `tty.setcbreak`**: Don't switch back to `setraw`. It disables `OPOST` output processing and causes Rich log lines to render diagonally (no carriage return on newlines).
