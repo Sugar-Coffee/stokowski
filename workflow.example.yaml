@@ -154,16 +154,17 @@ hooks:
 # ---------------------------------------------------------------------------
 claude:
   permission_mode: auto
-  model: claude-sonnet-4-6
+  model: claude-opus-5
   # NOTE: max_turns applies to LEGACY multi-turn workflows only. In a state
   # machine (below) each dispatch is exactly one `claude -p` invocation and the
   # state machine controls continuation, so this value does nothing. It is also
-  # NOT a runaway guard — the CLI has no --max-turns flag. Use max_budget_usd.
+  # NOT a runaway guard — the CLI has no --max-turns flag. A run is bounded
+  # by turn_timeout_ms and stall_timeout_ms below, which is the right axis on
+  # a subscription: there is no dollar meter to cap, only wall-clock.
   max_turns: 20
 
   # The real runaway guard: a hard dollar ceiling per invocation.
-  # max_budget_usd: 15
-
+  #
   # Reasoning effort: low | medium | high | xhigh | max (CLI default: high).
   # Worth setting per state — a merge needs far less than a grounding check.
   # effort: high
@@ -296,9 +297,8 @@ states:
     type: agent
     prompt: prompts/implement.example.md
     linear_state: active
-    model: claude-sonnet-5
+    model: claude-opus-5
     effort: high
-    max_budget_usd: 25        # implementation is the longest stage — cap it
     session: inherit
     transitions:
       complete: implementation-review

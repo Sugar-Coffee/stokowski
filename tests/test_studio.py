@@ -140,30 +140,30 @@ def test_an_unknown_state_is_refused(studio):
 @pytest.mark.parametrize("value", ["abc", "", None, -1])
 def test_bad_numbers_are_refused_or_cleared(studio, workflow, value):
     before = workflow.read_text()
+    target = {"scope": "state", "state": "research-review", "field": "max_rework"}
     if value in ("", None):
         # Clearing a state field falls back to the inherited default.
-        studio.apply([{"scope": "state", "state": "implement",
-                       "field": "max_budget_usd", "value": value}])
-        assert studio.describe()
+        studio.apply([{**target, "value": value}], workflow="feature")
+        assert studio.describe("feature")
     else:
         with pytest.raises(StudioError):
-            studio.apply([{"scope": "state", "state": "implement",
-                           "field": "max_budget_usd", "value": value}])
+            studio.apply([{**target, "value": value}], workflow="feature")
         assert workflow.read_text() == before
 
 
-def test_max_turns_is_not_offered_as_a_state_field(studio):
-    """It does nothing in state machine mode, so the UI must not imply it does.
+def test_inert_controls_are_not_offered_as_fields(studio):
+    """The UI must not imply a control that has no effect.
 
-    Each dispatch is exactly one `claude -p` invocation — the state machine
-    controls continuation — and the CLI has no --max-turns flag, so the value
-    reaches neither the loop nor the agent. Offering it as a runaway guard
-    would be offering a limit that does not limit anything.
+    `max_turns` does nothing in state machine mode: each dispatch is one
+    `claude -p` invocation, and the CLI has no --max-turns flag. `max_budget_usd`
+    capped API spend, which does not exist on a subscription — the meter it read
+    was never running. A run is bounded by turn and stall timeouts instead.
     """
     d = studio.describe()
-    assert "max_turns" not in d["state_fields"]
+    for dead in ("max_turns", "max_budget_usd"):
+        assert dead not in d["state_fields"]
     assert "claude.max_turns" not in d["root_fields"]
-    assert "max_budget_usd" in d["state_fields"]  # the guard that does work
+    assert "claude.max_budget_usd" not in d["root_fields"]
 
 
 def test_model_fields_advertise_the_catalogue(studio):

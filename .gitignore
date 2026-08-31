@@ -18,6 +18,14 @@ workflow.yml
 prompts/*.md
 !prompts/*.example.md
 
+# Workflow files (operator-local, examples are tracked). Same convention as
+# prompts: an operator's `bug-fix.yaml` shadows the shipped
+# `bug-fix.example.yaml`, and only the example is version-controlled here.
+workflows/*.yaml
+workflows/*.yml
+!workflows/*.example.yaml
+!workflows/*.example.yml
+
 # Playwright MCP writes here (it refuses paths outside the repo root)
 .playwright-mcp/
 

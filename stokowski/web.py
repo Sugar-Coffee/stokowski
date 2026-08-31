@@ -1651,8 +1651,7 @@ STUDIO_HTML = DASHBOARD_HTML.split("<body>")[0] + """<body>
         const s = d.states.find(x => x.name === name);
         if (!s) return '';
         const detail = s.type === 'agent'
-          ? [s.model, s.effort, s.session,
-             s.max_budget_usd ? '$' + s.max_budget_usd : null].filter(Boolean).join(' · ')
+          ? [s.model, s.effort, s.session, s.runner].filter(Boolean).join(' · ')
           : (s.type === 'gate' ? 'human · rework → ' + esc(s.rework_to || '?') : 'end');
         const orphan = seen.has(name) ? '' : ' (unreachable)';
         return (i ? '<span class="arrow">→</span>' : '') +
@@ -1666,20 +1665,29 @@ STUDIO_HTML = DASHBOARD_HTML.split("<body>")[0] + """<body>
     const label = key.split('.').pop().replace(/_/g, ' ');
     let control;
     if (spec.type === 'model') {
-      // Grouped by provider, but backed by a datalist rather than a fixed
-      // select: the catalogue will always lag real model lineups, so an
-      // unlisted model has to remain typeable.
-      const listId = 'models-' + id.replace(/[^a-z0-9]/gi, '-');
+      // A real select, grouped by provider — a datalist only reveals its
+      // options once you start typing, which is not a dropdown. The catalogue
+      // will always lag real model lineups, so "Custom…" swaps the control for
+      // a text input rather than making an unlisted model unreachable.
       const groups = (DATA && DATA.model_catalogue) || [];
+      const known = groups.some(g => g.models.includes(value));
       const opts = groups.map(g =>
         `<optgroup label="${esc(g.label)}">` +
-        g.models.map(m => `<option value="${esc(m)}"></option>`).join('') +
-        `</optgroup>`
+        g.models.map(m =>
+          `<option value="${esc(m)}"${m === value ? ' selected' : ''}>${esc(m)}</option>`
+        ).join('') + `</optgroup>`
       ).join('');
-      control = `<input list="${esc(listId)}" data-id="${esc(id)}"
-                   value="${esc(value ?? '')}" placeholder="${esc(inherited ?? 'inherits default')}"
-                   autocomplete="off">
-                 <datalist id="${esc(listId)}">${opts}</datalist>`;
+      control = `<select data-id="${esc(id)}" onchange="window.__modelChanged(this)">
+          <option value=""${value ? '' : ' selected'}>${esc(inherited ? 'inherit — ' + inherited : '—')}</option>
+          ${opts}
+          <option value="__custom__">Custom…</option>
+        </select>`;
+      if (value && !known) {
+        // A model already in the config but outside the catalogue is shown as
+        // text so it is visible and editable rather than silently dropped.
+        control = `<input data-id="${esc(id)}" value="${esc(value)}"
+                     placeholder="${esc(inherited ?? '')}">`;
+      }
     } else if (spec.choices) {
       control = `<select data-id="${esc(id)}">` +
         ['', ...spec.choices].map(c =>
@@ -1705,7 +1713,7 @@ STUDIO_HTML = DASHBOARD_HTML.split("<body>")[0] + """<body>
         fieldHtml('state', s.name, k, s[k], spec,
                   k === 'model' ? d.root['claude.model']
                   : k === 'effort' ? (d.root['claude.effort'] || 'high (CLI default)')
-                  : k === 'max_budget_usd' ? d.root['claude.max_budget_usd'] : null)
+                  : null)
       ).join('');
       const flow = Object.entries(s.transitions)
         .map(([t, target]) => `${esc(t)} → ${esc(target)}`).join('  ·  ');
@@ -1752,6 +1760,17 @@ STUDIO_HTML = DASHBOARD_HTML.split("<body>")[0] + """<body>
   }
 
   window.__selectWorkflow = function (name) { load(name); };
+
+  // "Custom…" turns the dropdown into a free-text field, so a model newer than
+  // the catalogue is always reachable without shipping a release.
+  window.__modelChanged = function (select) {
+    if (select.value !== '__custom__') return;
+    const input = document.createElement('input');
+    input.dataset.id = select.dataset.id;
+    input.placeholder = 'model id';
+    select.replaceWith(input);
+    input.focus();
+  };
 
   function renderPrompts(d) {
     document.getElementById('prompt-count').textContent = d.prompts.length;

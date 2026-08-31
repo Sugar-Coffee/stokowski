@@ -82,11 +82,6 @@ def build_claude_args(
     if claude_cfg.effort:
         args.extend(["--effort", claude_cfg.effort])
 
-    # A hard dollar ceiling for this invocation. The CLI has no --max-turns, so
-    # this — not max_turns — is what actually stops a runaway agent.
-    if claude_cfg.max_budget_usd:
-        args.extend(["--max-budget-usd", str(claude_cfg.max_budget_usd)])
-
     # System prompt - always include headless context, plus any user additions
     if not session_id:
         extra = claude_cfg.append_system_prompt or ""
