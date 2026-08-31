@@ -7,17 +7,41 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 
 from .config import ClaudeConfig, HooksConfig
+from .events import EventCallback, process_event
 from .models import Issue, RunAttempt
 
 logger = logging.getLogger("stokowski.runner")
 
-# Callback type for events from the runner to the orchestrator
-EventCallback = Callable[[str, str, dict[str, Any]], None]
 # Callback for registering/unregistering child PIDs
 PidCallback = Callable[[int, bool], None]  # (pid, is_register)
+
+# Appended to the system prompt on the first turn of every run.
+#
+# The constraint here is *interactivity*, not tooling. Slash commands and
+# skills run fine headlessly (a project command invoked via `claude -p
+# "/review-changes"` returns normally), and for most repos they are the best
+# work available — banning them outright cuts the agent off from the project's
+# own review, doc and codegen tooling. What actually breaks an unattended run
+# is anything that stops to wait for a human.
+HEADLESS_CONTEXT = (
+    "You are running unattended via the Stokowski orchestrator. No human will "
+    "see your output until you finish, and nothing can answer a question "
+    "mid-run.\n"
+    "You MAY use slash commands, skills and subagents — they work normally "
+    "here, and the project's own commands are usually the best way to do a "
+    "job.\n"
+    "You MUST NOT use anything that waits for a human: plan mode, "
+    "brainstorming or other clarification-first workflows, or any prompt that "
+    "asks the user to choose, confirm or approve. Never end a turn waiting for "
+    "an answer.\n"
+    "When you hit an ambiguity, decide it yourself using the best available "
+    "evidence, state the assumption you made in your final summary, and keep "
+    "going. Stop early only for a true blocker you cannot work around, such as "
+    "missing credentials — and say exactly what is missing."
+)
 
 
 def build_claude_args(
@@ -50,14 +74,8 @@ def build_claude_args(
 
     # System prompt - always include headless context, plus any user additions
     if not session_id:
-        headless_context = (
-            "You are running in headless/unattended mode via Stokowski orchestrator. "
-            "Do NOT use interactive skills, slash commands, or the Skill tool. "
-            "Do NOT invoke brainstorming, plan mode, or any interactive workflow. "
-            "Work autonomously and directly on the task."
-        )
         extra = claude_cfg.append_system_prompt or ""
-        combined = f"{headless_context}\n{extra}".strip()
+        combined = f"{HEADLESS_CONTEXT}\n{extra}".strip()
         args.extend(["--append-system-prompt", combined])
 
     return args
@@ -321,7 +339,7 @@ async def run_agent_turn(
             except json.JSONDecodeError:
                 continue
 
-            _process_event(event, attempt, on_event, issue.identifier)
+            process_event(event, attempt, on_event, issue.identifier)
 
     async def stall_monitor():
         while proc.returncode is None:
@@ -403,60 +421,13 @@ async def run_agent_turn(
     logger.info(
         f"Turn complete issue={issue.identifier} "
         f"status={attempt.status} "
-        f"tokens={attempt.total_tokens}",
+        f"tokens={attempt.total_tokens:,} "
+        f"cost=${attempt.cost_usd:.2f} "
+        f"tools={attempt.tool_call_count}",
         extra={"linked_to": issue.identifier},
     )
 
     return attempt
-
-
-def _process_event(
-    event: dict,
-    attempt: RunAttempt,
-    on_event: EventCallback | None,
-    identifier: str,
-):
-    """Process a single NDJSON event from Claude Code stream-json output."""
-    event_type = event.get("type", "")
-    attempt.last_event = event_type
-
-    # Extract session_id from result events
-    if event_type == "result":
-        if "session_id" in event:
-            attempt.session_id = event["session_id"]
-        # Extract token usage
-        usage = event.get("usage", {})
-        if usage:
-            attempt.input_tokens = usage.get("input_tokens", attempt.input_tokens)
-            attempt.output_tokens = usage.get("output_tokens", attempt.output_tokens)
-            attempt.total_tokens = (
-                usage.get("total_tokens", 0)
-                or attempt.input_tokens + attempt.output_tokens
-            )
-        # Extract result text for last_message
-        result_text = event.get("result", "")
-        if isinstance(result_text, str) and result_text:
-            attempt.last_message = result_text[:200]
-
-    elif event_type == "assistant":
-        # Assistant message content
-        msg = event.get("message", {})
-        content = msg.get("content", "")
-        if isinstance(content, str) and content:
-            attempt.last_message = content[:200]
-        elif isinstance(content, list):
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    attempt.last_message = block.get("text", "")[:200]
-                    break
-
-    elif event_type == "tool_use":
-        tool_name = event.get("name", event.get("tool", ""))
-        attempt.last_message = f"Using tool: {tool_name}"
-
-    # Forward to orchestrator callback
-    if on_event:
-        on_event(identifier, event_type, event)
 
 
 async def run_turn(
