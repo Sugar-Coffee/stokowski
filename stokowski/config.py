@@ -12,6 +12,8 @@ from typing import Any
 
 import yaml
 
+logger = logging.getLogger("stokowski.config")
+
 log = logging.getLogger(__name__)
 
 
@@ -72,6 +74,55 @@ class ClaudeConfig:
     # Comma-separated models to fall back to when the primary is overloaded or
     # unavailable (`--fallback-model`) — useful when a run hits a rate limit.
     fallback_model: str | None = None
+
+
+@dataclass
+class WorkflowSpec:
+    """One named pipeline: a state machine plus the prompt that frames it.
+
+    Deliberately narrow. Everything else in a workflow file — tracker,
+    workspace, hooks, concurrency — is runtime configuration shared by every
+    pipeline, and duplicating it per workflow would mean three places to rotate
+    an API key. Only the state machine and its global prompt vary by the kind
+    of work being done.
+
+    The global prompt is what removes `if this is a bug…` branching from stage
+    prompts: it states what kind of work this is once, so a shared `review.md`
+    needs no conditional.
+    """
+
+    name: str
+    states: dict[str, StateConfig] = field(default_factory=dict)
+    global_prompt: str | None = None
+    description: str = ""
+
+
+@dataclass
+class RoutingRule:
+    label: str
+    workflow: str
+
+
+@dataclass
+class RoutingConfig:
+    """Maps a Linear label onto a workflow. First match wins.
+
+    Order is significant and explicit: a ticket labelled both `bug` and `spike`
+    resolves the same way every time, and which way is readable from the config
+    rather than from dict iteration order.
+    """
+
+    default: str | None = None
+    rules: list[RoutingRule] = field(default_factory=list)
+
+    def resolve(self, labels: list[str] | None) -> str | None:
+        """Return the workflow name for a set of issue labels."""
+        present = {label.strip().lower() for label in (labels or []) if label}
+        for rule in self.rules:
+            if rule.label.strip().lower() in present:
+                return rule.workflow
+        return self.default
+
 
 
 @dataclass
@@ -150,6 +201,8 @@ class ProjectConfig:
     hooks: HooksConfig = field(default_factory=HooksConfig)
     prompts: PromptsConfig = field(default_factory=PromptsConfig)
     states: dict[str, StateConfig] = field(default_factory=dict)
+    workflows: dict[str, WorkflowSpec] = field(default_factory=dict)
+    routing: RoutingConfig = field(default_factory=RoutingConfig)
     linear_states: LinearStatesConfig = field(default_factory=LinearStatesConfig)
     claude: ClaudeConfig = field(default_factory=ClaudeConfig)
     workflow_dir: Path = field(default_factory=lambda: Path("."))
@@ -184,12 +237,30 @@ class ProjectConfig:
                 return name
         return None
 
+    def all_states(self) -> dict[str, StateConfig]:
+        """Every state across every workflow.
+
+        Used for questions that are about the whole project rather than one
+        issue — which Linear states to poll, whether any pipeline has a gate.
+        Same-named states in different workflows collapse to one entry, which
+        is what those callers want.
+        """
+        merged: dict[str, StateConfig] = dict(self.states)
+        for wf in self.workflows.values():
+            merged.update(wf.states)
+        return merged
+
+    def workflow_for(self, labels: list[str] | None) -> WorkflowSpec | None:
+        """Pick the workflow a set of issue labels routes to."""
+        name = self.routing.resolve(labels)
+        return self.workflows.get(name) if name else None
+
     def active_linear_states(self) -> list[str]:
         ls = self.linear_states
         seen: list[str] = []
         if ls.todo and ls.todo not in seen:
             seen.append(ls.todo)
-        for sc in self.states.values():
+        for sc in self.all_states().values():
             if sc.type == "agent":
                 linear_name = _resolve_linear_state_name(sc.linear_state, ls)
                 if linear_name and linear_name not in seen:
@@ -234,6 +305,8 @@ class ServiceConfig:
     linear_states: LinearStatesConfig = field(default_factory=LinearStatesConfig)
     prompts: PromptsConfig = field(default_factory=PromptsConfig)
     states: dict[str, StateConfig] = field(default_factory=dict)
+    workflows: dict[str, WorkflowSpec] = field(default_factory=dict)
+    routing: RoutingConfig = field(default_factory=RoutingConfig)
     projects: list[ProjectConfig] = field(default_factory=list)
     workflow_dir: Path = field(default_factory=lambda: Path("."))
 
@@ -489,6 +562,98 @@ def _merge_dict(default: dict[str, Any] | None, override: dict[str, Any] | None)
     return out
 
 
+def _parse_routing(raw: dict[str, Any] | None) -> RoutingConfig:
+    raw = raw or {}
+    rules: list[RoutingRule] = []
+    for entry in raw.get("rules") or []:
+        if not isinstance(entry, dict):
+            continue
+        label, workflow = entry.get("label"), entry.get("workflow")
+        if label and workflow:
+            rules.append(RoutingRule(label=str(label), workflow=str(workflow)))
+    return RoutingConfig(default=raw.get("default"), rules=rules)
+
+
+def _load_workflow_dir(workflow_dir: Path) -> dict[str, WorkflowSpec]:
+    """Load every `workflows/*.yaml` beside the config file.
+
+    A workflow's name is its filename stem, so `workflows/bug-fix.yaml` is
+    routed to as `bug-fix`. Files that fail to parse are skipped with a warning
+    rather than taking the whole config down — one malformed pipeline should not
+    stop the others from running.
+    """
+    found: dict[str, WorkflowSpec] = {}
+    directory = Path(workflow_dir) / "workflows"
+    if not directory.is_dir():
+        return found
+
+    # Real files are loaded after examples so an operator's `bug-fix.yaml`
+    # shadows the shipped `bug-fix.example.yaml` of the same name — mirroring
+    # how prompts work, and letting a fresh clone route out of the box.
+    paths = sorted(directory.glob("*.y*ml"), key=lambda q: (".example." not in q.name, q.name))
+    for path in paths:
+        if path.name.startswith("."):
+            continue
+        try:
+            raw = yaml.safe_load(path.read_text()) or {}
+        except (OSError, yaml.YAMLError) as e:
+            logger.warning(f"Skipping unreadable workflow {path.name}: {e}")
+            continue
+        if not isinstance(raw, dict):
+            logger.warning(f"Skipping workflow {path.name}: not a mapping")
+            continue
+
+        # `bug-fix.example.yaml` and `bug-fix.yaml` are both the `bug-fix`
+        # workflow — routing names should not carry a packaging suffix.
+        name = path.stem
+        if name.endswith(".example"):
+            name = name[: -len(".example")]
+
+        prompts_raw = raw.get("prompts") or {}
+        found[name] = WorkflowSpec(
+            name=name,
+            states=_parse_states(raw.get("states") or {}),
+            global_prompt=prompts_raw.get("global_prompt"),
+            description=str(raw.get("description") or ""),
+        )
+    return found
+
+
+def _resolve_workflows(
+    workflow_dir: Path,
+    states: dict[str, StateConfig],
+    prompts: PromptsConfig,
+    routing_raw: dict[str, Any] | None,
+) -> tuple[dict[str, WorkflowSpec], RoutingConfig]:
+    """Combine workflow files with any inline `states:` block.
+
+    An inline state machine stays valid and becomes a workflow named `default`,
+    so an existing single-pipeline config keeps working untouched.
+    """
+    workflows = _load_workflow_dir(workflow_dir)
+
+    if states:
+        workflows.setdefault(
+            "default",
+            WorkflowSpec(
+                name="default",
+                states=states,
+                global_prompt=prompts.global_prompt,
+                description="Inline state machine from the main config file.",
+            ),
+        )
+
+    routing = _parse_routing(routing_raw)
+    if not routing.default:
+        # Prefer an explicit `default` workflow, else the only one, else nothing
+        # — validation reports the ambiguity rather than picking arbitrarily.
+        if "default" in workflows:
+            routing.default = "default"
+        elif len(workflows) == 1:
+            routing.default = next(iter(workflows))
+    return workflows, routing
+
+
 def _build_project(
     name: str,
     raw: dict[str, Any],
@@ -509,6 +674,13 @@ def _build_project(
     linear_states_raw = _merge_dict(defaults.get("linear_states"), raw.get("linear_states"))
     claude_raw = _merge_dict(defaults.get("claude"), raw.get("claude"))
 
+    workflows, routing = _resolve_workflows(
+        workflow_dir,
+        _parse_states(states_raw),
+        _parse_prompts(prompts_raw),
+        _merge_dict(defaults.get("routing"), raw.get("routing")),
+    )
+
     return ProjectConfig(
         name=name,
         paused=bool(raw.get("paused", False)),
@@ -517,6 +689,8 @@ def _build_project(
         hooks=_parse_full_hooks(hooks_raw),
         prompts=_parse_prompts(prompts_raw),
         states=_parse_states(states_raw),
+        workflows=workflows,
+        routing=routing,
         linear_states=_parse_linear_states(linear_states_raw),
         claude=_parse_claude(claude_raw),
         workflow_dir=workflow_dir,
@@ -602,6 +776,7 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
         defaults = {
             "linear_states": config_raw.get("linear_states") or {},
             "claude": config_raw.get("claude") or {},
+            "routing": config_raw.get("routing") or {},
         }
         seen_names: set[str] = set()
         for idx, raw in enumerate(projects_raw):
@@ -625,6 +800,7 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
             "states": config_raw.get("states") or {},
             "linear_states": config_raw.get("linear_states") or {},
             "claude": config_raw.get("claude") or {},
+            "routing": config_raw.get("routing") or {},
         }
         name = _legacy_project_name(tracker_raw, path)
         projects.append(_build_project(name, synthetic_raw, {}, workflow_dir))
@@ -642,6 +818,10 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
         linear_states=p0.linear_states,
         prompts=p0.prompts,
         states=p0.states,
+        # ServiceConfig mirrors the first project so single-project reads keep
+        # working; per-project routing is read from the project itself.
+        workflows=p0.workflows,
+        routing=p0.routing,
         projects=projects,
         workflow_dir=workflow_dir,
     )
@@ -672,16 +852,69 @@ def _validate_project(project: ProjectConfig, errors: list[str]) -> None:
     if global_prompt and not _prompt_exists(project.workflow_dir, global_prompt):
         errors.append(f"{prefix}: global prompt not found: {global_prompt}")
 
-    if not project.states:
+    # Routing sanity: every rule and the default must name a real workflow.
+    for rule in project.routing.rules:
+        if rule.workflow not in project.workflows:
+            errors.append(
+                f"{prefix}: routing rule for label '{rule.label}' points at "
+                f"unknown workflow '{rule.workflow}'"
+            )
+    if project.routing.default and project.routing.default not in project.workflows:
+        errors.append(
+            f"{prefix}: default workflow '{project.routing.default}' does not exist"
+        )
+    if project.workflows and not project.routing.default:
+        errors.append(
+            f"{prefix}: {len(project.workflows)} workflows defined but no "
+            f"routing.default — an unlabelled issue would have nowhere to go"
+        )
+
+    if not project.workflows:
         errors.append(f"{prefix}: no states defined")
         return
+
+    # Validate EVERY workflow. An inline `states:` block has already been folded
+    # in as `default`, so this covers both shapes — and a config carrying both
+    # gets both checked, rather than the inline block masking a broken workflow
+    # file.
+    for wf_name, wf in project.workflows.items():
+        label = prefix if wf_name == "default" and not _has_workflow_files(project) \
+            else f"{prefix} workflow '{wf_name}'"
+        _validate_states(wf.states, project, label, errors,
+                         global_prompt=wf.global_prompt)
+
+
+def _has_workflow_files(project: ProjectConfig) -> bool:
+    """Whether this project has any `workflows/*.yaml` beside its config.
+
+    Only affects error wording: a single-pipeline config should not suddenly
+    report errors against "workflow 'default'" that the operator never named.
+    """
+    return (Path(project.workflow_dir) / "workflows").is_dir()
+
+
+def _validate_states(
+    states: dict[str, StateConfig],
+    project: ProjectConfig,
+    prefix: str,
+    errors: list[str],
+    global_prompt: str | None = None,
+) -> None:
+    """Validate one state machine.
+
+    Extracted so each workflow is checked on its own terms: a transition
+    target only has to exist inside its own pipeline, and two workflows may
+    legitimately share a state name.
+    """
+    if global_prompt and not _prompt_exists(project.workflow_dir, global_prompt):
+        errors.append(f"{prefix}: global prompt not found: {global_prompt}")
 
     valid_linear_keys = {"active", "awaiting_ci", "review", "gate_approved", "rework", "terminal"}
     has_agent = False
     has_terminal = False
-    all_state_names = set(project.states.keys())
+    all_state_names = set(states.keys())
 
-    for name, sc in project.states.items():
+    for name, sc in states.items():
         if sc.type not in ("agent", "gate", "terminal"):
             errors.append(f"{prefix} state '{name}': invalid type: {sc.type}")
             continue
@@ -731,11 +964,11 @@ def _validate_project(project: ProjectConfig, errors: list[str]) -> None:
         errors.append(f"{prefix}: no terminal states defined")
 
     # Warn about unreachable states
-    entry = project.entry_state
+    entry = next((n for n, sc in states.items() if sc.type == "agent"), None)
     reachable: set[str] = set()
     if entry:
         reachable.add(entry)
-    for sc in project.states.values():
+    for sc in states.values():
         for target in sc.transitions.values():
             reachable.add(target)
         if sc.rework_to:

@@ -14,15 +14,26 @@ STATE_PATTERN = re.compile(r"<!-- stokowski:state ({.*?}) -->")
 GATE_PATTERN = re.compile(r"<!-- stokowski:gate ({.*?}) -->")
 
 
-def make_state_comment(state: str, run: int = 1) -> str:
-    """Build a structured state-tracking comment."""
-    payload = {
+def make_state_comment(state: str, run: int = 1, workflow: str | None = None) -> str:
+    """Build a structured state-tracking comment.
+
+    The workflow name rides along so a restart can recover which pipeline an
+    in-flight issue was running. Without it, `_resolve_current_state` would
+    re-route from labels — and a label edited mid-run would silently move the
+    issue onto a different state machine.
+    """
+    payload: dict[str, Any] = {
         "state": state,
         "run": run,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+    if workflow:
+        payload["workflow"] = workflow
+
     machine = f"<!-- stokowski:state {json.dumps(payload)} -->"
     human = f"**[Stokowski]** Entering state: **{state}** (run {run})"
+    if workflow:
+        human += f" · workflow `{workflow}`"
     return f"{machine}\n\n{human}"
 
 
