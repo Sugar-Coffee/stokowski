@@ -43,6 +43,15 @@ CLASSIFICATIONS: dict[str, tuple[str, str]] = {
 
 CONFIDENCE_MARK = {"high": "●●●", "medium": "●●○", "low": "●○○"}
 
+# The agent's own confidence, applied as a label so a board can be filtered by
+# it. Only worth anything once you can compare it against how the work was
+# actually judged — see `stokowski --stats`.
+CONFIDENCE_LABELS: dict[str, tuple[str, str]] = {
+    "high":   ("stokowski/confidence-high", "#4cba6e"),
+    "medium": ("stokowski/confidence-medium", "#e8b84b"),
+    "low":    ("stokowski/confidence-low", "#d95f52"),
+}
+
 
 def _as_list(value: Any) -> list:
     if isinstance(value, list):
@@ -96,6 +105,18 @@ def classification_label(report: dict[str, Any] | None) -> tuple[str, str] | Non
         return None
     raw = _text(report.get("classification")).lower().replace("_", "-")
     return CLASSIFICATIONS.get(raw)
+
+
+def confidence_label(report: dict[str, Any] | None) -> tuple[str, str] | None:
+    """Map a report's confidence onto a Linear label name and colour."""
+    if not report:
+        return None
+    return CONFIDENCE_LABELS.get(_text(report.get("confidence")).lower())
+
+
+def labels_for(report: dict[str, Any] | None) -> list[tuple[str, str]]:
+    """Every label a report earns."""
+    return [l for l in (classification_label(report), confidence_label(report)) if l]
 
 
 # ── Rendering ────────────────────────────────────────────────────────────────
@@ -283,6 +304,11 @@ def render(
     out.extend(_bullets("Assumptions made", _as_list(report.get("assumptions"))))
     out.extend(_bullets("Risks", _as_list(report.get("risks"))))
     out.extend(_bullets("Open questions", _as_list(report.get("open_questions"))))
+
+    preview = _text(report.get("preview_url"))
+    if preview:
+        out.append(f"**Preview:** {preview}")
+        out.append("")
 
     next_step = _text(report.get("next"))
     if next_step:

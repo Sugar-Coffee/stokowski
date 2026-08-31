@@ -233,6 +233,7 @@ REPORT_SCHEMA = """{
     {"check": "the exact command run", "result": "pass | fail | skip", "detail": "output summary"}
   ],
   "artifacts": [{"file": "exact filename you wrote", "caption": "what it shows"}],
+  "preview_url": "deployment preview URL for this branch, if one exists",
   "assumptions": ["decisions you made without being told, and why"],
   "risks": ["what could go wrong with this work"],
   "open_questions": ["what you could not resolve"],
@@ -261,7 +262,21 @@ def build_reporting_contract() -> list[str]:
     lines.append("")
     lines.append(
         "If your work changes anything a person can see, capture it. A "
-        "before/after pair is worth more than a paragraph describing one."
+        "before/after pair is worth more than a paragraph describing one — "
+        "name them `<thing>-before.png` and `<thing>-after.png` so they render "
+        "as a pair, and shoot them at the same size and scroll position."
+    )
+    lines.append("")
+    lines.append(
+        "If your work claims an improvement to something measurable — bundle "
+        "size, request count, query time, Lighthouse score — **measure it "
+        "before and after and report both numbers**. An unmeasured performance "
+        "claim is an opinion, and it will be reviewed as one."
+    )
+    lines.append("")
+    lines.append(
+        "If pushing the branch produces a deployment preview, put its URL in "
+        "`preview_url`. It is the fastest review a human can do."
     )
     lines.append("")
 

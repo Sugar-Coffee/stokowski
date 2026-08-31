@@ -609,6 +609,14 @@ def parse_workflow_file(path: str | Path) -> WorkflowDefinition:
     return WorkflowDefinition(config=cfg, prompt_template=prompt_template)
 
 
+def _prompt_exists(workflow_dir: Path, prompt: str) -> bool:
+    """Resolve a prompt path the same way the runtime does."""
+    candidate = Path(prompt)
+    if not candidate.is_absolute():
+        candidate = Path(workflow_dir) / candidate
+    return candidate.is_file()
+
+
 def _validate_project(project: ProjectConfig, errors: list[str]) -> None:
     """Validate a single project's state machine and tracker."""
     prefix = f"project '{project.name}'"
@@ -619,6 +627,10 @@ def _validate_project(project: ProjectConfig, errors: list[str]) -> None:
         errors.append(f"{prefix}: missing tracker API key")
     if not project.tracker.project_slug:
         errors.append(f"{prefix}: missing tracker.project_slug")
+
+    global_prompt = getattr(project.prompts, "global_prompt", None)
+    if global_prompt and not _prompt_exists(project.workflow_dir, global_prompt):
+        errors.append(f"{prefix}: global prompt not found: {global_prompt}")
 
     if not project.states:
         errors.append(f"{prefix}: no states defined")
@@ -638,6 +650,13 @@ def _validate_project(project: ProjectConfig, errors: list[str]) -> None:
             has_agent = True
             if not sc.prompt:
                 errors.append(f"{prefix} state '{name}': agent state missing 'prompt' field")
+            elif not _prompt_exists(project.workflow_dir, sc.prompt):
+                # Caught here rather than at dispatch: a typo'd path otherwise
+                # sails through startup and only fails when the agent launches,
+                # which is the most expensive moment to discover it.
+                errors.append(
+                    f"{prefix} state '{name}': prompt file not found: {sc.prompt}"
+                )
 
         elif sc.type == "gate":
             if not sc.rework_to:

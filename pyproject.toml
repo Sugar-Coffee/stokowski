@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-web = ["fastapi>=0.115", "uvicorn>=0.32"]
+web = ["fastapi>=0.115", "uvicorn>=0.32", "ruamel.yaml>=0.18"]
 
 [project.urls]
 Homepage = "https://github.com/Sugar-Coffee/stokowski"

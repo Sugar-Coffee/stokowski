@@ -432,6 +432,10 @@ def cli():
         "--dry-run", action="store_true",
         help="Validate config and show candidates without dispatching",
     )
+    parser.add_argument(
+        "--stats", action="store_true",
+        help="Show approval rates and cost from the run ledger, then exit",
+    )
 
     args = parser.parse_args()
 
@@ -452,7 +456,9 @@ def cli():
     _load_dotenv()
     setup_logging(args.verbose)
 
-    if args.dry_run:
+    if args.stats:
+        show_stats(args.workflow)
+    elif args.dry_run:
         asyncio.run(dry_run(args.workflow))
     else:
         try:
@@ -461,6 +467,87 @@ def cli():
             console.print("\n[yellow]Interrupted — killing all agents...[/yellow]")
             _force_kill_children()
             console.print("[green]Done.[/green]")
+
+
+def show_stats(workflow_path: str) -> None:
+    """Print what the ledger knows about how runs have been judged.
+
+    The question this answers: does the agent's own confidence mean anything,
+    and which kinds of work land without a fight? Those two numbers decide how
+    much review a class of ticket actually needs.
+    """
+    from .ledger import Ledger
+
+    ledger = Ledger.for_workflow(Path(workflow_path))
+    if not ledger.path.is_file():
+        console.print(f"[yellow]No ledger yet at {ledger.path}[/yellow]")
+        console.print("[dim]It fills up as runs complete and gates are decided.[/dim]")
+        return
+
+    s = ledger.summarise()
+
+    console.print()
+    console.print(f"[bold]Run ledger[/bold] [dim]{ledger.path}[/dim]")
+    console.print(
+        f"  {s['stages']} stages across {s['issues']} issues · "
+        f"{s['gate_decisions']} human decisions"
+    )
+    cost_line = f"  ${s['total_cost_usd']:,.2f} · {s['total_tokens']:,} tokens"
+    if s["cost_per_stage"]:
+        cost_line += f" · ${s['cost_per_stage']:.2f}/stage"
+    console.print(cost_line)
+
+    # Quality-of-reporting signals. Both should trend toward zero; if they do
+    # not, the prompts are being ignored and the reports are worth less than
+    # they look.
+    warnings = []
+    if s["stages_without_report"]:
+        warnings.append(f"{s['stages_without_report']} stages produced no report")
+    if s["unsourced_claims"]:
+        warnings.append(f"{s['unsourced_claims']} unsourced claims")
+    if warnings:
+        console.print(f"  [red]{' · '.join(warnings)}[/red]")
+
+    if not s["gate_decisions"]:
+        console.print()
+        console.print("[dim]No gate decisions yet — approval rates appear once "
+                      "work has been approved or sent back.[/dim]")
+        return
+
+    for title, key, first_col in (
+        ("Approval rate by type", "by_classification", "Classification"),
+        ("Approval rate by the agent's stated confidence", "by_confidence", "Confidence"),
+    ):
+        rows = s[key]
+        if not rows:
+            continue
+        table = Table(title=title, title_justify="left", header_style="bold")
+        table.add_column(first_col)
+        table.add_column("Approved", justify="right")
+        table.add_column("Rework", justify="right")
+        table.add_column("Rate", justify="right")
+        for name, bucket in rows.items():
+            rate = bucket["approval_rate"]
+            # Below ~10 decisions a rate is noise, so say so rather than
+            # letting a 1-for-1 read as 100%.
+            if rate is None:
+                shown = "—"
+            elif bucket["total"] < 10:
+                shown = f"[dim]{rate:.0%} (n={bucket['total']})[/dim]"
+            else:
+                colour = "green" if rate >= 0.8 else "yellow" if rate >= 0.5 else "red"
+                shown = f"[{colour}]{rate:.0%}[/{colour}]"
+            table.add_row(name, str(bucket["approved"]), str(bucket["rework"]), shown)
+        console.print()
+        console.print(table)
+
+    if s["terminal"]:
+        console.print()
+        console.print("  Finished: " + " · ".join(
+            f"{k} {v}" for k, v in sorted(s["terminal"].items())
+        ))
+    console.print()
+
 
 
 def _force_kill_children():
