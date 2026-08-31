@@ -67,6 +67,26 @@ and update them if your work warrants it:
 These are not optional extras. In a repo that maintains them, skipping them
 fails review.
 
+## Work in flight around you
+
+Other agents are working on this repo at the same time as you, on their own
+branches, and none of you can see each other's uncommitted work. Before you
+change anything shared, look:
+
+```
+gh pr list --state open
+git branch -r --sort=-committerdate | head -20
+```
+
+Read the open PRs that touch the same area. If one already does what your
+ticket asks, say so in `next` and stop rather than producing a competing
+version. If one changes a file you need to change, say so in `risks` and keep
+your diff as narrow as you can.
+
+The same goes for append-only project docs — a build log or decisions file.
+Append at the end, never mid-file, or you create a conflict for every branch
+open at the same time.
+
 ## Execution approach
 
 - Read the relevant code before writing any.

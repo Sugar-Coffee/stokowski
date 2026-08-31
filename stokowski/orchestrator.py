@@ -34,6 +34,7 @@ from .tracking import make_gate_comment, make_state_comment, parse_latest_tracki
 from . import artifacts as artifacts_mod
 from . import report as report_mod
 from .events import summarise_tool_input
+from .ledger import Ledger
 from .workspace import ensure_workspace, remove_workspace
 
 logger = logging.getLogger("stokowski")
@@ -81,6 +82,13 @@ class Orchestrator:
         # Most recent rate-limit window seen from any agent. Shared across the
         # whole account, so the latest observation is the accurate one.
         self.rate_limit: dict[str, Any] | None = None
+        # Append-only record of runs and the human verdicts on them. In-memory
+        # state is rebuilt from Linear on restart; this is the only thing that
+        # remembers how previous work was judged.
+        # Note: no `self.cfg` here — the workflow is not loaded until the
+        # first tick, and `cfg` asserts on that. The ledger path is derived
+        # from the workflow file alone, which is known at construction.
+        self.ledger = Ledger.for_workflow(Path(self.workflow_path))
 
         # Internal
         self._linear: LinearClient | None = None
@@ -492,6 +500,11 @@ class Orchestrator:
                     logger.warning(f"Failed to move {issue.identifier} to terminal state '{terminal_state}'", extra={"linked_to": issue.identifier})
             except Exception as e:
                 logger.warning(f"Failed to move {issue.identifier} to terminal: {e}", extra={"linked_to": issue.identifier})
+            self.ledger.record_terminal(
+                project=self.project_name or "", issue_id=issue.id,
+                issue=issue.identifier, state=terminal_state,
+            )
+
             # Clean up workspace
             try:
                 ws_root = self.cfg.workspace.resolved_root()
@@ -579,6 +592,14 @@ class Orchestrator:
                 # gate transitions directly to a terminal state.
                 self._issue_current_state[issue.id] = gate_state
                 self._last_issues[issue.id] = issue
+                # A gate decision IS the human verdict on the work. Recording
+                # it here is what makes approval rate by classification and by
+                # the agent's own stated confidence measurable later.
+                self.ledger.record_gate(
+                    project=self.project_name or "", issue_id=issue.id,
+                    issue=issue.identifier, gate=gate_state,
+                    verdict="approved", run=run,
+                )
                 await self._transition(issue, "approve")
                 logger.info(f"Gate approved issue={issue.identifier} gate={gate_state}", extra={"linked_to": issue.identifier})
 
@@ -628,6 +649,14 @@ class Orchestrator:
 
                 new_run = run + 1
                 self._issue_state_runs[issue.id] = new_run
+
+                # Recorded against the run that was rejected, not the retry, so
+                # the verdict attaches to the work a human actually judged.
+                self.ledger.record_gate(
+                    project=self.project_name or "", issue_id=issue.id,
+                    issue=issue.identifier, gate=gate_state,
+                    verdict="rework", run=run,
+                )
 
                 comment = make_gate_comment(
                     state=gate_state, status="rework",
@@ -1310,6 +1339,27 @@ class Orchestrator:
             fallback_text=attempt.result_text,
         )
 
+        duration = None
+        if attempt.started_at:
+            duration = (datetime.now(timezone.utc) - attempt.started_at).total_seconds()
+        self.ledger.record_stage(
+            project=self.project_name or "",
+            issue_id=issue.id,
+            issue=issue.identifier,
+            title=issue.title,
+            state=state,
+            run=run,
+            status=attempt.status,
+            report=report,
+            tokens=attempt.total_tokens,
+            cost_usd=attempt.cost_usd,
+            tool_calls=attempt.tool_call_count,
+            tool_errors=attempt.tool_error_count,
+            artifacts=len(uploaded),
+            model=attempt.model,
+            duration_s=duration,
+        )
+
         posted = await client.post_comment(issue.id, body)
         if posted:
             logger.info(
@@ -1329,11 +1379,14 @@ class Orchestrator:
     async def _apply_classification_label(
         self, client: LinearClient, issue: Issue, report: dict | None
     ) -> None:
-        """Tag the issue with what the agent decided the work actually was."""
-        label = report_mod.classification_label(report)
-        if not label:
+        """Tag the issue with what the work was, and how sure the agent is.
+
+        Both are recorded in the ledger too; the labels are so a human can
+        filter the board without leaving Linear.
+        """
+        labels = report_mod.labels_for(report)
+        if not labels:
             return
-        name, colour = label
 
         try:
             team_id, existing_labels, on_issue = await client.fetch_team_labels(issue.id)
@@ -1341,21 +1394,22 @@ class Orchestrator:
             logger.warning(f"Could not read labels: {e}", extra={"linked_to": issue.identifier})
             return
 
-        label_id = existing_labels.get(name.lower())
+        for name, colour in labels:
+            label_id = existing_labels.get(name.lower())
 
-        if label_id is None:
-            if not team_id:
-                return
-            label_id = await client.create_label(team_id, name, colour)
-            if not label_id:
-                logger.warning(f"Could not create label '{name}'", extra={"linked_to": issue.identifier})
-                return
+            if label_id is None:
+                if not team_id:
+                    continue
+                label_id = await client.create_label(team_id, name, colour)
+                if not label_id:
+                    logger.warning(f"Could not create label '{name}'", extra={"linked_to": issue.identifier})
+                    continue
 
-        if label_id in on_issue:
-            return
+            if label_id in on_issue:
+                continue
 
-        if await client.add_label(issue.id, label_id):
-            logger.info(f"Labelled {issue.identifier} '{name}'", extra={"linked_to": issue.identifier})
+            if await client.add_label(issue.id, label_id):
+                logger.info(f"Labelled {issue.identifier} '{name}'", extra={"linked_to": issue.identifier})
 
 
     def _on_child_pid(self, pid: int, is_register: bool):

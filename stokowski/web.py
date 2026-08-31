@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import time
+from pathlib import Path
 from collections import deque
 from typing import TYPE_CHECKING, Any
 
@@ -931,6 +932,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <span class="logo-tag">Claude Code Orchestrator</span>
     </div>
     <div class="header-right">
+      <a href="/studio" class="rl-chip" style="text-decoration:none">workflow &rarr;</a>
       <span id="rate-limit" class="rl-chip" style="display:none">—</span>
       <div id="status-dot" class="status-dot idle"></div>
       <span id="ts" class="timestamp">—</span>
@@ -1492,6 +1494,303 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 """
 
 
+
+# ── Studio page ──────────────────────────────────────────────────────────────
+# Same shell and palette as the dashboard, no build step, no dependencies —
+# the config file remains the source of truth and this is a view onto it.
+
+STUDIO_HTML = DASHBOARD_HTML.split("<body>")[0] + """<body>
+<div class="shell">
+  <div class="header">
+    <div class="logo">
+      <span class="logo-mark">STOKOWSKI</span>
+      <span class="logo-sub">WORKFLOW STUDIO</span>
+    </div>
+    <div class="header-right">
+      <a href="/" class="rl-chip" style="text-decoration:none">&larr; dashboard</a>
+      <span id="wf-path" class="timestamp">—</span>
+    </div>
+  </div>
+
+  <div id="banner" style="display:none"></div>
+
+  <div class="section-header">
+    <span class="section-title">PIPELINE</span>
+    <div class="section-line"></div>
+    <span class="section-count" id="stage-count">0</span>
+  </div>
+  <div id="pipeline"></div>
+
+  <div class="section-header" style="margin-top:8px">
+    <span class="section-title">STAGES</span>
+    <div class="section-line"></div>
+  </div>
+  <div id="stages"></div>
+
+  <div class="section-header" style="margin-top:8px">
+    <span class="section-title">GLOBAL</span>
+    <div class="section-line"></div>
+  </div>
+  <div id="root-fields" class="agents"></div>
+
+  <div class="section-header" style="margin-top:8px">
+    <span class="section-title">PROMPTS</span>
+    <div class="section-line"></div>
+    <span class="section-count" id="prompt-count">0</span>
+  </div>
+  <div id="prompts"></div>
+
+  <div class="footer">
+    <span>Edits are validated before they are written &mdash; an invalid config is never saved</span>
+    <span class="footer-right" id="saved">—</span>
+  </div>
+</div>
+
+<style>
+  .flow { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:18px 24px;
+          background:var(--surface); border:1px solid var(--border); margin-bottom:28px; }
+  .node { padding:6px 12px; border:1px solid var(--border-hi); border-radius:2px;
+          font-size:.75rem; white-space:nowrap; }
+  .node.agent    { color:var(--text);  border-color:var(--blue); }
+  .node.gate     { color:var(--amber); border-color:var(--amber-dim); }
+  .node.terminal { color:var(--green); border-color:rgba(76,186,110,.4); }
+  .node-sub { display:block; font-size:.6rem; color:var(--dim); margin-top:2px; }
+  .arrow { color:var(--dim); font-size:.8rem; }
+
+  .stage { background:var(--surface); border:1px solid var(--border); margin-bottom:1px;
+           padding:16px 24px; }
+  .stage-head { display:flex; align-items:baseline; gap:10px; margin-bottom:12px; }
+  .stage-name { color:var(--amber); font-weight:600; font-size:.85rem; }
+  .stage-kind { font-size:.6rem; text-transform:uppercase; letter-spacing:.1em;
+                color:var(--dim); border:1px solid var(--border-hi); padding:1px 6px; }
+  .stage-flow { font-size:.7rem; color:var(--dim); margin-left:auto; }
+
+  .fields { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:12px; }
+  .field label { display:block; font-size:.6rem; text-transform:uppercase;
+                 letter-spacing:.08em; color:var(--dim); margin-bottom:4px; }
+  .field input, .field select {
+    width:100%; background:var(--bg); color:var(--text); font-family:var(--font);
+    font-size:.75rem; border:1px solid var(--border-hi); border-radius:2px; padding:5px 7px; }
+  .field input:focus, .field select:focus { outline:none; border-color:var(--amber); }
+  .field.dirty input, .field.dirty select { border-color:var(--amber); }
+  .field .inherited { font-size:.55rem; color:var(--dim); margin-top:3px; }
+
+  .bar { display:flex; gap:10px; align-items:center; padding:14px 24px;
+         background:var(--surface); border:1px solid var(--border); margin-bottom:28px; }
+  button.act { background:var(--amber); color:#111; border:none; border-radius:2px;
+               padding:6px 14px; font-family:var(--font); font-size:.7rem; font-weight:600;
+               cursor:pointer; }
+  button.act[disabled] { background:var(--border-hi); color:var(--dim); cursor:default; }
+  button.ghost { background:transparent; color:var(--muted); border:1px solid var(--border-hi); }
+
+  .banner { padding:12px 24px; margin-bottom:20px; font-size:.75rem; border:1px solid; }
+  .banner.err { color:var(--red); border-color:rgba(217,95,82,.4); background:rgba(217,95,82,.07); }
+  .banner.ok  { color:var(--green); border-color:rgba(76,186,110,.4); background:rgba(76,186,110,.07); }
+
+  .prompt-row { display:flex; align-items:center; gap:12px; padding:10px 24px;
+                background:var(--surface); border:1px solid var(--border); margin-bottom:1px;
+                cursor:pointer; font-size:.75rem; }
+  .prompt-row:hover { background:#141414; }
+  .prompt-row .p-name { color:var(--text); }
+  .prompt-row .p-size { margin-left:auto; color:var(--dim); font-size:.65rem; }
+  .editor { width:100%; min-height:420px; background:var(--bg); color:var(--text);
+            font-family:var(--font); font-size:.75rem; line-height:1.6; padding:14px;
+            border:1px solid var(--border-hi); border-radius:2px; resize:vertical; }
+</style>
+
+<script>
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  let DATA = null;
+  const pending = new Map();   // key -> update object
+
+  function banner(msg, kind) {
+    const el = document.getElementById('banner');
+    if (!msg) { el.style.display = 'none'; return; }
+    el.className = 'banner ' + kind;
+    el.textContent = msg;
+    el.style.display = '';
+    if (kind === 'ok') setTimeout(() => { el.style.display = 'none'; }, 4000);
+  }
+
+  // ── Pipeline strip: the "what does this actually do" view ───────────────
+  function renderFlow(d) {
+    const order = [];
+    const seen = new Set();
+    let cur = d.entry_state;
+    while (cur && !seen.has(cur)) {
+      seen.add(cur); order.push(cur);
+      const s = d.states.find(x => x.name === cur);
+      cur = s && (s.transitions.complete || s.transitions.approve);
+    }
+    // Anything unreachable still deserves showing — silently hiding a state
+    // is how an orphaned stage goes unnoticed.
+    d.states.forEach(s => { if (!seen.has(s.name)) order.push(s.name); });
+
+    document.getElementById('stage-count').textContent = d.states.length;
+    document.getElementById('pipeline').innerHTML = '<div class="flow">' +
+      order.map((name, i) => {
+        const s = d.states.find(x => x.name === name);
+        if (!s) return '';
+        const detail = s.type === 'agent'
+          ? [s.model, s.session, s.runner].filter(Boolean).join(' · ')
+          : (s.type === 'gate' ? 'human · rework → ' + esc(s.rework_to || '?') : 'end');
+        const orphan = seen.has(name) ? '' : ' (unreachable)';
+        return (i ? '<span class="arrow">→</span>' : '') +
+          `<span class="node ${esc(s.type)}">${esc(name)}${orphan}
+             <span class="node-sub">${esc(detail)}</span></span>`;
+      }).join('') + '</div>';
+  }
+
+  function fieldHtml(scope, state, key, value, spec, inherited) {
+    const id = `${scope}:${state || ''}:${key}`;
+    const label = key.split('.').pop().replace(/_/g, ' ');
+    let control;
+    if (spec.choices) {
+      control = `<select data-id="${esc(id)}">` +
+        ['', ...spec.choices].map(c =>
+          `<option value="${esc(c)}"${String(value ?? '') === c ? ' selected' : ''}>${esc(c || '—')}</option>`
+        ).join('') + '</select>';
+    } else {
+      control = `<input data-id="${esc(id)}" value="${esc(value ?? '')}"
+                   placeholder="${esc(inherited ?? '')}">`;
+    }
+    const note = (value == null && inherited != null)
+      ? `<div class="inherited">inherits ${esc(inherited)}</div>` : '';
+    return `<div class="field" id="f-${esc(id)}"><label>${esc(label)}</label>${control}${note}</div>`;
+  }
+
+  function renderStages(d) {
+    document.getElementById('stages').innerHTML = d.states.map(s => {
+      const applicable = Object.entries(d.state_fields).filter(([k]) => {
+        if (s.type === 'gate') return ['rework_to', 'max_rework'].includes(k);
+        if (s.type === 'terminal') return false;
+        return !['rework_to', 'max_rework'].includes(k);
+      });
+      const fields = applicable.map(([k, spec]) =>
+        fieldHtml('state', s.name, k, s[k], spec,
+                  k === 'model' ? d.root['claude.model']
+                  : k === 'max_turns' ? d.root['claude.max_turns'] : null)
+      ).join('');
+      const flow = Object.entries(s.transitions)
+        .map(([t, target]) => `${esc(t)} → ${esc(target)}`).join('  ·  ');
+      const conc = s.concurrency != null ? ` · max ${s.concurrency} at once` : '';
+      return `<div class="stage">
+        <div class="stage-head">
+          <span class="stage-name">${esc(s.name)}</span>
+          <span class="stage-kind">${esc(s.type)}</span>
+          <span class="stage-flow">${flow}${esc(conc)}</span>
+        </div>
+        ${fields ? `<div class="fields">${fields}</div>` : ''}
+      </div>`;
+    }).join('');
+  }
+
+  function renderRoot(d) {
+    document.getElementById('root-fields').innerHTML =
+      '<div class="stage"><div class="fields">' +
+      Object.entries(d.root_fields).map(([k, spec]) =>
+        fieldHtml('root', null, k, d.root[k], spec, null)).join('') +
+      '</div></div>';
+  }
+
+  function renderPrompts(d) {
+    document.getElementById('prompt-count').textContent = d.prompts.length;
+    document.getElementById('prompts').innerHTML = d.prompts.map(p =>
+      `<div class="prompt-row" onclick="openPrompt('${esc(p.path)}')">
+         <span class="p-name">${esc(p.path)}</span>
+         <span class="p-size">${(p.bytes / 1024).toFixed(1)} KB</span>
+       </div>`).join('');
+  }
+
+  document.addEventListener('input', e => {
+    const id = e.target.dataset && e.target.dataset.id;
+    if (!id) return;
+    const [scope, state, ...rest] = id.split(':');
+    const field = rest.join(':');
+    pending.set(id, { scope, state: state || null, field, value: e.target.value });
+    const box = document.getElementById('f-' + id);
+    if (box) box.classList.add('dirty');
+    document.getElementById('save').disabled = false;
+    document.getElementById('save').textContent = `Save ${pending.size} change${pending.size > 1 ? 's' : ''}`;
+  });
+
+  async function save() {
+    const btn = document.getElementById('save');
+    btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      const res = await fetch('/api/v1/studio/apply', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ updates: [...pending.values()] }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ? body.error.message : 'save failed');
+      pending.clear();
+      banner('Saved. Stokowski re-reads config on the next poll tick.', 'ok');
+      document.getElementById('saved').textContent =
+        'saved ' + new Date().toLocaleTimeString('en-GB', { hour12: false });
+      await load();
+    } catch (err) {
+      // The config on disk is untouched when a save is rejected.
+      banner(String(err.message || err), 'err');
+      btn.disabled = false;
+      btn.textContent = `Save ${pending.size} change${pending.size > 1 ? 's' : ''}`;
+    }
+  }
+
+  window.openPrompt = async function (path) {
+    const res = await fetch('/api/v1/studio/prompt?path=' + encodeURIComponent(path));
+    const body = await res.json();
+    if (!res.ok) return banner(body.error.message, 'err');
+    const host = document.getElementById('prompts');
+    host.innerHTML = `
+      <div class="bar">
+        <strong style="font-size:.75rem">${esc(path)}</strong>
+        <span style="flex:1"></span>
+        <button class="act" onclick="savePrompt('${esc(path)}')">Save prompt</button>
+        <button class="act ghost" onclick="load()">Back</button>
+      </div>
+      <textarea class="editor" id="prompt-body"></textarea>`;
+    document.getElementById('prompt-body').value = body.body;
+  };
+
+  window.savePrompt = async function (path) {
+    const res = await fetch('/api/v1/studio/prompt', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path, body: document.getElementById('prompt-body').value }),
+    });
+    const body = await res.json();
+    if (!res.ok) return banner(body.error.message, 'err');
+    banner('Prompt saved. It applies to the next run that uses it.', 'ok');
+  };
+
+  async function load() {
+    const res = await fetch('/api/v1/studio');
+    const d = await res.json();
+    if (!res.ok) return banner(d.error.message, 'err');
+    DATA = d;
+    pending.clear();
+    document.getElementById('wf-path').textContent = d.workflow_path;
+    renderFlow(d); renderStages(d); renderRoot(d); renderPrompts(d);
+    const bar = `<div class="bar">
+        <button class="act" id="save" disabled onclick="save()">No changes</button>
+        <button class="act ghost" onclick="load()">Reload from disk</button>
+        <span style="color:var(--dim);font-size:.65rem">
+          Structural changes — adding states, rewiring transitions — stay in the file.
+        </span>
+      </div>`;
+    document.getElementById('stages').insertAdjacentHTML('beforebegin', bar);
+  }
+
+  window.save = save;
+  window.load = load;
+  load();
+</script>
+</body>
+</html>
+"""
+
 def create_app(orchestrator: "MultiOrchestrator") -> FastAPI:
     app = FastAPI(title="Stokowski", version="0.1.0")
 
@@ -1528,6 +1827,74 @@ def create_app(orchestrator: "MultiOrchestrator") -> FastAPI:
 
         return StreamingResponse(generate(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    # ── Studio: read and edit the workflow config ────────────────────────
+    #
+    # The config file stays the source of truth; this is a view onto it that
+    # can write back. Every write is validated before it lands (see
+    # studio.py), so the UI cannot leave the orchestrator unable to start.
+
+    def _studio() -> "Studio":
+        from .studio import Studio
+        return Studio(Path(orchestrator.workflow_path))
+
+    def _studio_error(e: Exception, status: int = 400) -> JSONResponse:
+        return JSONResponse(
+            {"error": {"code": "studio_error", "message": str(e)}},
+            status_code=status,
+        )
+
+    @app.get("/studio", response_class=HTMLResponse)
+    async def studio_page():
+        return HTMLResponse(STUDIO_HTML)
+
+    @app.get("/api/v1/studio")
+    async def api_studio():
+        from .studio import StudioError
+        try:
+            return JSONResponse(_studio().describe())
+        except (StudioError, OSError) as e:
+            return _studio_error(e, 500)
+
+    @app.get("/api/v1/studio/raw")
+    async def api_studio_raw():
+        try:
+            return JSONResponse({"text": _studio().raw()})
+        except OSError as e:
+            return _studio_error(e, 500)
+
+    @app.post("/api/v1/studio/raw")
+    async def api_studio_write_raw(payload: dict):
+        from .studio import StudioError
+        try:
+            return JSONResponse(_studio().write_raw(payload.get("text") or ""))
+        except (StudioError, OSError) as e:
+            return _studio_error(e)
+
+    @app.post("/api/v1/studio/apply")
+    async def api_studio_apply(payload: dict):
+        from .studio import StudioError
+        try:
+            return JSONResponse(_studio().apply(payload.get("updates") or []))
+        except (StudioError, OSError) as e:
+            return _studio_error(e)
+
+    @app.get("/api/v1/studio/prompt")
+    async def api_studio_prompt(path: str):
+        from .studio import StudioError
+        try:
+            return JSONResponse({"path": path, "body": _studio().read_prompt(path)})
+        except (StudioError, OSError) as e:
+            return _studio_error(e)
+
+    @app.post("/api/v1/studio/prompt")
+    async def api_studio_write_prompt(payload: dict):
+        from .studio import StudioError
+        try:
+            _studio().write_prompt(payload.get("path") or "", payload.get("body") or "")
+            return JSONResponse({"ok": True})
+        except (StudioError, OSError) as e:
+            return _studio_error(e)
 
     @app.get("/api/v1/{issue_identifier}")
     async def api_issue(issue_identifier: str):
