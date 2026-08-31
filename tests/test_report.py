@@ -163,7 +163,7 @@ def test_render_tolerates_garbage_field_types():
     out = render({
         "claims": "not a list", "verification": None, "artifacts": 42,
         "assumptions": [None, "", "real one"], "data_sources": ["bare string"],
-        "summary": None, "classification": 7,
+        "summary": None, "classification": 7, "key_points": {"not": "a list"},
     })
     assert "real one" in out
 
@@ -238,6 +238,51 @@ def test_next_steps_render_as_an_ordered_list():
     out = render({"verdict": "rework", "next_steps": ["First thing", "Second thing"]})
     assert "> 1. First thing" in out
     assert "> 2. Second thing" in out
+
+
+def test_the_reasons_render_as_why_bullets():
+    """A reviewer wants "rework, because of these three things" — enumerated,
+    not a paragraph they have to parse the argument out of."""
+    out = render({
+        "verdict": "rework",
+        "key_points": ["The figure came from staging", "Two call sites were missed"],
+    })
+    assert "> **Why**" in out
+    assert "> - The figure came from staging" in out
+    assert "> - Two call sites were missed" in out
+
+
+def test_the_reasons_sit_between_the_recommendation_and_the_steps():
+    """Decision, then why, then what to do. Reversing any pair makes the block
+    harder to skim than the prose it replaced."""
+    out = render({
+        "verdict": "rework",
+        "next": "Send this back.",
+        "key_points": ["The figure came from staging"],
+        "next_steps": ["Re-run against production"],
+    })
+    assert out.index("Send this back.") < out.index("**Why**") < out.index("**Next steps**")
+
+
+def test_the_reasons_come_before_any_evidence():
+    """The whole point is not having to scroll. A reason rendered below the
+    findings table is a reason nobody reads."""
+    out = render({
+        "verdict": "rework",
+        "key_points": ["The figure came from staging"],
+        "summary": "Prose that should not come first.",
+        "claims": [{"claim": "c", "evidence": "e", "source": "s"}],
+    })
+    why = out.index("The figure came from staging")
+    for later in ("Prose that should not come first", "### Findings"):
+        assert why < out.index(later), f"{later} appears above the reasons"
+
+
+def test_no_reasons_means_no_empty_why_heading():
+    for report in ({"verdict": "approve", "next": "Ship it."},
+                   {"verdict": "approve", "key_points": []},
+                   {"verdict": "approve", "key_points": ["", "   "]}):
+        assert "**Why**" not in render(report)
 
 
 def test_the_block_carries_a_trust_signal():

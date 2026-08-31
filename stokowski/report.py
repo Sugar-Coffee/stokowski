@@ -171,6 +171,18 @@ def _render_recommendation(report: dict[str, Any]) -> list[str]:
     if recommendation:
         lines.append("> " + recommendation.replace("\n", "\n> "))
         lines.append(">")
+
+    # The reasons behind the verdict, enumerated. A reviewer deciding at a gate
+    # wants "rework, because of these three things" — scannable, not a
+    # paragraph they have to parse the argument out of. The full reasoning
+    # still sits below; this is the version you can read in ten seconds.
+    points = [_text(k) for k in _as_list(report.get("key_points")) if _text(k)]
+    if points:
+        lines.append("> **Why**")
+        lines.append(">")
+        lines += [f"> - {point}" for point in points]
+        lines.append(">")
+
     if steps:
         lines.append("> **Next steps**")
         lines.append(">")

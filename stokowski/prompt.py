@@ -257,7 +257,8 @@ REPORT_SCHEMA = """{
   "risks": ["what could go wrong with this work"],
   "open_questions": ["what you could not resolve"],
   "verdict": "approve | stands-up | complete | reproduced | rework | request-changes | blocked | cannot-verify | not-reproducible",
-  "next": "one short paragraph: the recommendation and why",
+  "next": "one or two sentences: the recommendation, stated plainly",
+  "key_points": ["3-5 bullets: the reasons behind the verdict, or the caveats on it"],
   "next_steps": ["ordered, concrete actions someone could start on immediately"]
 }"""
 
@@ -342,13 +343,37 @@ def build_reporting_contract() -> list[str]:
         "finding is more useful than `high` on a shaky one."
     )
     lines.append(
-        "6. **Lead with the recommendation.** `verdict`, `next` and `next_steps` "
-        "are rendered at the very top of the Linear comment, above everything "
-        "else. Someone deciding at a gate reads only that, so it has to carry "
-        "the decision on its own — what should happen, why, and what to do "
-        "first — without them scrolling into the tables. Write `next_steps` as "
-        "actions, ordered, each specific enough to start on: \"re-run the "
-        "orphan join against the production replica\", not \"verify the data\"."
+        "6. **Lead with the recommendation.** `verdict`, `next`, `key_points` "
+        "and `next_steps` render at the very top of the Linear comment, above "
+        "everything else. Someone deciding at a gate reads only that, so those "
+        "four fields have to carry the decision on their own — without them "
+        "scrolling into your prose or your tables."
+    )
+    lines.append("")
+    lines.append("   Each field does a different job, and they should not repeat each other:")
+    lines.append("")
+    lines.append(
+        "   - `next` — one or two sentences. The recommendation itself, stated "
+        "plainly. Not a summary of your work; the thing you want done."
+    )
+    lines.append(
+        "   - `key_points` — 3 to 5 bullets, the reasons **behind** that "
+        "recommendation. On a negative verdict these are the specific problems "
+        "(\"the 12% figure came from staging, not production\"). On a positive "
+        "one they are the reasons it is safe to proceed plus any caveats worth "
+        "knowing (\"the fix is narrow, but the same null reaches two other call "
+        "sites\"). Each bullet stands alone — a reader who sees only these "
+        "should understand the verdict."
+    )
+    lines.append(
+        "   - `next_steps` — ordered actions, each specific enough to start on: "
+        "\"re-run the orphan join against the production replica\", not "
+        "\"verify the data\"."
+    )
+    lines.append("")
+    lines.append(
+        "   Write these last, once you know what you found. They are a summary "
+        "of your conclusion, not a plan you set out with."
     )
     lines.append("")
 

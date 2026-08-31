@@ -61,6 +61,9 @@ Write `.stokowski/report.json`.
 - `next`: one short paragraph — the trigger if you reproduced it, or what you
   ruled out and what would help if you did not. Rendered at the top of the
   Linear comment; the next stage reads it first.
+- `key_points`: 3-5 bullets. On `reproduced`, the conditions that turned out to
+  matter and any that turned out not to. On `not-reproducible`, what you tried
+  and what each attempt ruled out — a reader should not repeat your dead ends.
 - `next_steps`: on `reproduced`, what the diagnosis stage should look at first.
   On `not-reproducible`, what information or access would let someone retry.
 

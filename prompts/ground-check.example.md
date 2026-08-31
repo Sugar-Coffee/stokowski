@@ -78,6 +78,11 @@ Write `.stokowski/report.json`:
   reason for it. This is rendered at the top of the Linear comment and is
   often the only thing the human at the gate reads, so it has to stand alone:
   someone who reads nothing else should know whether to approve and why.
+- `key_points`: 3-5 bullets giving the reasons behind the verdict. On
+  `needs-rework`, one bullet per thing that did not hold — name the claim and
+  what you found instead. On `stands-up`, the reasons it is safe to approve,
+  plus any caveat worth knowing before someone acts on it. Someone who reads
+  only these bullets should understand the verdict without opening the tables.
 - `next_steps`: ordered, concrete actions.
   - On `needs-rework`, each step is something the next run must do — name the
     query to re-run, the source to check, the claim to re-derive.

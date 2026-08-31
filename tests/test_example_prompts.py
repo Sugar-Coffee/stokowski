@@ -126,6 +126,23 @@ def test_every_stage_prompt_requires_a_report(path):
     )
 
 
+@pytest.mark.parametrize("path", STAGE_PROMPTS, ids=lambda p: p.name)
+def test_every_stage_prompt_asks_for_the_gate_summary(path):
+    """The four fields that render above the fold.
+
+    A stage that fills `next_steps` but not `key_points` produces a comment
+    whose top block says what to do without saying why — which is the thing a
+    reviewer at a gate most needs and the reason this block exists at all.
+    """
+    text = path.read_text()
+    if "`next_steps`" not in text:
+        pytest.skip("stage does not enumerate report fields")
+    assert "`key_points`" in text, (
+        f"{path.name} asks for next_steps but never for key_points, so its "
+        f"recommendation will land without its reasons"
+    )
+
+
 def test_global_prompt_covers_grounding_and_evidence():
     """The two failure modes this workflow exists to defend against."""
     text = (PROMPTS / "global.example.md").read_text().lower()

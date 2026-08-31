@@ -44,6 +44,9 @@ Write `.stokowski/report.json`.
   condition, `blocked` when you do not
 - `next`: the proposed fix in a sentence or two, and why it addresses the
   cause rather than the symptom. Rendered at the top of the comment.
+- `key_points`: 3-5 bullets giving the evidence chain that ties the cause to
+  the symptom, and anything that weakens it. Enough for a reader to accept or
+  challenge the diagnosis without reading the full findings.
 - `next_steps`: ordered actions for the implementation stage — the file to
   change, the test to write first, anything to check before starting
 
