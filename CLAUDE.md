@@ -30,6 +30,7 @@ stokowski/
   events.py        stream-json event parsing -> RunAttempt state
   ledger.py        Append-only run log + approval-rate summary
   linear.py        Linear GraphQL client (httpx async)
+  model_catalogue.py  Known models by provider (data, for the studio dropdown)
   models.py        Domain models: Issue, RunAttempt, RetryEntry
   orchestrator.py  Main poll loop, dispatch, reconciliation, retry
   prompt.py        Three-layer prompt assembly + the agent reporting contract
@@ -480,6 +481,11 @@ preference to anything installed, silently running old code against new config.
   `/api/v1` must be declared before it or it will 404 as an unknown issue.
 - **Never round-trip a workflow file through PyYAML.** It destroys the comments
   that document it. Use `studio._yaml()`.
+- **`max_turns` does nothing in state machine mode.** Each dispatch is exactly
+  one `claude -p` invocation — the state machine controls continuation — and
+  the CLI has no `--max-turns` flag, so the value reaches neither the loop nor
+  the agent. It applies to legacy multi-turn workflows only. The real runaway
+  guard is `max_budget_usd` (`--max-budget-usd`, requires `-p`).
 - **`--resume` needs a session id captured from `system/init`.** Reading it
   only from `result` loses the session on any turn that stalls or times out.
 - **`tty.setraw` vs `tty.setcbreak`**: Don't switch back to `setraw`. It disables `OPOST` output processing and causes Rich log lines to render diagonally (no carriage return on newlines).

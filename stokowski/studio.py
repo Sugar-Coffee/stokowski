@@ -36,6 +36,7 @@ from typing import Any
 from ruamel.yaml import YAML
 
 from .config import parse_workflow_file, validate_config
+from .model_catalogue import EFFORT_LEVELS, catalogue
 
 logger = logging.getLogger("stokowski.studio")
 
@@ -57,13 +58,18 @@ def _yaml() -> YAML:
 
 _INT = ("int", None)
 _STR = ("str", None)
+_FLOAT = ("float", None)
+_MODEL = ("model", None)      # rendered as a grouped dropdown, free text allowed
+_EFFORT = ("str", EFFORT_LEVELS)
 
 ROOT_FIELDS: dict[str, tuple[str, list[str] | None]] = {
     "polling.interval_ms": _INT,
     "agent.max_concurrent_agents": _INT,
     "agent.max_retry_backoff_ms": _INT,
-    "claude.model": _STR,
-    "claude.max_turns": _INT,
+    "claude.model": _MODEL,
+    "claude.effort": _EFFORT,
+    "claude.max_budget_usd": _FLOAT,
+    "claude.fallback_model": _MODEL,
     "claude.turn_timeout_ms": _INT,
     "claude.stall_timeout_ms": _INT,
     "claude.permission_mode": ("str", ["auto", "allowedTools", "default"]),
@@ -72,8 +78,13 @@ ROOT_FIELDS: dict[str, tuple[str, list[str] | None]] = {
 }
 
 STATE_FIELDS: dict[str, tuple[str, list[str] | None]] = {
-    "model": _STR,
-    "max_turns": _INT,
+    "model": _MODEL,
+    "effort": _EFFORT,
+    # The real runaway guard. `max_turns` is NOT one — the CLI has no
+    # --max-turns flag, and in state machine mode each dispatch is a single
+    # invocation, so the value is inert. It stays editable for legacy
+    # multi-turn workflows only.
+    "max_budget_usd": _FLOAT,
     "session": ("str", ["inherit", "fresh"]),
     "runner": ("str", ["claude", "codex"]),
     "prompt": _STR,
@@ -111,6 +122,8 @@ class Studio:
                 "linear_state": cfg.get("linear_state"),
                 "prompt": cfg.get("prompt"),
                 "model": cfg.get("model"),
+                "effort": cfg.get("effort"),
+                "max_budget_usd": cfg.get("max_budget_usd"),
                 "max_turns": cfg.get("max_turns"),
                 "session": cfg.get("session"),
                 "runner": cfg.get("runner"),
@@ -123,8 +136,15 @@ class Studio:
                     "max_concurrent_agents_by_state") or {}).get(name),
             })
 
+        # Every model the workflow already names, so an operator running one
+        # newer than the catalogue still sees their choice in the dropdown.
+        in_use = [s.get("model") for s in states if s.get("model")]
+        root_claude = data.get("claude") or {}
+        in_use += [root_claude.get("model"), root_claude.get("fallback_model")]
+
         return {
             "workflow_path": str(self.workflow_path),
+            "model_catalogue": catalogue(in_use=[m for m in in_use if m]),
             "root": {k: _dig(data, k) for k in ROOT_FIELDS},
             "root_fields": {k: {"type": t, "choices": c} for k, (t, c) in ROOT_FIELDS.items()},
             "state_fields": {k: {"type": t, "choices": c} for k, (t, c) in STATE_FIELDS.items()},
@@ -297,6 +317,15 @@ def _coerce(label: str, value: Any, spec: tuple[str, list[str] | None]) -> Any:
 
     if value is None or (isinstance(value, str) and not value.strip()):
         return None  # clearing a field falls back to the inherited default
+
+    if kind == "float":
+        try:
+            out = float(str(value).strip())
+        except (TypeError, ValueError):
+            raise StudioError(f"'{label}' must be a number, got {value!r}")
+        if out <= 0:
+            raise StudioError(f"'{label}' must be greater than zero")
+        return out
 
     if kind == "int":
         try:

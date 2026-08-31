@@ -132,18 +132,57 @@ def test_an_unknown_state_is_refused(studio):
 
 
 @pytest.mark.parametrize("value", ["abc", "", None, -1])
-def test_bad_integers_are_refused_or_cleared(studio, workflow, value):
+def test_bad_numbers_are_refused_or_cleared(studio, workflow, value):
     before = workflow.read_text()
     if value in ("", None):
         # Clearing a state field falls back to the inherited default.
         studio.apply([{"scope": "state", "state": "implement",
-                       "field": "max_turns", "value": value}])
+                       "field": "max_budget_usd", "value": value}])
         assert studio.describe()
     else:
         with pytest.raises(StudioError):
             studio.apply([{"scope": "state", "state": "implement",
-                           "field": "max_turns", "value": value}])
+                           "field": "max_budget_usd", "value": value}])
         assert workflow.read_text() == before
+
+
+def test_max_turns_is_not_offered_as_a_state_field(studio):
+    """It does nothing in state machine mode, so the UI must not imply it does.
+
+    Each dispatch is exactly one `claude -p` invocation — the state machine
+    controls continuation — and the CLI has no --max-turns flag, so the value
+    reaches neither the loop nor the agent. Offering it as a runaway guard
+    would be offering a limit that does not limit anything.
+    """
+    d = studio.describe()
+    assert "max_turns" not in d["state_fields"]
+    assert "claude.max_turns" not in d["root_fields"]
+    assert "max_budget_usd" in d["state_fields"]  # the guard that does work
+
+
+def test_model_fields_advertise_the_catalogue(studio):
+    d = studio.describe()
+    assert d["state_fields"]["model"]["type"] == "model"
+    labels = [g["label"] for g in d["model_catalogue"]]
+    assert any("Claude" in l for l in labels)
+    assert any("Codex" in l for l in labels)
+
+
+def test_a_model_in_use_but_not_in_the_catalogue_is_still_offered(studio, workflow):
+    """An operator on a model newer than this release must not lose it."""
+    studio.apply([{"scope": "state", "state": "implement",
+                   "field": "model", "value": "claude-opus-9-future"}])
+    groups = studio.describe()["model_catalogue"]
+    assert groups[0]["label"] == "In this workflow"
+    assert "claude-opus-9-future" in groups[0]["models"]
+
+
+def test_effort_rejects_levels_the_cli_does_not_accept(studio):
+    with pytest.raises(StudioError, match="must be one of"):
+        studio.apply([{"scope": "state", "state": "implement",
+                       "field": "effort", "value": "extreme"}])
+    studio.apply([{"scope": "state", "state": "implement",
+                   "field": "effort", "value": "xhigh"}])
 
 
 def test_enum_fields_reject_anything_off_the_list(studio):
