@@ -21,14 +21,22 @@ jobs:
           COMMIT_MSG=$(git log -1 --pretty=%s)
           echo "Head commit: $COMMIT_MSG"
 
+          # Three subjects have occurred in practice, and each one shipped a
+          # release that silently did not happen:
+          #
+          #   Release v1.1.0 (#47)                                  squash
+          #   Merge pull request #44 from Sugar-Coffee/release/v1.0.0  merge
+          #   Release v1.0.0                                        bare / rebase
+          #
+          # GitHub appends " (#N)" to the PR title on squash — the form the
+          # release doc claimed produced a bare subject, and the reason v1.1.0
+          # had to be tagged by hand even after the merge-commit form was fixed.
           VERSION=""
-          if [[ "$COMMIT_MSG" =~ ^Release\ v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-            # Squash merge: GitHub uses the PR title as the commit subject.
+          SEMVER='([0-9]+\.[0-9]+\.[0-9]+)'
+          SUFFIX='( \(#[0-9]+\))?'
+          if [[ "$COMMIT_MSG" =~ ^Release\ v${SEMVER}${SUFFIX}$ ]]; then
             VERSION="${BASH_REMATCH[1]}"
-          elif [[ "$COMMIT_MSG" =~ ^Merge\ pull\ request\ #[0-9]+\ from\ .*/release/v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-            # Regular merge: the subject names the release branch instead.
-            # Previously this fell through to "not a release" and the workflow
-            # reported success while doing nothing, so v1.0.0 shipped untagged.
+          elif [[ "$COMMIT_MSG" =~ ^Merge\ pull\ request\ #[0-9]+\ from\ .*/release/v${SEMVER}${SUFFIX}$ ]]; then
             VERSION="${BASH_REMATCH[1]}"
           fi
 
