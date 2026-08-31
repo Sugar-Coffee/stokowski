@@ -508,6 +508,20 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   }
   .rl-chip.warn { color: var(--red); border-color: rgba(217,95,82,.4); }
 
+  .wf-bar { display:flex; flex-wrap:wrap; align-items:center; gap:8px;
+            padding:14px 24px; background:var(--surface);
+            border:1px solid var(--border); margin-bottom:20px; }
+  .wf-tab { padding:5px 12px; border:1px solid var(--border-hi); border-radius:2px;
+            font-size:.72rem; color:var(--muted); cursor:pointer; background:none;
+            font-family:var(--font); }
+  .wf-tab:hover { color:var(--text); }
+  .wf-tab.on { color:var(--amber); border-color:var(--amber); }
+  .wf-tab .wf-def { font-size:.55rem; color:var(--dim); margin-left:6px;
+                    text-transform:uppercase; letter-spacing:.08em; }
+  .wf-routes { font-size:.65rem; color:var(--dim); margin-left:auto; text-align:right;
+               line-height:1.7; }
+  .wf-routes code { color:var(--muted); }
+
   .agent-meta {
     text-align: right;
     white-space: nowrap;
@@ -1514,6 +1528,8 @@ STUDIO_HTML = DASHBOARD_HTML.split("<body>")[0] + """<body>
 
   <div id="banner" style="display:none"></div>
 
+  <div id="workflow-bar"></div>
+
   <div class="section-header">
     <span class="section-title">PIPELINE</span>
     <div class="section-line"></div>
@@ -1525,6 +1541,7 @@ STUDIO_HTML = DASHBOARD_HTML.split("<body>")[0] + """<body>
     <span class="section-title">STAGES</span>
     <div class="section-line"></div>
   </div>
+  <div id="action-bar"></div>
   <div id="stages"></div>
 
   <div class="section-header" style="margin-top:8px">
@@ -1712,6 +1729,30 @@ STUDIO_HTML = DASHBOARD_HTML.split("<body>")[0] + """<body>
       '</div></div>';
   }
 
+  function renderWorkflows(d) {
+    const host = document.getElementById('workflow-bar');
+    if (!d.workflows || d.workflows.length < 2) { host.innerHTML = ''; return; }
+
+    const tabs = d.workflows.map(w =>
+      `<button class="wf-tab ${w === d.selected_workflow ? 'on' : ''}"
+               onclick="window.__selectWorkflow('${esc(w)}')">${esc(w)}${
+        w === (d.routing && d.routing.default) ? '<span class="wf-def">default</span>' : ''
+      }</button>`).join('');
+
+    // The routing table is the answer to "why did this ticket run that
+    // pipeline", so it belongs next to the pipeline itself.
+    const rules = ((d.routing && d.routing.rules) || [])
+      .map(r => `<code>${esc(r.label)}</code> &rarr; ${esc(r.workflow)}`).join('<br>');
+    const fallback = d.routing && d.routing.default
+      ? `<code>anything else</code> &rarr; ${esc(d.routing.default)}` : '';
+
+    host.innerHTML = `<div class="wf-bar">${tabs}
+      <div class="wf-routes">${rules}${rules && fallback ? '<br>' : ''}${fallback}</div>
+    </div>`;
+  }
+
+  window.__selectWorkflow = function (name) { load(name); };
+
   function renderPrompts(d) {
     document.getElementById('prompt-count').textContent = d.prompts.length;
     document.getElementById('prompts').innerHTML = d.prompts.map(p =>
@@ -1739,15 +1780,19 @@ STUDIO_HTML = DASHBOARD_HTML.split("<body>")[0] + """<body>
     try {
       const res = await fetch('/api/v1/studio/apply', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ updates: [...pending.values()] }),
+        body: JSON.stringify({
+          updates: [...pending.values()],
+          workflow: DATA && DATA.selected_workflow,
+        }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ? body.error.message : 'save failed');
+      const showing = DATA && DATA.selected_workflow;
       pending.clear();
       banner('Saved. Stokowski re-reads config on the next poll tick.', 'ok');
       document.getElementById('saved').textContent =
         'saved ' + new Date().toLocaleTimeString('en-GB', { hour12: false });
-      await load();
+      await load(showing);
     } catch (err) {
       // The config on disk is untouched when a save is rejected.
       banner(String(err.message || err), 'err');
@@ -1782,22 +1827,24 @@ STUDIO_HTML = DASHBOARD_HTML.split("<body>")[0] + """<body>
     banner('Prompt saved. It applies to the next run that uses it.', 'ok');
   };
 
-  async function load() {
-    const res = await fetch('/api/v1/studio');
+  async function load(workflow) {
+    const url = '/api/v1/studio' + (workflow ? '?workflow=' + encodeURIComponent(workflow) : '');
+    const res = await fetch(url);
     const d = await res.json();
     if (!res.ok) return banner(d.error.message, 'err');
     DATA = d;
     pending.clear();
     document.getElementById('wf-path').textContent = d.workflow_path;
-    renderFlow(d); renderStages(d); renderRoot(d); renderPrompts(d);
-    const bar = `<div class="bar">
+    renderWorkflows(d); renderFlow(d); renderStages(d); renderRoot(d); renderPrompts(d);
+    const scope = d.selected_workflow ? ` in <strong>${esc(d.selected_workflow)}</strong>` : '';
+    document.getElementById('action-bar').innerHTML = `<div class="bar">
         <button class="act" id="save" disabled onclick="save()">No changes</button>
-        <button class="act ghost" onclick="load()">Reload from disk</button>
+        <button class="act ghost" onclick="load(DATA && DATA.selected_workflow)">Reload from disk</button>
         <span style="color:var(--dim);font-size:.65rem">
-          Structural changes — adding states, rewiring transitions — stay in the file.
+          Editing${scope}. Structural changes — adding states, rewiring
+          transitions — stay in the file.
         </span>
       </div>`;
-    document.getElementById('stages').insertAdjacentHTML('beforebegin', bar);
   }
 
   window.save = save;
@@ -1866,12 +1913,20 @@ def create_app(orchestrator: "MultiOrchestrator") -> FastAPI:
         return HTMLResponse(STUDIO_HTML)
 
     @app.get("/api/v1/studio")
-    async def api_studio():
+    async def api_studio(workflow: str | None = None):
         from .studio import StudioError
         try:
-            return JSONResponse(_studio().describe())
+            return JSONResponse(_studio().describe(workflow))
         except (StudioError, OSError) as e:
             return _studio_error(e, 500)
+
+    @app.post("/api/v1/studio/default-workflow")
+    async def api_studio_default_workflow(payload: dict):
+        from .studio import StudioError
+        try:
+            return JSONResponse(_studio().set_default_workflow(payload.get("workflow") or ""))
+        except (StudioError, OSError) as e:
+            return _studio_error(e)
 
     @app.get("/api/v1/studio/raw")
     async def api_studio_raw():
@@ -1892,7 +1947,9 @@ def create_app(orchestrator: "MultiOrchestrator") -> FastAPI:
     async def api_studio_apply(payload: dict):
         from .studio import StudioError
         try:
-            return JSONResponse(_studio().apply(payload.get("updates") or []))
+            return JSONResponse(_studio().apply(
+                payload.get("updates") or [], workflow=payload.get("workflow")
+            ))
         except (StudioError, OSError) as e:
             return _studio_error(e)
 

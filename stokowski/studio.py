@@ -108,10 +108,23 @@ class Studio:
         y = _yaml()
         return y.load(self.workflow_path.read_text())
 
-    def describe(self) -> dict[str, Any]:
-        """The pipeline as the UI needs it: stages, wiring, editable fields."""
+    def describe(self, workflow: str | None = None) -> dict[str, Any]:
+        """The pipeline as the UI needs it: stages, wiring, editable fields.
+
+        With `workflows/` files present the studio shows one at a time; the
+        inline `states:` block is shown when there are none, so a
+        single-pipeline config looks exactly as it did before.
+        """
         data = self._load()
-        states_raw = data.get("states") or {}
+        available = self._list_workflows()
+        selected = workflow if workflow in available else (
+            self._default_workflow(data) or (available[0] if available else None)
+        )
+
+        if selected:
+            states_raw = self._workflow_doc(selected).get("states") or {}
+        else:
+            states_raw = data.get("states") or {}
 
         states = []
         for name, cfg in states_raw.items():
@@ -142,8 +155,19 @@ class Studio:
         root_claude = data.get("claude") or {}
         in_use += [root_claude.get("model"), root_claude.get("fallback_model")]
 
+        routing_raw = data.get("routing") or {}
         return {
             "workflow_path": str(self.workflow_path),
+            "workflows": available,
+            "selected_workflow": selected,
+            "routing": {
+                "default": routing_raw.get("default"),
+                "rules": [
+                    {"label": r.get("label"), "workflow": r.get("workflow")}
+                    for r in (routing_raw.get("rules") or [])
+                    if isinstance(r, dict)
+                ],
+            },
             "model_catalogue": catalogue(in_use=[m for m in in_use if m]),
             "root": {k: _dig(data, k) for k in ROOT_FIELDS},
             "root_fields": {k: {"type": t, "choices": c} for k, (t, c) in ROOT_FIELDS.items()},
@@ -153,6 +177,60 @@ class Studio:
             "prompts": self.list_prompts(),
             "linear_states": dict(data.get("linear_states") or {}),
         }
+
+    # ── Workflow files ───────────────────────────────────────────────────
+
+    def _workflows_dir(self) -> Path:
+        return self.root / "workflows"
+
+    def _list_workflows(self) -> list[str]:
+        """Names of every workflow file, real files shadowing examples."""
+        directory = self._workflows_dir()
+        if not directory.is_dir():
+            return []
+        names = set()
+        for path in directory.glob("*.y*ml"):
+            if path.name.startswith("."):
+                continue
+            stem = path.stem
+            names.add(stem[: -len(".example")] if stem.endswith(".example") else stem)
+        return sorted(names)
+
+    def _workflow_path(self, name: str) -> Path:
+        """Resolve a workflow name to a file, preferring a real one."""
+        if name not in self._list_workflows():
+            raise StudioError(f"No such workflow: {name}")
+        directory = self._workflows_dir()
+        for candidate in (f"{name}.yaml", f"{name}.yml",
+                          f"{name}.example.yaml", f"{name}.example.yml"):
+            path = directory / candidate
+            if path.is_file():
+                return path
+        raise StudioError(f"No such workflow: {name}")
+
+    def _workflow_doc(self, name: str) -> Any:
+        return _yaml().load(self._workflow_path(name).read_text())
+
+    def _default_workflow(self, data: Any) -> str | None:
+        return (data.get("routing") or {}).get("default")
+
+    def set_default_workflow(self, name: str) -> dict[str, Any]:
+        """Point routing.default at a workflow, validating before writing."""
+        if name not in self._list_workflows():
+            raise StudioError(f"No such workflow: {name}")
+        data = self._load()
+        routing = data.get("routing")
+        if routing is None:
+            raise StudioError(
+                "This config has no routing block — add one before setting a default"
+            )
+        routing["default"] = name
+        rendered = _render(data)
+        self._validate_or_raise(rendered)
+        _atomic_write(self.workflow_path, rendered)
+        logger.info(f"studio: default workflow set to {name}")
+        return {"applied": ["routing.default"]}
+
 
     def list_prompts(self) -> list[dict[str, Any]]:
         """Every markdown prompt under the workflow directory."""
@@ -195,7 +273,7 @@ class Studio:
         _atomic_write(path, body)
         logger.info(f"studio: wrote prompt {rel_path}")
 
-    def apply(self, updates: list[dict[str, Any]]) -> dict[str, Any]:
+    def apply(self, updates: list[dict[str, Any]], workflow: str | None = None) -> dict[str, Any]:
         """Apply scalar edits, then validate, then commit atomically.
 
         `updates` are `{"scope": "root"|"state", "state": name, "field": ..., "value": ...}`.
@@ -203,7 +281,10 @@ class Studio:
         if not updates:
             raise StudioError("No changes supplied")
 
-        data = self._load()
+        # State edits belong to the workflow file that owns the state; root
+        # edits always belong to the main config.
+        target = self._workflow_path(workflow) if workflow else self.workflow_path
+        data = _yaml().load(target.read_text()) if workflow else self._load()
         applied = []
 
         for update in updates:
@@ -237,10 +318,29 @@ class Studio:
                 raise StudioError(f"Unknown scope: {scope!r}")
 
         rendered = _render(data)
-        self._validate_or_raise(rendered)
-        _atomic_write(self.workflow_path, rendered)
+        if workflow:
+            # A workflow file is not a whole config, so validate by writing it
+            # in place and re-parsing the real config around it.
+            self._validate_workflow_or_raise(target, rendered)
+        else:
+            self._validate_or_raise(rendered)
+        _atomic_write(target, rendered)
         logger.info(f"studio: updated {', '.join(applied)}")
         return {"applied": applied}
+
+    def _validate_workflow_or_raise(self, target: Path, rendered: str) -> None:
+        """Validate a candidate workflow file against the surrounding config.
+
+        Written in place behind a backup rather than to a temp name, because a
+        workflow's identity is its filename — validating a copy under a
+        different name would validate a different workflow.
+        """
+        original = target.read_text()
+        try:
+            _atomic_write(target, rendered)
+            self._validate_or_raise(self.workflow_path.read_text())
+        finally:
+            _atomic_write(target, original)
 
     def write_raw(self, text: str) -> dict[str, Any]:
         """Replace the whole file, for when the UI is not enough.
