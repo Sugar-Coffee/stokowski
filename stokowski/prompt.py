@@ -201,18 +201,113 @@ def build_lifecycle_section(
             lines.append(f"- `{trigger}` → **{target}**")
         lines.append("")
 
-    # Instructions for completion
-    lines.append("### When Done")
-    lines.append("")
-    lines.append(
-        "When you have completed your work, post a summary comment on "
-        "the Linear issue describing what was done and any decisions made."
-    )
-    lines.append("")
+    # Evidence + reporting contract. Stokowski, not the agent, writes the
+    # Linear comment — a model asked to summarise its own work will reliably
+    # produce something readable and unreliably produce something checkable.
+    lines.extend(build_reporting_contract())
+
     lines.append("<!-- END STOKOWSKI LIFECYCLE -->")
 
     return "\n".join(lines)
 
+
+# Written into every prompt. The report is a file rather than a section of the
+# final message so it survives truncation and cannot blur into prose.
+REPORT_SCHEMA = """{
+  "classification": "bug-fix | improvement | prototype | investigation | chore | docs",
+  "confidence": "high | medium | low",
+  "headline": "one sentence, the single most important thing you found or did",
+  "summary": "markdown prose; the argument, not a list of activities",
+  "data_sources": [
+    {"name": "what you read from, e.g. production read replica",
+     "how_verified": "how you PROVED it was that source and not another"}
+  ],
+  "claims": [
+    {"claim": "a specific factual assertion",
+     "evidence": "the observation that supports it, with numbers where they exist",
+     "source": "file:line, query, command, or URL a reader can check",
+     "confidence": "high | medium | low"}
+  ],
+  "changes": [{"file": "path", "what": "what changed and why"}],
+  "verification": [
+    {"check": "the exact command run", "result": "pass | fail | skip", "detail": "output summary"}
+  ],
+  "artifacts": [{"file": "exact filename you wrote", "caption": "what it shows"}],
+  "assumptions": ["decisions you made without being told, and why"],
+  "risks": ["what could go wrong with this work"],
+  "open_questions": ["what you could not resolve"],
+  "next": "what should happen next"
+}"""
+
+
+def build_reporting_contract() -> list[str]:
+    """The evidence + report requirements appended to every agent prompt."""
+    lines: list[str] = []
+
+    lines.append("### Evidence")
+    lines.append("")
+    lines.append(
+        "Write any screenshots, recordings or exported data into "
+        "`$STOKOWSKI_ARTIFACTS` (also at `.stokowski/artifacts/` in this "
+        "workspace). Stokowski uploads whatever is in there to the Linear "
+        "issue and then deletes it."
+    )
+    lines.append("")
+    lines.append(
+        "Do NOT write evidence anywhere else in the repository. Files left "
+        "outside that directory are not collected, are never seen by a human, "
+        "and risk being committed."
+    )
+    lines.append("")
+    lines.append(
+        "If your work changes anything a person can see, capture it. A "
+        "before/after pair is worth more than a paragraph describing one."
+    )
+    lines.append("")
+
+    lines.append("### When Done")
+    lines.append("")
+    lines.append(
+        "Write `.stokowski/report.json` in the workspace root. Stokowski reads "
+        "it and posts the Linear comment for you — do NOT post a summary "
+        "comment on the issue yourself, it will be duplicated."
+    )
+    lines.append("")
+    lines.append("```json")
+    lines.append(REPORT_SCHEMA)
+    lines.append("```")
+    lines.append("")
+    lines.append(
+        "Rules for the report, in order of how often they are broken:"
+    )
+    lines.append("")
+    lines.append(
+        "1. **Every claim needs a source a human can independently check.** "
+        "A claim with an empty `evidence` or `source` is published with a "
+        "warning marker beside it, so an unsupported assertion is worse than "
+        "an omitted one."
+    )
+    lines.append(
+        "2. **Name the data source and prove it.** State which database, "
+        "environment, branch or file you actually read, and how you confirmed "
+        "it was that one. Reading the wrong environment and reasoning "
+        "perfectly from it is the most common way this work fails."
+    )
+    lines.append(
+        "3. **Report the exact verification commands you ran and their real "
+        "results.** Do not write `pass` for a check you did not run."
+    )
+    lines.append(
+        "4. **Record what you assumed.** Anything you decided without being "
+        "told belongs in `assumptions`, however obvious it felt."
+    )
+    lines.append(
+        "5. **Lower your confidence when you are guessing.** `low` on a real "
+        "finding is more useful than `high` on a shaky one."
+    )
+    lines.append("")
+
+    return lines
 
 def assemble_prompt(
     cfg: ServiceConfig,

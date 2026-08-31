@@ -27,18 +27,22 @@ Implement the solution, create a PR, and ensure it passes all quality checks.
    git checkout -b {{ issue.identifier | lower }}-<short-description>
    ```
 4. Implement the changes with clean, logical commits.
-5. Run the full quality suite:
-   - Type checking
-   - Linting
-   - All tests
+5. Run the project's real quality suite — the exact commands it documents,
+   not a generic approximation. Check `CLAUDE.md` for the pre-PR checklist.
 6. Fix any failures before proceeding.
-7. Push the branch and create a PR:
+7. Review your own diff, and run the project's review command if it has one
+   (e.g. `/review-changes`) — slash commands work in this environment.
+8. Capture before/after screenshots into `$STOKOWSKI_ARTIFACTS` for anything
+   visible to a user.
+9. Push the branch and create a PR:
    ```
    git push -u origin HEAD
    gh pr create --title "{{ issue.identifier }}: <concise title>" --body "<description>"
    ```
-8. Link the PR to the Linear issue.
-9. Update the workpad with: what was done, what was tested, any known limitations.
+10. Link the PR to the Linear issue.
+11. Write `.stokowski/report.json`: what changed and why, the exact
+    verification commands and their real results, assumptions, and known
+    limitations. Stokowski posts it to Linear.
 
 ## Rework run
 
@@ -59,7 +63,7 @@ If this is a rework run (a branch and PR already exist):
    - Which review comments were addressed
    - What was modified
    - Any decisions or trade-offs
-7. Append a rework section to the Linear workpad.
+7. Write a fresh `.stokowski/report.json` covering the rework.
 
 ## Quality bar
 
@@ -70,4 +74,5 @@ Before finishing, verify:
 - [ ] No lint errors
 - [ ] All acceptance criteria from the ticket description met
 - [ ] PR created (or updated) and linked to Linear issue
-- [ ] Workpad updated with completion summary
+- [ ] Evidence captured to `$STOKOWSKI_ARTIFACTS` for any visible change
+- [ ] `.stokowski/report.json` written, every claim sourced

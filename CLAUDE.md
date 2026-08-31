@@ -25,12 +25,15 @@ The agent prompt, runtime config, and workspace setup all live in `workflow.yaml
 
 ```
 stokowski/
+  artifacts.py     Agent evidence: collection, git isolation, cleanup
   config.py        workflow.yaml parser + typed config dataclasses
+  events.py        stream-json event parsing -> RunAttempt state
   linear.py        Linear GraphQL client (httpx async)
   models.py        Domain models: Issue, RunAttempt, RetryEntry
   orchestrator.py  Main poll loop, dispatch, reconciliation, retry
-  prompt.py        Three-layer prompt assembly for state machine workflows
-  runner.py        Claude Code CLI integration, stream-json parser
+  prompt.py        Three-layer prompt assembly + the agent reporting contract
+  report.py        Structured run reports -> rendered Linear comments
+  runner.py        Claude Code CLI integration, subprocess lifecycle
   tracking.py      State machine tracking via structured Linear comments
   workspace.py     Per-issue workspace lifecycle and hooks
   web.py           Optional FastAPI dashboard
@@ -65,6 +68,19 @@ Each workflow defines a set of internal states that map to Linear states. States
 1. **Global prompt** — shared context loaded from a `.md` file (referenced by `prompts.global_prompt`)
 2. **Stage prompt** — state-specific instructions loaded from the state's `prompt` path
 3. **Lifecycle injection** — auto-generated section with issue metadata, transitions, rework context, and recent comments
+
+**Grounding before gates:** The example pipeline puts an independent
+`ground-check` agent between `investigate` and the first human gate, running
+`session: fresh`. The failure it targets is an investigation that reasoned
+correctly from the wrong data — wrong environment, dead column, unreproducible
+number. That report is fluent, internally consistent and wrong, which is
+exactly why a human gate does not catch it: a reviewer reading prose cannot
+distinguish a well-sourced conclusion from a well-written one.
+
+The fresh session is load-bearing rather than cosmetic. A continued session
+inherits the assumptions it is supposed to be testing and will confirm them.
+`tests/test_example_prompts.py` asserts both properties, so a future edit that
+routes `investigate` straight to a gate fails the suite.
 
 **Gate protocol:** When an agent completes a state that transitions to a gate, Stokowski moves the issue to the gate's Linear state and posts a structured tracking comment. Humans approve or request rework via Linear state changes. On approval, Stokowski advances to the gate's `approve` transition target. On rework, it returns to the gate's `rework_to` state.
 
@@ -165,6 +181,54 @@ while running:
 
 Workspace key is the sanitized issue identifier: only `[A-Za-z0-9._-]` characters.
 
+### events.py
+Owns the mapping from stream-json onto `RunAttempt`. Split out of `runner.py`
+so the parsing is testable without launching a subprocess — the original bug
+class survived precisely because nothing could exercise it in isolation.
+
+`process_event()` folds one event in. Tool calls, thinking, text, tool errors,
+rate limits and results all append to `attempt.activity`, a bounded deque
+(`ACTIVITY_MAXLEN = 250`) that the dashboard renders as a timeline.
+
+Successful tool results are deliberately NOT recorded — a real run makes
+hundreds, and they carry no information. Only failures are.
+
+`display_tool_name()` shortens `mcp__playwright__browser_take_screenshot` to
+`playwright:browser_take_screenshot` so the argument stays visible.
+
+### artifacts.py
+Agent evidence (screenshots, exports) lives in `.stokowski/artifacts/` **inside**
+the workspace, not beside it. Playwright MCP and the simulator MCP refuse to
+write outside their working directory, so an external path silently produces
+nothing.
+
+Because it lives inside the clone it must be ignored, and the ignore goes in
+`.git/info/exclude` — never the project's `.gitignore`, which belongs to the
+project and would show up in every diff. `tests/test_artifacts.py` asserts
+against real `git status` output.
+
+`collect()` sorts by mtime so before/after pairs read in capture order, filters
+to known evidence types, and skips empty or oversized files.
+
+### report.py
+Stokowski renders the Linear comment; the agent supplies structured JSON at
+`.stokowski/report.json`. Authorship sits here because a model asked to
+summarise its own work reliably produces something readable and unreliably
+produces something checkable.
+
+The rendering is deliberately unflattering. A claim with no `evidence` or
+`source` is printed with a warning marker rather than dropped; an unverified
+`data_source` is marked as such; a missing report posts "no structured report"
+rather than silently falling back to prose. The point is that thin work should
+look thin on the issue.
+
+`classification` maps to a Linear label (`stokowski/bug-fix`,
+`stokowski/improvement`, `stokowski/prototype`, …), created on the team if
+absent. This is how the board gets filterable by what the work turned out to be.
+
+The prompt side of this contract is `prompt.build_reporting_contract()`, which
+is injected into every agent prompt.
+
 ### web.py
 Optional FastAPI app returned by `create_app(orch)`. Routes:
 - `GET /` — HTML dashboard (IBM Plex Mono font, dark theme, amber accents)
@@ -238,15 +302,38 @@ The agent itself handles: moving Linear state, posting comments, creating branch
 
 ## Stream-json event format
 
-Claude Code emits NDJSON on stdout when run with `--output-format stream-json --verbose`. Key event types:
+Claude Code emits NDJSON on stdout under `--output-format stream-json --verbose`.
+Parsing lives in `events.py`; `tests/fixtures/real_turn.ndjson` is an unedited
+capture, and `tests/test_events.py` asserts against it. **Verify any change here
+against a real capture rather than against this document.**
 
 ```json
-{"type": "assistant", "message": {"content": [{"type": "text", "text": "..."}]}}
-{"type": "tool_use", "name": "Bash", "input": {"command": "..."}}
-{"type": "result", "session_id": "uuid", "usage": {"input_tokens": 1234, "output_tokens": 456, "total_tokens": 1690}, "result": "final message text"}
+{"type":"system","subtype":"init","session_id":"uuid","model":"claude-sonnet-4-6","tools":[…]}
+{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"…"}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{…}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","is_error":false,…}]}}
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour","resetsAt":1788181200}}
+{"type":"result","subtype":"success","session_id":"uuid","usage":{…},"modelUsage":{…},"total_cost_usd":0.079,"num_turns":2,"stop_reason":"end_turn","permission_denials":[]}
 ```
 
-Exit code 0 = success. Non-zero = failure (stderr captured for error message).
+Three things about this shape bite repeatedly:
+
+- **There is no top-level `tool_use` event.** Tool calls are content blocks
+  inside `assistant` messages; their outcomes are `tool_result` blocks inside
+  `user` messages. Parsing for a top-level event yields a dashboard that shows
+  nothing but "running" — which is exactly what shipped before v0.6.
+- **`usage` has no `total_tokens` field**, and `cache_creation_input_tokens` /
+  `cache_read_input_tokens` normally dwarf `input_tokens` by two orders of
+  magnitude. A measured trivial turn: 4 input, 150 output, 10,479 cache-write,
+  45,255 cache-read. Summing only input+output reports 154 of 55,888.
+- **`usage` is per invocation, not per session.** A worker running many turns
+  via `--resume` must accumulate; assigning reports only the final turn.
+
+`total_cost_usd` is authoritative — prefer it over computing cost from tokens.
+
+Exit code 0 = success, non-zero = failure (stderr captured). Note that
+`is_error: true` on a `result` event (e.g. `error_max_turns`) still exits 0, so
+the exit code alone is not sufficient.
 
 ---
 
@@ -266,7 +353,14 @@ stokowski -v
 stokowski --port 4200
 ```
 
-There are no automated tests beyond `--dry-run`. The system is best verified by running against a real Linear project with a test ticket.
+```bash
+pip install pytest && python -m pytest tests/ -q
+```
+
+`tests/` covers the parts that fail silently: stream-json parsing (against a
+real captured fixture), artifact git-isolation (against real `git status`), and
+report rendering. Everything else — dispatch, gates, reconciliation — is still
+best verified by running against a real Linear project with a test ticket.
 
 ---
 
@@ -278,6 +372,14 @@ There are no automated tests beyond `--dry-run`. The system is best verified by 
 3. Update `orchestrator.py` to instantiate the right client based on `cfg.tracker.kind`
 4. Update `validate_config()` to handle the new kind
 
+### Running against a project
+The workflow path is a positional argument (`stokowski /path/to/workflow.yaml`),
+so an operator directory needs only `workflow.yaml`, `prompts/` and `.env` —
+**not** a checkout of this repo. Keeping a full clone as the operator directory
+pins that deployment to whatever version it was cloned at, and `python -m
+stokowski` run from inside it will import the local `stokowski/` package in
+preference to anything installed, silently running old code against new config.
+
 ### Adding config fields
 1. Add the field to the relevant dataclass in `config.py`
 2. Parse it in `parse_workflow_file()`
@@ -288,6 +390,19 @@ There are no automated tests beyond `--dry-run`. The system is best verified by 
 `web.py` is self-contained. The HTML/CSS/JS is inline in the `HTML` constant. The dashboard is intentionally dependency-free on the frontend — no build step, no npm.
 
 ### Common pitfalls
+- **Never trust a documented event shape over a captured one.** The parser bug
+  fixed in v0.6 existed because this file described a `{"type":"tool_use"}`
+  event that the CLI has never emitted. Capture a real stream and read it.
+- **Cache tokens are the token count.** Any usage arithmetic that ignores
+  `cache_read_input_tokens` is wrong by roughly two orders of magnitude.
+- **Agent evidence must go inside the workspace.** Tools that produce it will
+  not write outside their cwd. Isolate with `.git/info/exclude`, not
+  `.gitignore`.
+- **Headless bans interactivity, not tooling.** Slash commands, skills and
+  subagents all work under `claude -p` and are usually the best work available.
+  Only plan mode, brainstorming and confirmation prompts must be excluded.
+- **`--resume` needs a session id captured from `system/init`.** Reading it
+  only from `result` loses the session on any turn that stalls or times out.
 - **`tty.setraw` vs `tty.setcbreak`**: Don't switch back to `setraw`. It disables `OPOST` output processing and causes Rich log lines to render diagonally (no carriage return on newlines).
 - **`Issue(title=...)` is required**: Minimal Issue constructors (in `linear.py` `fetch_issues_by_states` and the `orchestrator.py` state-check default) must pass `title=""` — it's a required positional field.
 - **`--verbose` with stream-json**: Claude Code requires `--verbose` when using `--output-format stream-json`. Without it you get an error.
