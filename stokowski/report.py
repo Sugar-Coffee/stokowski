@@ -21,6 +21,13 @@ from typing import Any
 
 logger = logging.getLogger("stokowski.report")
 
+# Stamped on every rendered report. Reports are posted with the operator's API
+# key, so Linear attributes them to whoever owns it — meaning an agent reading
+# the thread sees its own previous output under a human's name and treats it as
+# instruction. The marker lets `get_comments_since` recognise them as machine
+# output; it shares the `stokowski:` prefix that filter already matches.
+REPORT_MARKER = "<!-- stokowski:report -->"
+
 # Where the agent is told to write its report, relative to the workspace root.
 REPORT_PATH = Path(".stokowski") / "report.json"
 
@@ -288,6 +295,9 @@ def render(
     """Render the Linear comment for a completed stage."""
     uploaded = uploaded or {}
     out: list[str] = []
+
+    out.append(REPORT_MARKER)
+    out.append("")
 
     if report is None:
         out.append(f"## {state} — no structured report")

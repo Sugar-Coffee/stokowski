@@ -115,6 +115,37 @@ def build_template_context(
     }
 
 
+def comment_author(comment: dict[str, Any]) -> str:
+    """Who wrote a Linear comment.
+
+    Comments were previously injected with no attribution at all, so a thread
+    carrying direction from several people arrived as an undifferentiated wall
+    of quotes. An agent then cannot tell the requester's instruction from a
+    colleague's aside, or either from its own earlier comment — and will guess,
+    typically by binding the quotes to whatever name it saw in the repo.
+    """
+    for key in ("user", "botActor", "externalUser"):
+        actor = comment.get(key)
+        if isinstance(actor, dict):
+            name = actor.get("displayName") or actor.get("name")
+            if name and str(name).strip():
+                label = str(name).strip()
+                return f"{label} (bot)" if key == "botActor" else label
+    return "unknown author"
+
+
+def format_comment(comment: dict[str, Any]) -> list[str]:
+    """Render one comment as an attributed blockquote."""
+    body = (comment.get("body") or "").strip()
+    if not body:
+        return []
+    header = f"**{comment_author(comment)}**"
+    created = (comment.get("createdAt") or "").strip()
+    if created:
+        header += f" · {created}"
+    return [f"> {header}", ">"] + [f"> {line}" for line in body.splitlines()] + [""]
+
+
 def build_lifecycle_section(
     issue: Issue,
     state_name: str,
@@ -168,13 +199,7 @@ def build_lifecycle_section(
             lines.append("**Review comments:**")
             lines.append("")
             for comment in recent_comments:
-                body = comment.get("body", "").strip()
-                created = comment.get("createdAt", "")
-                if body:
-                    lines.append(f"> {body}")
-                    if created:
-                        lines.append(f"> — {created}")
-                    lines.append("")
+                lines.extend(format_comment(comment))
         lines.append(
             "Address the feedback above before resubmitting."
         )
@@ -185,13 +210,7 @@ def build_lifecycle_section(
         lines.append("### Recent Activity")
         lines.append("")
         for comment in recent_comments:
-            body = comment.get("body", "").strip()
-            created = comment.get("createdAt", "")
-            if body:
-                lines.append(f"> {body}")
-                if created:
-                    lines.append(f"> — {created}")
-                lines.append("")
+            lines.extend(format_comment(comment))
 
     # Available transitions
     if state_cfg.transitions:
