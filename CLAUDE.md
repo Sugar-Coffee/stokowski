@@ -508,8 +508,12 @@ preference to anything installed, silently running old code against new config.
 - **`max_turns` does nothing in state machine mode.** Each dispatch is exactly
   one `claude -p` invocation — the state machine controls continuation — and
   the CLI has no `--max-turns` flag, so the value reaches neither the loop nor
-  the agent. It applies to legacy multi-turn workflows only. The real runaway
-  guard is `max_budget_usd` (`--max-budget-usd`, requires `-p`).
+  the agent. It applies to legacy multi-turn workflows only.
+- **A run is bounded by time, not money.** `turn_timeout_ms` and
+  `stall_timeout_ms` are the guards. `--max-budget-usd` was tried and removed:
+  it caps *API* spend, and Stokowski runs on a Claude subscription where there
+  is no dollar meter for it to read, so it either did nothing or halted a run
+  for a reason that did not apply.
 - **`--resume` needs a session id captured from `system/init`.** Reading it
   only from `result` loses the session on any turn that stalls or times out.
 - **`tty.setraw` vs `tty.setcbreak`**: Don't switch back to `setraw`. It disables `OPOST` output processing and causes Rich log lines to render diagonally (no carriage return on newlines).

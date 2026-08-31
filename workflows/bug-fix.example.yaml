@@ -69,7 +69,6 @@ states:
     linear_state: active
     model: claude-sonnet-5
     effort: high
-    max_budget_usd: 25
     session: inherit
     transitions:
       complete: code-review

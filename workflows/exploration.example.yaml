@@ -29,7 +29,6 @@ states:
     linear_state: active
     model: claude-opus-5
     effort: xhigh
-    max_budget_usd: 15
     session: inherit
     transitions:
       complete: ground-check

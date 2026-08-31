@@ -68,7 +68,6 @@ ROOT_FIELDS: dict[str, tuple[str, list[str] | None]] = {
     "agent.max_retry_backoff_ms": _INT,
     "claude.model": _MODEL,
     "claude.effort": _EFFORT,
-    "claude.max_budget_usd": _FLOAT,
     "claude.fallback_model": _MODEL,
     "claude.turn_timeout_ms": _INT,
     "claude.stall_timeout_ms": _INT,
@@ -80,11 +79,6 @@ ROOT_FIELDS: dict[str, tuple[str, list[str] | None]] = {
 STATE_FIELDS: dict[str, tuple[str, list[str] | None]] = {
     "model": _MODEL,
     "effort": _EFFORT,
-    # The real runaway guard. `max_turns` is NOT one — the CLI has no
-    # --max-turns flag, and in state machine mode each dispatch is a single
-    # invocation, so the value is inert. It stays editable for legacy
-    # multi-turn workflows only.
-    "max_budget_usd": _FLOAT,
     "session": ("str", ["inherit", "fresh"]),
     "runner": ("str", ["claude", "codex"]),
     "prompt": _STR,
@@ -136,7 +130,6 @@ class Studio:
                 "prompt": cfg.get("prompt"),
                 "model": cfg.get("model"),
                 "effort": cfg.get("effort"),
-                "max_budget_usd": cfg.get("max_budget_usd"),
                 "max_turns": cfg.get("max_turns"),
                 "session": cfg.get("session"),
                 "runner": cfg.get("runner"),
