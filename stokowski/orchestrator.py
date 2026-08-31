@@ -31,6 +31,9 @@ from .pool import ConcurrencyPool
 from .prompt import assemble_prompt, build_lifecycle_section
 from .runner import run_agent_turn, run_turn
 from .tracking import make_gate_comment, make_state_comment, parse_latest_tracking
+from . import artifacts as artifacts_mod
+from . import report as report_mod
+from .events import summarise_tool_input
 from .workspace import ensure_workspace, remove_workspace
 
 logger = logging.getLogger("stokowski")
@@ -69,8 +72,15 @@ class Orchestrator:
         # Aggregate metrics
         self.total_input_tokens: int = 0
         self.total_output_tokens: int = 0
+        self.total_cache_creation_tokens: int = 0
+        self.total_cache_read_tokens: int = 0
         self.total_tokens: int = 0
+        self.total_cost_usd: float = 0.0
+        self.total_tool_calls: int = 0
         self.total_seconds_running: float = 0
+        # Most recent rate-limit window seen from any agent. Shared across the
+        # whole account, so the latest observation is the accurate one.
+        self.rate_limit: dict[str, Any] | None = None
 
         # Internal
         self._linear: LinearClient | None = None
@@ -984,6 +994,13 @@ class Orchestrator:
             ws = await ensure_workspace(ws_root, issue.identifier, self.cfg.hooks)
             attempt.workspace_path = str(ws.path)
 
+            # Evidence directory, created fresh each turn and excluded from git
+            # locally so agent screenshots can never reach the project repo.
+            artifact_path = artifacts_mod.prepare(ws.path)
+            # A stale report from a previous stage would otherwise be re-posted
+            # verbatim as if it described this one.
+            report_mod.discard(ws.path)
+
             # Move issue from Todo to In Progress if needed
             todo_state = self.cfg.linear_states.todo
             if todo_state and issue.state.strip().lower() == todo_state.strip().lower():
@@ -1036,6 +1053,10 @@ class Orchestrator:
 
             # Build env vars for the agent subprocess from workflow.yaml config
             agent_env = self.cfg.agent_env()
+            agent_env["STOKOWSKI_ARTIFACTS"] = str(artifact_path)
+            agent_env["STOKOWSKI_ISSUE"] = issue.identifier
+            if state_name:
+                agent_env["STOKOWSKI_STATE"] = state_name
 
             # State machine mode: single turn per dispatch. The state
             # machine handles continuation via _transition after each
@@ -1100,6 +1121,8 @@ class Orchestrator:
 
                     if attempt.status != "succeeded":
                         break
+
+            await self._publish_run_report(issue, attempt, ws.path, state_name)
 
             self._on_worker_exit(issue, attempt)
 
@@ -1209,6 +1232,132 @@ class Orchestrator:
         except TemplateSyntaxError as e:
             raise RuntimeError(f"Template syntax error: {e}")
 
+    async def _publish_run_report(
+        self,
+        issue: Issue,
+        attempt: RunAttempt,
+        workspace_path: Path,
+        state_name: str | None,
+    ) -> None:
+        """Upload evidence, post the run report, and apply the classification label.
+
+        Runs after every agent turn, including failed ones — a run that fell
+        over having captured three screenshots is exactly when you want to see
+        them. Nothing here is allowed to break the run: a Linear outage should
+        cost you the report, not the work.
+        """
+        if attempt.status == "canceled":
+            return
+
+        try:
+            client = self._ensure_linear_client()
+        except Exception as e:
+            logger.warning(f"No Linear client for report: {e}", extra={"linked_to": issue.identifier})
+            return
+
+        state = state_name or attempt.state_name or "run"
+        run = self._issue_state_runs.get(issue.id, 1)
+
+        # ── Evidence ────────────────────────────────────────────────────────
+        uploaded: dict[str, str] = {}
+        try:
+            files = artifacts_mod.collect(workspace_path)
+        except Exception as e:
+            logger.warning(f"Artifact sweep failed: {e}", extra={"linked_to": issue.identifier})
+            files = []
+
+        for path in files:
+            try:
+                data = path.read_bytes()
+            except OSError as e:
+                logger.warning(f"Could not read artifact {path}: {e}", extra={"linked_to": issue.identifier})
+                continue
+            url = await client.upload_file(
+                path.name, artifacts_mod.content_type_for(path), data
+            )
+            if url:
+                uploaded[path.name] = url
+                attempt.artifacts.append(path.name)
+
+        if files and not uploaded:
+            logger.warning(
+                f"{len(files)} artifact(s) found but none uploaded",
+                extra={"linked_to": issue.identifier},
+            )
+
+        # ── Report ──────────────────────────────────────────────────────────
+        try:
+            report = report_mod.load(workspace_path, attempt.result_text)
+        except Exception as e:
+            logger.warning(f"Could not load report: {e}", extra={"linked_to": issue.identifier})
+            report = None
+
+        if report is None and not uploaded and attempt.status != "succeeded":
+            # A run that failed with nothing to show gets the normal retry
+            # machinery rather than a comment saying so on every attempt.
+            return
+
+        body = report_mod.render(
+            report,
+            state=state,
+            run=run,
+            uploaded=uploaded,
+            usage={
+                "total_tokens": attempt.total_tokens,
+                "cost_usd": attempt.cost_usd,
+                "tool_calls": attempt.tool_call_count,
+            },
+            fallback_text=attempt.result_text,
+        )
+
+        posted = await client.post_comment(issue.id, body)
+        if posted:
+            logger.info(
+                f"Posted {state} report ({len(uploaded)} artifacts)",
+                extra={"linked_to": issue.identifier},
+            )
+        else:
+            logger.warning("Failed to post run report", extra={"linked_to": issue.identifier})
+
+        # ── Classification label ────────────────────────────────────────────
+        await self._apply_classification_label(client, issue, report)
+
+        # Consume both so the next stage starts clean.
+        artifacts_mod.clear(workspace_path)
+        report_mod.discard(workspace_path)
+
+    async def _apply_classification_label(
+        self, client: LinearClient, issue: Issue, report: dict | None
+    ) -> None:
+        """Tag the issue with what the agent decided the work actually was."""
+        label = report_mod.classification_label(report)
+        if not label:
+            return
+        name, colour = label
+
+        try:
+            team_id, existing_labels, on_issue = await client.fetch_team_labels(issue.id)
+        except Exception as e:
+            logger.warning(f"Could not read labels: {e}", extra={"linked_to": issue.identifier})
+            return
+
+        label_id = existing_labels.get(name.lower())
+
+        if label_id is None:
+            if not team_id:
+                return
+            label_id = await client.create_label(team_id, name, colour)
+            if not label_id:
+                logger.warning(f"Could not create label '{name}'", extra={"linked_to": issue.identifier})
+                return
+
+        if label_id in on_issue:
+            return
+
+        if await client.add_label(issue.id, label_id):
+            logger.info(f"Labelled {issue.identifier} '{name}'", extra={"linked_to": issue.identifier})
+
+
     def _on_child_pid(self, pid: int, is_register: bool):
         """Track child claude process PIDs for cleanup on shutdown."""
         if is_register:
@@ -1217,36 +1366,76 @@ class Orchestrator:
             self._child_pids.discard(pid)
 
     def _on_agent_event(self, identifier: str, event_type: str, event: dict):
-        """Callback for agent events — log notable activity to the log buffer."""
+        """Mirror notable agent activity into the log buffer.
+
+        Tool calls and text both arrive inside `assistant` events as content
+        blocks — there is no separate tool_use event type — so this walks the
+        blocks rather than switching on the top-level type.
+        """
         extra = {"linked_to": identifier}
-        if event_type == "tool_use":
-            tool_name = event.get("name", event.get("tool", ""))
-            logger.info(f"[{identifier}] tool: {tool_name}", extra=extra)
-        elif event_type == "assistant":
-            msg = event.get("message", {})
-            content = msg.get("content", "")
-            text = ""
+
+        if event_type == "assistant":
+            content = (event.get("message") or {}).get("content")
             if isinstance(content, str):
-                text = content
-            elif isinstance(content, list):
+                if content.strip():
+                    logger.info(f"[{identifier}] {content.strip()[:160]}", extra=extra)
+                return
+            if not isinstance(content, list):
+                return
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "tool_use":
+                    name = block.get("name", "tool")
+                    detail = summarise_tool_input(name, block.get("input"))
+                    suffix = f" {detail}" if detail else ""
+                    logger.info(f"[{identifier}] {name}{suffix}", extra=extra)
+                elif block.get("type") == "text":
+                    text = (block.get("text") or "").strip()
+                    if text:
+                        logger.info(f"[{identifier}] {text[:160]}", extra=extra)
+
+        elif event_type == "user":
+            # Only failures are worth a log line; successes are the norm.
+            content = (event.get("message") or {}).get("content")
+            if isinstance(content, list):
                 for block in content:
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        text = block.get("text", "")
-                        break
-            if text:
-                logger.info(f"[{identifier}] {text[:120]}", extra=extra)
+                    if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("is_error"):
+                        logger.warning(f"[{identifier}] tool error", extra=extra)
+
+        elif event_type == "rate_limit_event":
+            info = event.get("rate_limit_info")
+            if isinstance(info, dict):
+                # Limits are account-wide, so the newest reading is the truth
+                # for every project this process is running.
+                self.rate_limit = {
+                    "status": info.get("status"),
+                    "type": info.get("rateLimitType"),
+                    "resets_at": info.get("resetsAt"),
+                    "overage_status": info.get("overageStatus"),
+                    "using_overage": info.get("isUsingOverage"),
+                }
+                if info.get("status") and info.get("status") != "allowed":
+                    logger.warning(
+                        f"[{identifier}] rate limit {info.get('status')} "
+                        f"({info.get('rateLimitType')})",
+                        extra=extra,
+                    )
+
         elif event_type == "result":
             result_text = event.get("result", "")
             if isinstance(result_text, str) and result_text:
-                logger.info(f"[{identifier}] result: {result_text[:120]}", extra=extra)
-        else:
-            logger.debug(f"Agent event issue={identifier} type={event_type}", extra=extra)
+                logger.info(f"[{identifier}] result: {result_text[:160]}", extra=extra)
 
     def _on_worker_exit(self, issue: Issue, attempt: RunAttempt):
         """Handle worker completion."""
         self.total_input_tokens += attempt.input_tokens
         self.total_output_tokens += attempt.output_tokens
+        self.total_cache_creation_tokens += attempt.cache_creation_tokens
+        self.total_cache_read_tokens += attempt.cache_read_tokens
         self.total_tokens += attempt.total_tokens
+        self.total_cost_usd += attempt.cost_usd
+        self.total_tool_calls += attempt.tool_call_count
         if attempt.started_at:
             elapsed = (datetime.now(timezone.utc) - attempt.started_at).total_seconds()
             self.total_seconds_running += elapsed
@@ -1464,6 +1653,18 @@ class Orchestrator:
         )
         project_name = self.project_name or ""
 
+        # Totals are banked when a worker exits, so in-flight agents must be
+        # added on top — otherwise the dashboard reads zero cost for the whole
+        # of a long run and only jumps at the end.
+        live = self.running.values()
+        live_input = sum(r.input_tokens for r in live)
+        live_output = sum(r.output_tokens for r in live)
+        live_cache_creation = sum(r.cache_creation_tokens for r in live)
+        live_cache_read = sum(r.cache_read_tokens for r in live)
+        live_total = sum(r.total_tokens for r in live)
+        live_cost = sum(r.cost_usd for r in live)
+        live_tools = sum(r.tool_call_count for r in live)
+
         return {
             "generated_at": now.isoformat(),
             "project_name": project_name,
@@ -1491,9 +1692,23 @@ class Orchestrator:
                     "tokens": {
                         "input_tokens": r.input_tokens,
                         "output_tokens": r.output_tokens,
+                        "cache_creation_tokens": r.cache_creation_tokens,
+                        "cache_read_tokens": r.cache_read_tokens,
                         "total_tokens": r.total_tokens,
                     },
+                    "cost_usd": round(r.cost_usd, 4),
+                    "model": r.model,
                     "state_name": r.state_name,
+                    "tool_call_count": r.tool_call_count,
+                    "tool_error_count": r.tool_error_count,
+                    "tool_counts": dict(r.tool_counts),
+                    "agent_turns": r.agent_turns,
+                    "compaction_count": r.compaction_count,
+                    "permission_denials": r.permission_denials,
+                    "artifact_count": len(r.artifacts),
+                    # The dashboard renders a timeline from this; cap the wire
+                    # payload so a long-running agent cannot bloat every poll.
+                    "activity": [e.to_dict() for e in list(r.activity)[-40:]],
                 }
                 for r in self.running.values()
             ],
@@ -1520,10 +1735,15 @@ class Orchestrator:
             "queued": [
                 {**q, "project_name": project_name} for q in self._queued
             ],
+            "rate_limit": self.rate_limit,
             "totals": {
-                "input_tokens": self.total_input_tokens,
-                "output_tokens": self.total_output_tokens,
-                "total_tokens": self.total_tokens,
+                "input_tokens": self.total_input_tokens + live_input,
+                "output_tokens": self.total_output_tokens + live_output,
+                "cache_creation_tokens": self.total_cache_creation_tokens + live_cache_creation,
+                "cache_read_tokens": self.total_cache_read_tokens + live_cache_read,
+                "total_tokens": self.total_tokens + live_total,
+                "cost_usd": round(self.total_cost_usd + live_cost, 4),
+                "tool_calls": self.total_tool_calls + live_tools,
                 "seconds_running": round(
                     self.total_seconds_running + active_seconds, 1
                 ),
@@ -1696,8 +1916,13 @@ class MultiOrchestrator:
         queued: list[dict] = []
         total_input = 0
         total_output = 0
+        total_cache_creation = 0
+        total_cache_read = 0
         total_tokens = 0
+        total_cost = 0.0
+        total_tools = 0
         total_seconds = 0.0
+        rate_limit: dict[str, Any] | None = None
         for name, orch in self.orchestrators.items():
             snap = orch.get_state_snapshot()
             per_project.append({
@@ -1712,8 +1937,15 @@ class MultiOrchestrator:
             queued.extend(snap["queued"])
             total_input += snap["totals"]["input_tokens"]
             total_output += snap["totals"]["output_tokens"]
+            total_cache_creation += snap["totals"]["cache_creation_tokens"]
+            total_cache_read += snap["totals"]["cache_read_tokens"]
             total_tokens += snap["totals"]["total_tokens"]
+            total_cost += snap["totals"]["cost_usd"]
+            total_tools += snap["totals"]["tool_calls"]
             total_seconds += snap["totals"]["seconds_running"]
+            # Rate limits are per-account, not per-project — any project's
+            # reading describes the same shared window.
+            rate_limit = snap.get("rate_limit") or rate_limit
         return {
             "generated_at": now.isoformat(),
             "projects": per_project,
@@ -1729,10 +1961,15 @@ class MultiOrchestrator:
             "retrying": retrying,
             "gates": gates,
             "queued": queued,
+            "rate_limit": rate_limit,
             "totals": {
                 "input_tokens": total_input,
                 "output_tokens": total_output,
+                "cache_creation_tokens": total_cache_creation,
+                "cache_read_tokens": total_cache_read,
                 "total_tokens": total_tokens,
+                "cost_usd": round(total_cost, 4),
+                "tool_calls": total_tools,
                 "seconds_running": round(total_seconds, 1),
             },
         }
