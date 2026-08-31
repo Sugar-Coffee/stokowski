@@ -112,13 +112,41 @@ workspace:
 # Hooks — shell scripts run in the workspace directory
 # ---------------------------------------------------------------------------
 hooks:
+  # Runs ONCE, when a workspace is first created.
+  #
+  # Note the absence of --depth 1: the review stage runs `git diff main...HEAD`,
+  # which needs a merge base a shallow clone does not have.
+  # --filter=blob:none keeps full history while skipping file contents until
+  # they are read, so it is nearly as fast without breaking diffs.
   after_create: |
-    git clone --depth 1 git@github.com:your-org/your-repo.git .
-    npm install
+    set -e
+    git clone --filter=blob:none git@github.com:your-org/your-repo.git .
+    # Use the package manager the project actually declares. npm fails outright
+    # on a pnpm/yarn workspace ("Unsupported URL Type: workspace:").
+    npm ci
+    # pnpm:  corepack enable && pnpm install --frozen-lockfile
+    # yarn:  corepack enable && yarn install --immutable
+
+  # Runs before EVERY turn, including mid-task turns where the agent has
+  # uncommitted work in the tree.
+  #
+  # This hook must never exit non-zero. A failure here marks the turn failed
+  # before the agent launches, and the retry hits exactly the same wall — the
+  # issue then loops on backoff forever.
   before_run: |
-    git fetch origin main
-    git rebase origin/main 2>/dev/null || git rebase --abort
-  timeout_ms: 120000
+    git fetch origin main || true
+    # Rebase only from a clean tree. `git rebase` refuses on a dirty one, and
+    # the `git rebase --abort` fallback then exits 128 because no rebase is in
+    # progress — taking the turn down with it.
+    if git diff --quiet && git diff --cached --quiet; then
+      git rebase origin/main || git rebase --abort || true
+    fi
+    exit 0
+
+  # Cold clone + dependency install on a large monorepo takes minutes, not
+  # seconds. If this is too low, every workspace creation fails and the issue
+  # never starts.
+  timeout_ms: 900000
 
 # ---------------------------------------------------------------------------
 # Claude defaults (inherited by all agent states unless overridden)
@@ -139,6 +167,7 @@ agent:
   max_retry_backoff_ms: 300000    # 5-minute cap on exponential backoff
   max_concurrent_agents_by_state:
     investigate: 2                # allow 2 concurrent investigations
+    ground-check: 2               # short, cheap — should not become a queue
     implement: 2
     code-review: 1                # serial reviews prevent merge conflicts
 
@@ -179,11 +208,32 @@ states:
     max_turns: 8
     session: inherit
     transitions:
+      complete: ground-check
+
+  # ── 2. Grounding Check ──────────────────────────────────────────────────
+  # Independent verification of the investigation's FACTS, before a human is
+  # asked to approve them.
+  #
+  # This is the cheapest place in the pipeline to catch the most expensive
+  # failure: an investigation that reasoned correctly from the wrong data.
+  # A reviewer at the end cannot catch it, because by then the premise has
+  # been accepted by everyone downstream.
+  #
+  # `session: fresh` is load-bearing. A continued session inherits the same
+  # assumptions it is meant to be testing, and will happily confirm them.
+  ground-check:
+    type: agent
+    prompt: prompts/ground-check.example.md
+    linear_state: active
+    model: claude-opus-4-6
+    max_turns: 10
+    session: fresh              # no prior context — cannot inherit the error
+    transitions:
       complete: research-review
 
-  # ── 2. Research Review (gate) ───────────────────────────────────────────
-  # Human reviews the investigation before implementation starts.
-  # Rework loops back to investigate.
+  # ── 3. Research Review (gate) ───────────────────────────────────────────
+  # Human reviews the investigation AND the grounding check before
+  # implementation starts.  Rework loops back to investigate.
   research-review:
     type: gate
     linear_state: review
@@ -192,7 +242,7 @@ states:
     transitions:
       approve: implement
 
-  # ── 3. Implement ────────────────────────────────────────────────────────
+  # ── 4. Implement ────────────────────────────────────────────────────────
   # Write code, create branch, run tests, open PR.
   # Uses Sonnet for fast iteration.  Higher turn count for complex work.
   implement:
@@ -205,7 +255,7 @@ states:
     transitions:
       complete: implementation-review
 
-  # ── 4. Implementation Review (gate) ─────────────────────────────────────
+  # ── 5. Implementation Review (gate) ─────────────────────────────────────
   # Human reviews the PR before automated code review.
   # Rework loops back to implement.
   implementation-review:
@@ -216,7 +266,7 @@ states:
     transitions:
       approve: code-review
 
-  # ── 5. Code Review ─────────────────────────────────────────────────────
+  # ── 6. Code Review ─────────────────────────────────────────────────────
   # Automated adversarial review: fresh session, no prior context.
   # Opus reviews the diff and posts findings.
   # Tip: set runner: codex here to get a second-opinion from a different
@@ -232,7 +282,7 @@ states:
     transitions:
       complete: merge-review
 
-  # ── 6. Merge Review (gate) ──────────────────────────────────────────────
+  # ── 8. Merge Review (gate) ──────────────────────────────────────────────
   # Human reviews the code review findings and decides to merge or rework.
   # Rework goes back to implement (not code-review).
   merge-review:
@@ -243,7 +293,7 @@ states:
     transitions:
       approve: merge
 
-  # ── 7. Merge ────────────────────────────────────────────────────────────
+  # ── 8. Merge ────────────────────────────────────────────────────────────
   # Merge the PR and clean up.  Short turn count — just the merge.
   merge:
     type: agent
@@ -254,7 +304,7 @@ states:
     transitions:
       complete: done
 
-  # ── 8. Done (terminal) ─────────────────────────────────────────────────
+  # ── 9. Done (terminal) ─────────────────────────────────────────────────
   done:
     type: terminal
     linear_state: terminal
