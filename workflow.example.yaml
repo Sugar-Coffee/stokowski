@@ -155,7 +155,22 @@ hooks:
 claude:
   permission_mode: auto
   model: claude-sonnet-4-6
+  # NOTE: max_turns applies to LEGACY multi-turn workflows only. In a state
+  # machine (below) each dispatch is exactly one `claude -p` invocation and the
+  # state machine controls continuation, so this value does nothing. It is also
+  # NOT a runaway guard — the CLI has no --max-turns flag. Use max_budget_usd.
   max_turns: 20
+
+  # The real runaway guard: a hard dollar ceiling per invocation.
+  # max_budget_usd: 15
+
+  # Reasoning effort: low | medium | high | xhigh | max (CLI default: high).
+  # Worth setting per state — a merge needs far less than a grounding check.
+  # effort: high
+
+  # Tried when the primary model is overloaded or unavailable. Useful when runs
+  # collide with a rate-limit window.
+  # fallback_model: claude-opus-4-8
   turn_timeout_ms: 3600000        # 1 hour per turn
   stall_timeout_ms: 300000        # 5 minutes with no output → kill
 
@@ -204,8 +219,8 @@ states:
     type: agent
     prompt: prompts/investigate.example.md
     linear_state: active
-    model: claude-opus-4-6
-    max_turns: 8
+    model: claude-opus-5
+    effort: high              # investigation benefits from depth
     session: inherit
     transitions:
       complete: ground-check
@@ -225,9 +240,9 @@ states:
     type: agent
     prompt: prompts/ground-check.example.md
     linear_state: active
-    model: claude-opus-4-6
-    max_turns: 10
-    session: fresh              # no prior context — cannot inherit the error
+    model: claude-opus-5
+    effort: xhigh             # the most consequential check in the pipeline
+    session: fresh            # no prior context — cannot inherit the error
     transitions:
       complete: research-review
 
@@ -249,8 +264,9 @@ states:
     type: agent
     prompt: prompts/implement.example.md
     linear_state: active
-    model: claude-sonnet-4-6
-    max_turns: 30
+    model: claude-sonnet-5
+    effort: high
+    max_budget_usd: 25        # implementation is the longest stage — cap it
     session: inherit
     transitions:
       complete: implementation-review
@@ -276,9 +292,9 @@ states:
     prompt: prompts/review.example.md
     linear_state: active
     runner: claude              # "claude" (default) or "codex"
-    model: claude-opus-4-6
-    max_turns: 10
-    session: fresh              # no prior context — adversarial review
+    model: claude-opus-5
+    effort: xhigh
+    session: fresh            # no prior context — adversarial review
     transitions:
       complete: merge-review
 
@@ -299,7 +315,7 @@ states:
     type: agent
     prompt: prompts/merge.example.md
     linear_state: active
-    max_turns: 5
+    effort: low               # mechanical stage, no reasoning needed
     session: inherit
     transitions:
       complete: done
