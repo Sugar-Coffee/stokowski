@@ -63,6 +63,7 @@ class Ledger:
         self,
         *,
         project: str,
+        workflow: str | None = None,
         issue_id: str,
         issue: str,
         title: str,
@@ -93,6 +94,7 @@ class Ledger:
         self._append({
             "event": "stage",
             "project": project,
+            "workflow": workflow,
             "issue_id": issue_id,
             "issue": issue,
             "title": title,
@@ -116,11 +118,12 @@ class Ledger:
 
     def record_gate(
         self, *, project: str, issue_id: str, issue: str, gate: str,
-        verdict: str, run: int,
+        verdict: str, run: int, workflow: str | None = None,
     ) -> None:
         """A human accepted or rejected the work. This is the ground truth."""
         self._append({
-            "event": "gate", "project": project, "issue_id": issue_id,
+            "event": "gate", "project": project, "workflow": workflow,
+            "issue_id": issue_id,
             "issue": issue, "gate": gate, "verdict": verdict, "run": run,
         })
 
@@ -159,6 +162,9 @@ class Ledger:
         self-assessment is not independent of the work it just did.
         """
         first_claim: dict[str, dict[str, str | None]] = {}
+        # The workflow an issue ran under, taken from its stages so a gate
+        # event recorded before routing was pinned still attributes correctly.
+        issue_workflow: dict[str, str] = {}
         stages: list[dict[str, Any]] = []
         gates: list[dict[str, Any]] = []
         terminals: list[dict[str, Any]] = []
@@ -168,6 +174,8 @@ class Ledger:
             if kind == "stage":
                 stages.append(entry)
                 issue_id = entry.get("issue_id")
+                if issue_id and entry.get("workflow"):
+                    issue_workflow.setdefault(issue_id, entry["workflow"])
                 if issue_id and issue_id not in first_claim and entry.get("classification"):
                     first_claim[issue_id] = {
                         "classification": entry.get("classification"),
@@ -180,6 +188,7 @@ class Ledger:
 
         by_class: dict[str, dict[str, int]] = defaultdict(lambda: {"approved": 0, "rework": 0})
         by_confidence: dict[str, dict[str, int]] = defaultdict(lambda: {"approved": 0, "rework": 0})
+        by_workflow: dict[str, dict[str, int]] = defaultdict(lambda: {"approved": 0, "rework": 0})
 
         for gate in gates:
             verdict = gate.get("verdict")
@@ -188,6 +197,8 @@ class Ledger:
             claim = first_claim.get(gate.get("issue_id"), {})
             by_class[claim.get("classification") or "unclassified"][verdict] += 1
             by_confidence[claim.get("confidence") or "unstated"][verdict] += 1
+            workflow = gate.get("workflow") or issue_workflow.get(gate.get("issue_id")) or "unrouted"
+            by_workflow[workflow][verdict] += 1
 
         def rate(bucket: dict[str, int]) -> dict[str, Any]:
             total = bucket["approved"] + bucket["rework"]
@@ -209,6 +220,7 @@ class Ledger:
             "unsourced_claims": sum(s.get("unsourced_claims") or 0 for s in stages),
             "by_classification": {k: rate(v) for k, v in sorted(by_class.items())},
             "by_confidence": {k: rate(v) for k, v in sorted(by_confidence.items())},
+            "by_workflow": {k: rate(v) for k, v in sorted(by_workflow.items())},
             "terminal": dict(_count(t.get("state") for t in terminals)),
         }
 

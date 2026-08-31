@@ -102,7 +102,11 @@ class Orchestrator:
         self._last_completed_at: dict[str, datetime] = {}  # issue_id -> last worker completion time
 
         # State machine tracking
-        self._issue_current_state: dict[str, str] = {}   # issue_id -> internal state name
+        self._issue_current_state: dict[str, str] = {}
+        # Which workflow each issue is running. Pinned on first dispatch and
+        # kept for the issue's lifetime: editing labels mid-run must not switch
+        # the pipeline under a working agent.
+        self._issue_workflow: dict[str, str] = {}   # issue_id -> internal state name
         self._issue_state_runs: dict[str, int] = {}       # issue_id -> run number for current state
         self._pending_gates: dict[str, str] = {}           # issue_id -> gate state name
 
@@ -171,6 +175,64 @@ class Orchestrator:
         return []
 
     # ── Slot management ────────────────────────────────────────────────────
+
+    # ── Workflow resolution ──────────────────────────────────────────────
+
+    def _adopt_workflow_from_tracking(self, issue: Issue, tracking: dict | None) -> None:
+        """Restore an issue's pinned workflow from its tracking comment.
+
+        In-memory pins are lost on restart. Recovering from Linear keeps a
+        long-running issue on the pipeline it started, rather than re-routing
+        it from labels that may have changed since.
+        """
+        if not tracking:
+            return
+        name = tracking.get("workflow")
+        if name and name in self.cfg.workflows:
+            self._issue_workflow[issue.id] = name
+
+    def _workflow_name_for(self, issue: Issue) -> str | None:
+        """Resolve (and pin) the workflow an issue runs under.
+
+        Pinned on first sight rather than re-read each tick, because labels are
+        editable: a ticket relabelled halfway through implementation must not
+        suddenly be evaluated against a different state machine.
+        """
+        pinned = self._issue_workflow.get(issue.id)
+        if pinned and pinned in self.cfg.workflows:
+            return pinned
+
+        name = self.cfg.routing.resolve(issue.labels)
+        if name and name in self.cfg.workflows:
+            self._issue_workflow[issue.id] = name
+            logger.info(
+                f"Routed {issue.identifier} to workflow '{name}'"
+                + (f" (labels: {', '.join(issue.labels)})" if issue.labels else " (no labels)"),
+                extra={"linked_to": issue.identifier},
+            )
+            return name
+
+        if name:
+            logger.warning(
+                f"{issue.identifier} routes to unknown workflow '{name}'",
+                extra={"linked_to": issue.identifier},
+            )
+        return None
+
+    def _workflow_for(self, issue: Issue):
+        """The WorkflowSpec an issue runs under, or None."""
+        name = self._workflow_name_for(issue)
+        return self.cfg.workflows.get(name) if name else None
+
+    def _states_for(self, issue: Issue) -> dict:
+        """The state machine an issue runs under.
+
+        Falls back to the config's inline states so a single-pipeline setup —
+        and any issue whose routing failed — behaves exactly as before.
+        """
+        workflow = self._workflow_for(issue)
+        return workflow.states if workflow else self.cfg.states
+
 
     def _has_slot(self) -> tuple[bool, str | None]:
         """Return (can_dispatch, reason_if_not). Considers pause + global cap."""
@@ -313,6 +375,9 @@ class Orchestrator:
         client = self._ensure_linear_client()
         comments = await client.fetch_comments(issue.id)
         tracking = parse_latest_tracking(comments)
+        # Restore the pipeline this issue started on before interpreting its
+        # state — a state name only means something inside its own workflow.
+        self._adopt_workflow_from_tracking(issue, tracking)
 
         entry = self.cfg.entry_state
         if entry is None:
@@ -327,7 +392,7 @@ class Orchestrator:
         if tracking["type"] == "state":
             state_name = tracking.get("state", entry)
             run = tracking.get("run", 1)
-            if state_name in self.cfg.states:
+            if state_name in self._states_for(issue):
                 self._issue_current_state[issue.id] = state_name
                 self._issue_state_runs[issue.id] = run
                 return state_name, run
@@ -342,14 +407,14 @@ class Orchestrator:
             run = tracking.get("run", 1)
 
             if status == "waiting":
-                if gate_state in self.cfg.states:
+                if gate_state in self._states_for(issue):
                     self._issue_current_state[issue.id] = gate_state
                     self._issue_state_runs[issue.id] = run
                     self._pending_gates[issue.id] = gate_state
                     return gate_state, run
 
             elif status == "approved":
-                gate_cfg = self.cfg.states.get(gate_state)
+                gate_cfg = self._states_for(issue).get(gate_state)
                 if gate_cfg and "approve" in gate_cfg.transitions:
                     target = gate_cfg.transitions["approve"]
                     self._issue_current_state[issue.id] = target
@@ -357,11 +422,11 @@ class Orchestrator:
                     return target, run
 
             elif status == "rework":
-                gate_cfg = self.cfg.states.get(gate_state)
+                gate_cfg = self._states_for(issue).get(gate_state)
                 rework_to = tracking.get("rework_to", "")
                 if not rework_to and gate_cfg:
                     rework_to = gate_cfg.rework_to or ""
-                if rework_to and rework_to in self.cfg.states:
+                if rework_to and rework_to in self._states_for(issue):
                     self._issue_current_state[issue.id] = rework_to
                     self._issue_state_runs[issue.id] = run
                     return rework_to, run
@@ -385,7 +450,7 @@ class Orchestrator:
 
     async def _enter_gate(self, issue: Issue, state_name: str):
         """Move issue to gate state and post tracking comment."""
-        state_cfg = self.cfg.states.get(state_name)
+        state_cfg = self._states_for(issue).get(state_name)
         prompt = state_cfg.prompt if state_cfg else ""
         run = self._issue_state_runs.get(issue.id, 1)
 
@@ -467,7 +532,7 @@ class Orchestrator:
             logger.warning(f"No current state for {issue.identifier}, cannot transition", extra={"linked_to": issue.identifier})
             return
 
-        current_cfg = self.cfg.states.get(current_state_name)
+        current_cfg = self._states_for(issue).get(current_state_name)
         if not current_cfg:
             logger.warning(f"Unknown state '{current_state_name}' for {issue.identifier}", extra={"linked_to": issue.identifier})
             return
@@ -481,7 +546,7 @@ class Orchestrator:
             )
             return
 
-        target_cfg = self.cfg.states.get(target_name)
+        target_cfg = self._states_for(issue).get(target_name)
         if not target_cfg:
             logger.warning(f"Transition target '{target_name}' not found in config")
             return
@@ -544,7 +609,7 @@ class Orchestrator:
     async def _handle_gate_responses(self):
         """Check for gate-approved and rework issues, handle transitions."""
         # Early return if no gate states in config
-        has_gates = any(sc.type == "gate" for sc in self.cfg.states.values())
+        has_gates = any(sc.type == "gate" for sc in self.cfg.all_states().values())
         if not has_gates:
             return
 
@@ -596,6 +661,7 @@ class Orchestrator:
                 # it here is what makes approval rate by classification and by
                 # the agent's own stated confidence measurable later.
                 self.ledger.record_gate(
+                    workflow=self._workflow_name_for(issue),
                     project=self.project_name or "", issue_id=issue.id,
                     issue=issue.identifier, gate=gate_state,
                     verdict="approved", run=run,
@@ -625,7 +691,7 @@ class Orchestrator:
                     gate_state = tracking.get("state", "")
 
             if gate_state:
-                gate_cfg = self.cfg.states.get(gate_state)
+                gate_cfg = self._states_for(issue).get(gate_state)
                 rework_to = gate_cfg.rework_to if gate_cfg else ""
                 if not rework_to:
                     logger.warning(f"Gate {gate_state} has no rework_to target, skipping")
@@ -653,6 +719,7 @@ class Orchestrator:
                 # Recorded against the run that was rejected, not the retry, so
                 # the verdict attaches to the work a human actually judged.
                 self.ledger.record_gate(
+                    workflow=self._workflow_name_for(issue),
                     project=self.project_name or "", issue_id=issue.id,
                     issue=issue.identifier, gate=gate_state,
                     verdict="rework", run=run,
@@ -779,14 +846,14 @@ class Orchestrator:
             if tracking and tracking.get("type") == "gate":
                 tracked_name = tracking.get("state", "")
                 run = tracking.get("run", 1)
-                if tracked_name in self.cfg.states:
+                if tracked_name in self._states_for(issue):
                     gate_state = tracked_name
 
             # Fallback: derive gate state from the current Linear state name by
             # matching against configured gate states' linear_state keys
             if not gate_state:
                 current_linear = issue.state.strip().lower()
-                for gname, gcfg in self.cfg.states.items():
+                for gname, gcfg in self._states_for(issue).items():
                     if gcfg.type == "gate":
                         gate_linear = _resolve_linear_state_name(
                             gcfg.linear_state, self.cfg.linear_states
@@ -952,7 +1019,7 @@ class Orchestrator:
 
         # If at a gate, enter it instead of dispatching a worker.
         # Release the slot we reserved — the gate path doesn't run an agent.
-        state_cfg = self.cfg.states.get(state_name) if state_name else None
+        state_cfg = self._states_for(issue).get(state_name) if state_name else None
         if state_cfg and state_cfg.type == "gate":
             self._release_slot(issue.id)
             asyncio.create_task(self._safe_enter_gate(issue, state_name))
@@ -1000,14 +1067,14 @@ class Orchestrator:
             if not attempt.state_name:
                 state_name, run = await self._resolve_current_state(issue)
                 attempt.state_name = state_name
-                state_cfg = self.cfg.states.get(state_name)
+                state_cfg = self._states_for(issue).get(state_name)
                 if state_cfg and state_cfg.type == "gate":
                     # Issue should be at a gate, not running
                     await self._enter_gate(issue, state_name)
                     return
 
             state_name = attempt.state_name
-            state_cfg = self.cfg.states.get(state_name) if state_name else None
+            state_cfg = self._states_for(issue).get(state_name) if state_name else None
 
             claude_cfg = self.cfg.claude
             hooks_cfg = self.cfg.hooks
@@ -1060,6 +1127,7 @@ class Orchestrator:
                     comment = make_state_comment(
                         state=state_name,
                         run=run,
+                        workflow=self._workflow_name_for(issue),
                     )
                     await client.post_comment(issue.id, comment)
 
@@ -1169,8 +1237,9 @@ class Orchestrator:
         self, issue: Issue, attempt_num: int | None, state_name: str | None = None
     ) -> str:
         """Render prompt using state machine prompt assembly (async — fetches comments)."""
-        if state_name and state_name in self.cfg.states:
-            state_cfg = self.cfg.states[state_name]
+        states = self._states_for(issue)
+        if state_name and state_name in states:
+            state_cfg = states[state_name]
             run = self._issue_state_runs.get(issue.id, 1)
             last_completed = self._last_completed_at.get(issue.id)
             last_run_at = last_completed.isoformat() if last_completed else None
@@ -1194,6 +1263,7 @@ class Orchestrator:
                 attempt=attempt_num or 1,
                 last_run_at=last_run_at,
                 comments=comments,
+                global_prompt=(wf.global_prompt if (wf := self._workflow_for(issue)) else None),
             )
 
         # Legacy fallback
@@ -1206,8 +1276,9 @@ class Orchestrator:
         assert self.workflow is not None
 
         # State machine mode: call assemble_prompt without comments
-        if state_name and state_name in self.cfg.states:
-            state_cfg = self.cfg.states[state_name]
+        states = self._states_for(issue)
+        if state_name and state_name in states:
+            state_cfg = states[state_name]
             run = self._issue_state_runs.get(issue.id, 1)
             last_completed = self._last_completed_at.get(issue.id)
             last_run_at = last_completed.isoformat() if last_completed else None
@@ -1223,6 +1294,7 @@ class Orchestrator:
                 attempt=attempt_num or 1,
                 last_run_at=last_run_at,
                 comments=None,
+                global_prompt=(wf.global_prompt if (wf := self._workflow_for(issue)) else None),
             )
 
         # Legacy mode: use workflow prompt_template with Jinja2
@@ -1343,6 +1415,7 @@ class Orchestrator:
         if attempt.started_at:
             duration = (datetime.now(timezone.utc) - attempt.started_at).total_seconds()
         self.ledger.record_stage(
+            workflow=self._workflow_name_for(issue),
             project=self.project_name or "",
             issue_id=issue.id,
             issue=issue.identifier,
@@ -1507,7 +1580,7 @@ class Orchestrator:
         self._release_slot(issue.id)
 
         if attempt.status == "succeeded":
-            if attempt.state_name and attempt.state_name in self.cfg.states:
+            if attempt.state_name and attempt.state_name in self._states_for(issue):
                 # State machine mode: transition via "complete"
                 asyncio.create_task(self._safe_transition(issue, "complete"))
             else:

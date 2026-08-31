@@ -1,0 +1,106 @@
+# =============================================================================
+# Bug fix — reproduce first, then diagnose
+# =============================================================================
+#
+# Selected by the routing rules in workflow.example.yaml. Runtime config —
+# tracker, workspace, hooks, concurrency, the dashboard — lives there and is
+# shared by every workflow; only the pipeline and its framing live here.
+#
+# The `prompts.global_prompt` below is what lets the stage prompts stay free of
+# `if this is a bug…` branching: it says once what kind of work this is, so a
+# shared review prompt needs no conditional.
+# =============================================================================
+
+description: "Defect reports. Reproduction gates diagnosis; a fix without a failing test is not a fix."
+
+prompts:
+  global_prompt: prompts/global-bug-fix.example.md
+
+states:
+
+  # ── 1. Reproduce ────────────────────────────────────────────────────────
+  # Deliberately its own stage rather than a step inside investigate. A bug
+  # nobody reproduced is a bug nobody has evidence of, and separating it means
+  # the pipeline can stop here — "could not reproduce" is a real outcome worth
+  # a human's attention, not a failure to work around.
+  reproduce:
+    type: agent
+    prompt: prompts/reproduce.example.md
+    linear_state: active
+    model: claude-sonnet-5
+    effort: high
+    session: inherit
+    transitions:
+      complete: diagnose
+
+  # ── 2. Diagnose ─────────────────────────────────────────────────────────
+  diagnose:
+    type: agent
+    prompt: prompts/diagnose.example.md
+    linear_state: active
+    model: claude-opus-5
+    effort: xhigh
+    session: inherit
+    transitions:
+      complete: ground-check
+
+  # ── 3. Grounding check ──────────────────────────────────────────────────
+  ground-check:
+    type: agent
+    prompt: prompts/ground-check.example.md
+    linear_state: active
+    model: claude-opus-5
+    effort: xhigh
+    session: fresh
+    transitions:
+      complete: research-review
+
+  research-review:
+    type: gate
+    linear_state: review
+    rework_to: diagnose
+    max_rework: 3
+    transitions:
+      approve: implement
+
+  implement:
+    type: agent
+    prompt: prompts/implement.example.md
+    linear_state: active
+    model: claude-sonnet-5
+    effort: high
+    max_budget_usd: 25
+    session: inherit
+    transitions:
+      complete: code-review
+
+  code-review:
+    type: agent
+    prompt: prompts/review.example.md      # shared with every workflow
+    linear_state: active
+    model: claude-opus-5
+    effort: xhigh
+    session: fresh
+    transitions:
+      complete: merge-review
+
+  merge-review:
+    type: gate
+    linear_state: review
+    rework_to: implement
+    max_rework: 5
+    transitions:
+      approve: merge
+
+  merge:
+    type: agent
+    prompt: prompts/merge.example.md       # shared with every workflow
+    linear_state: active
+    effort: low
+    session: inherit
+    transitions:
+      complete: done
+
+  done:
+    type: terminal
+    linear_state: terminal

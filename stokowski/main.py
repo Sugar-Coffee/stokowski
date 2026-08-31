@@ -515,6 +515,7 @@ def show_stats(workflow_path: str) -> None:
         return
 
     for title, key, first_col in (
+        ("Approval rate by workflow", "by_workflow", "Workflow"),
         ("Approval rate by type", "by_classification", "Classification"),
         ("Approval rate by the agent's stated confidence", "by_confidence", "Confidence"),
     ):

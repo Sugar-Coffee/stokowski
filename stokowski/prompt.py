@@ -335,6 +335,7 @@ def assemble_prompt(
     attempt: int = 1,
     last_run_at: str | None = None,
     comments: list[dict[str, Any]] | None = None,
+    global_prompt: str | None = None,
 ) -> str:
     """Orchestrate three-layer prompt assembly.
 
@@ -371,14 +372,18 @@ def assemble_prompt(
     parts: list[str] = []
 
     # Layer 1: Global prompt
-    if cfg.prompts.global_prompt:
+    # A workflow's own global prompt wins. This is the layer that removes
+    # `if this is a bug…` branching from stage prompts: it states what kind of
+    # work this is once, so a shared review prompt needs no conditional.
+    global_prompt_path = global_prompt or cfg.prompts.global_prompt
+    if global_prompt_path:
         try:
-            raw = load_prompt_file(cfg.prompts.global_prompt, workflow_dir)
+            raw = load_prompt_file(global_prompt_path, workflow_dir)
             rendered = render_template(raw, context)
             parts.append(rendered)
         except FileNotFoundError:
             log.warning(
-                "Global prompt file not found: %s", cfg.prompts.global_prompt
+                "Global prompt file not found: %s", global_prompt_path
             )
 
     # Layer 2: Stage prompt
