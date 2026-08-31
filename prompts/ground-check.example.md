@@ -73,10 +73,18 @@ Write `.stokowski/report.json`:
   trustworthy either.
 - `verification`: every command you ran and its real output
 - `data_sources`: the sources *you* checked and how
-- `next`: one of
-  - **stands up** — sources verified, numbers reproduce, claims supported
-  - **needs rework** — say precisely what is wrong and what to redo
-  - **cannot verify** — say what you were unable to check and why
+- `verdict`: exactly one of `stands-up`, `needs-rework`, or `cannot-verify`
+- `next`: one short paragraph — the verdict and the single most important
+  reason for it. This is rendered at the top of the Linear comment and is
+  often the only thing the human at the gate reads, so it has to stand alone:
+  someone who reads nothing else should know whether to approve and why.
+- `next_steps`: ordered, concrete actions.
+  - On `needs-rework`, each step is something the next run must do — name the
+    query to re-run, the source to check, the claim to re-derive.
+  - On `stands-up`, say what the reviewer should still eyeball before
+    approving, or state plainly that nothing is outstanding.
+  - On `cannot-verify`, say what access or information would let someone
+    finish the check.
 
 ## Rules
 

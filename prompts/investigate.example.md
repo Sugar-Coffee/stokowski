@@ -36,7 +36,13 @@ an investigation summary posted as a Linear comment — not code changes.
    - `claims` — each finding with its evidence and a checkable source
    - `data_sources` — what you read and how you verified it
    - `risks`, `open_questions`, `assumptions`
+   - `verdict` — `complete` when the approach is clear, `blocked` when it is not
    - `next` — the proposed approach in one or two sentences
+   - `next_steps` — ordered actions for whoever implements it
+
+   Those last three render at the very top of the Linear comment and are what
+   the human at the gate reads first, so they must carry the recommendation on
+   their own — someone who reads nothing else should know what to do and why.
    Stokowski posts this to Linear for you.
 
 ## Rework run

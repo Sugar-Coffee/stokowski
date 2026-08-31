@@ -27,7 +27,8 @@ mechanical stage — no new code changes.
    gh pr merge <number> --squash --delete-branch
    ```
 5. Write `.stokowski/report.json` confirming the merge: the PR number, the
-   merge commit, and the CI result. Stokowski posts it.
+   merge commit, and the CI result. Set `verdict` to `complete`, or `blocked`
+   with what stopped you. Stokowski posts it.
 6. Move the Linear issue to `Done`.
 
 ## Rework run

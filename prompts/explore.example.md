@@ -48,7 +48,13 @@ Write `.stokowski/report.json`.
 - `data_sources`: what you read, and how you proved it was that
 - `assumptions`: every decision you made without being told
 - `open_questions`: what you could not resolve, and what would resolve it
-- `next`: the recommendation and what it depends on
+- `verdict`: `complete` when you answered the question, `blocked` when the
+  data could not answer it
+- `next`: the recommendation and what it depends on. This is the deliverable —
+  it is rendered at the top of the comment and is what the reader acts on, so
+  it must carry the answer without them reading the findings table.
+- `next_steps`: what should happen as a result, ordered. If the answer implies
+  work, describe its shape here rather than doing it.
 
 Capture charts, query output, or screenshots into `$STOKOWSKI_ARTIFACTS` —
 a number a reader can see beats a number they have to trust.
