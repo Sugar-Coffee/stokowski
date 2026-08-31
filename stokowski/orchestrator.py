@@ -136,6 +136,11 @@ class Orchestrator:
             linear_states=project.linear_states,
             prompts=project.prompts,
             states=project.states,
+            # Without these the orchestrator sees no workflows at all, so every
+            # issue silently falls back to the inline state machine and routing
+            # never fires.
+            workflows=project.workflows,
+            routing=project.routing,
             projects=[project],
             workflow_dir=full.config.workflow_dir,
         )

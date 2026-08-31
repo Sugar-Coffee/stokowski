@@ -247,3 +247,88 @@ def test_a_broken_state_machine_is_reported_against_its_own_workflow(tmp_path):
     cfg = _write(tmp_path, "routing:\n  default: a\n", {"a": broken})
     errors = validate_config(cfg)
     assert any("workflow 'a'" in e and "unknown state 'nowhere'" in e for e in errors)
+
+
+# ── Through the orchestrator ─────────────────────────────────────────────────
+#
+# These exercise the path a running tick actually takes. Every test above works
+# on the parsed config directly, which is why two bugs got through: the
+# orchestrator reads a per-project ServiceConfig *view*, and that view was
+# dropping `workflows` and `routing` entirely — so routing never fired and
+# `all_states()` did not exist on the type the orchestrator holds.
+
+
+@pytest.fixture
+def orchestrator(tmp_path):
+    """An Orchestrator over a real multi-workflow config, loaded as a tick would."""
+    from stokowski.orchestrator import Orchestrator
+
+    shutil.copy(REPO / "workflow.example.yaml", tmp_path / "workflow.yaml")
+    shutil.copytree(REPO / "workflows", tmp_path / "workflows")
+    shutil.copytree(REPO / "prompts", tmp_path / "prompts")
+
+    orch = Orchestrator(workflow_path=tmp_path / "workflow.yaml")
+    orch._load_workflow()
+    return orch
+
+
+def _issue(labels, ident="ENG-1", id_="i1"):
+    from stokowski.models import Issue
+    return Issue(id=id_, identifier=ident, title="t", labels=labels)
+
+
+def test_the_orchestrator_sees_the_workflows(orchestrator):
+    """Regression: the per-project view dropped workflows and routing."""
+    assert set(orchestrator.cfg.workflows) >= {"bug-fix", "feature", "exploration"}
+    assert orchestrator.cfg.routing.default == "feature"
+
+
+def test_all_states_exists_on_what_the_orchestrator_holds(orchestrator):
+    """Regression: `'ServiceConfig' object has no attribute 'all_states'`.
+
+    The gate check calls this on every tick, so a missing method is not a
+    latent bug — it breaks the poll loop immediately.
+    """
+    states = orchestrator.cfg.all_states()
+    assert "reproduce" in states      # bug-fix only
+    assert "investigate" in states    # feature and exploration
+    assert any(s.type == "gate" for s in states.values())
+
+
+@pytest.mark.parametrize("labels,expected", [
+    (["bug"], "bug-fix"),
+    (["spike"], "exploration"),
+    ([], "feature"),
+])
+def test_the_orchestrator_routes_an_issue(orchestrator, labels, expected):
+    assert orchestrator._workflow_name_for(_issue(labels)) == expected
+
+
+def test_the_orchestrator_uses_the_routed_state_machine(orchestrator):
+    # Distinct ids: pins are per-issue, so reusing one would resolve the second
+    # lookup from the first issue's pin rather than from its own labels.
+    assert "reproduce" in orchestrator._states_for(_issue(["bug"], id_="bug-1"))
+    assert "reproduce" not in orchestrator._states_for(_issue([], id_="plain-1"))
+
+
+def test_relabelling_does_not_move_a_running_issue(orchestrator):
+    """The pin is the point: a mid-run label edit must not switch pipelines."""
+    issue = _issue(["bug"])
+    assert orchestrator._workflow_name_for(issue) == "bug-fix"
+
+    issue.labels = ["spike"]
+    assert orchestrator._workflow_name_for(issue) == "bug-fix"
+
+
+def test_a_restart_recovers_the_pin_from_linear(orchestrator):
+    """In-memory pins are lost on restart; the tracking comment carries them."""
+    issue = _issue(["spike"])
+    orchestrator._adopt_workflow_from_tracking(issue, {"type": "state", "workflow": "bug-fix"})
+    assert orchestrator._workflow_name_for(issue) == "bug-fix"
+
+
+def test_a_recorded_workflow_that_no_longer_exists_is_ignored(orchestrator):
+    """A deleted workflow must fall back to routing, not pin to nothing."""
+    issue = _issue(["bug"])
+    orchestrator._adopt_workflow_from_tracking(issue, {"type": "state", "workflow": "deleted"})
+    assert orchestrator._workflow_name_for(issue) == "bug-fix"

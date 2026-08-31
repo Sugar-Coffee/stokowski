@@ -342,6 +342,22 @@ class ServiceConfig:
                 return name
         return None
 
+    def all_states(self) -> dict[str, StateConfig]:
+        """Every state across every workflow (see ProjectConfig.all_states)."""
+        if self.projects:
+            return self.projects[0].all_states()
+        merged: dict[str, StateConfig] = dict(self.states)
+        for wf in self.workflows.values():
+            merged.update(wf.states)
+        return merged
+
+    def workflow_for(self, labels: list[str] | None) -> WorkflowSpec | None:
+        """Pick the workflow a set of issue labels routes to."""
+        if self.projects:
+            return self.projects[0].workflow_for(labels)
+        name = self.routing.resolve(labels)
+        return self.workflows.get(name) if name else None
+
     def active_linear_states(self) -> list[str]:
         if self.projects:
             return self.projects[0].active_linear_states()
