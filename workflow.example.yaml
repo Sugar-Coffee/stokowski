@@ -200,8 +200,40 @@ server:
   port: 4200
 
 # ---------------------------------------------------------------------------
+# Routing — which workflow runs for which ticket
+# ---------------------------------------------------------------------------
+#
+# Workflows live in `workflows/*.yaml`, one file per pipeline. Everything above
+# this line is runtime configuration shared by all of them: duplicating the
+# tracker, hooks and concurrency per workflow would mean three places to rotate
+# an API key.
+#
+# Rules are evaluated in order and the FIRST match wins, so a ticket labelled
+# both `bug` and `spike` resolves the same way every time — and which way is
+# readable here rather than depending on dict ordering. `default` catches
+# anything unlabelled.
+#
+# The workflow is pinned when an issue is first dispatched and recorded in its
+# tracking comment. Relabelling a ticket mid-run will not move it onto a
+# different state machine.
+routing:
+  default: feature
+  rules:
+    - label: bug
+      workflow: bug-fix
+    - label: spike
+      workflow: exploration
+    - label: exploration
+      workflow: exploration
+
+# ---------------------------------------------------------------------------
 # State machine
 # ---------------------------------------------------------------------------
+#
+# This inline block still works and becomes a workflow named `default`, so an
+# existing single-pipeline config keeps running untouched. With `workflows/`
+# files present and a routing default set, this block is redundant — delete it
+# and let the routing rules choose.
 #
 # Order matters: the first agent state is the entry state for new issues.
 #

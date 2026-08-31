@@ -1,0 +1,97 @@
+# =============================================================================
+# Feature — the general-purpose development pipeline
+# =============================================================================
+#
+# Selected by the routing rules in workflow.example.yaml. Runtime config —
+# tracker, workspace, hooks, concurrency, the dashboard — lives there and is
+# shared by every workflow; only the pipeline and its framing live here.
+#
+# The `prompts.global_prompt` below is what lets the stage prompts stay free of
+# `if this is a bug…` branching: it says once what kind of work this is, so a
+# shared review prompt needs no conditional.
+# =============================================================================
+
+description: "New work with no existing behaviour to reproduce. The default when nothing else routes."
+
+prompts:
+  global_prompt: prompts/global.example.md
+
+states:
+
+  investigate:
+    type: agent
+    prompt: prompts/investigate.example.md
+    linear_state: active
+    model: claude-opus-5
+    effort: high
+    session: inherit
+    transitions:
+      complete: ground-check
+
+  ground-check:
+    type: agent
+    prompt: prompts/ground-check.example.md
+    linear_state: active
+    model: claude-opus-5
+    effort: xhigh
+    session: fresh
+    transitions:
+      complete: research-review
+
+  research-review:
+    type: gate
+    linear_state: review
+    rework_to: investigate
+    max_rework: 3
+    transitions:
+      approve: implement
+
+  implement:
+    type: agent
+    prompt: prompts/implement.example.md
+    linear_state: active
+    model: claude-sonnet-5
+    effort: high
+    max_budget_usd: 25
+    session: inherit
+    transitions:
+      complete: implementation-review
+
+  implementation-review:
+    type: gate
+    linear_state: review
+    rework_to: implement
+    max_rework: 5
+    transitions:
+      approve: code-review
+
+  code-review:
+    type: agent
+    prompt: prompts/review.example.md
+    linear_state: active
+    model: claude-opus-5
+    effort: xhigh
+    session: fresh
+    transitions:
+      complete: merge-review
+
+  merge-review:
+    type: gate
+    linear_state: review
+    rework_to: implement
+    max_rework: 5
+    transitions:
+      approve: merge
+
+  merge:
+    type: agent
+    prompt: prompts/merge.example.md
+    linear_state: active
+    effort: low
+    session: inherit
+    transitions:
+      complete: done
+
+  done:
+    type: terminal
+    linear_state: terminal
