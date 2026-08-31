@@ -19,13 +19,41 @@ jobs:
         id: check
         run: |
           COMMIT_MSG=$(git log -1 --pretty=%s)
+          echo "Head commit: $COMMIT_MSG"
+
+          VERSION=""
           if [[ "$COMMIT_MSG" =~ ^Release\ v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-            echo "is_release=true" >> "$GITHUB_OUTPUT"
-            echo "version=v${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
-          else
+            # Squash merge: GitHub uses the PR title as the commit subject.
+            VERSION="${BASH_REMATCH[1]}"
+          elif [[ "$COMMIT_MSG" =~ ^Merge\ pull\ request\ #[0-9]+\ from\ .*/release/v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            # Regular merge: the subject names the release branch instead.
+            # Previously this fell through to "not a release" and the workflow
+            # reported success while doing nothing, so v1.0.0 shipped untagged.
+            VERSION="${BASH_REMATCH[1]}"
+          fi
+
+          if [ -z "$VERSION" ]; then
             echo "is_release=false" >> "$GITHUB_OUTPUT"
             echo "Not a release commit, skipping."
+            exit 0
           fi
+
+          # Cross-check against pyproject so a mislabelled merge cannot tag a
+          # version the package does not claim to be.
+          PKG_VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/.*"\(.*\)".*/\1/')
+          if [ "$VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Commit says v${VERSION} but pyproject.toml says ${PKG_VERSION}."
+            exit 1
+          fi
+
+          if git rev-parse "v${VERSION}" >/dev/null 2>&1; then
+            echo "::error::Tag v${VERSION} already exists."
+            exit 1
+          fi
+
+          echo "is_release=true" >> "$GITHUB_OUTPUT"
+          echo "version=v${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Releasing v${VERSION}"
 
       - name: Fetch release PR body
         id: pr
