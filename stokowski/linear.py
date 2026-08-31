@@ -105,6 +105,9 @@ query($issueId: String!) {
         id
         body
         createdAt
+        user { name displayName }
+        botActor { name }
+        externalUser { name }
       }
     }
   }

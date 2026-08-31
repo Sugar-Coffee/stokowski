@@ -307,3 +307,63 @@ def test_global_prompts_do_not_branch_on_ticket_type(path):
     for phrase in ("if this is a bug", "if the issue is a bug",
                    "if this is a feature", "for bug tickets"):
         assert phrase not in text, f"{path.name} still branches on ticket type"
+
+
+# ── Comment attribution ──────────────────────────────────────────────────────
+#
+# Reported from a real run: the agent addressed the operator by a colleague's
+# name. Two causes — comments were injected with no author at all, and the repo
+# documentation names people, which the agent bound to its reader.
+
+
+def test_comments_are_attributed_to_their_author():
+    from stokowski.prompt import format_comment
+
+    out = "\n".join(format_comment({
+        "body": "Check production, not staging.",
+        "createdAt": "2026-08-31T10:00:00Z",
+        "user": {"displayName": "Josh Pine", "name": "josh"},
+    }))
+    assert "**Josh Pine**" in out
+    assert "Check production, not staging." in out
+
+
+def test_a_bot_comment_is_marked_as_one():
+    """Stokowski's own comments must not read as a human instruction."""
+    from stokowski.prompt import format_comment
+    assert "(bot)" in "\n".join(format_comment({"body": "x", "botActor": {"name": "Stokowski"}}))
+
+
+def test_an_unattributed_comment_says_so_rather_than_going_bare():
+    """A bare quote invites the agent to guess who said it."""
+    from stokowski.prompt import format_comment
+    assert "unknown author" in "\n".join(format_comment({"body": "x"}))
+
+
+def test_a_multiline_comment_stays_inside_its_quote():
+    from stokowski.prompt import format_comment
+    out = "\n".join(format_comment({"body": "One.\nTwo.", "user": {"name": "A"}}))
+    assert "> Two." in out
+
+
+def test_comment_authors_reach_the_assembled_prompt(cfg, issue):
+    """The whole point is that the agent sees who said what."""
+    prompt = assemble_prompt(
+        cfg=cfg, workflow_dir=str(WORKFLOW.parent), issue=issue,
+        state_name="implement", state_cfg=cfg.states["implement"], run=2,
+        is_rework=True,
+        comments=[{"body": "You queried staging.", "createdAt": "2026-08-31T10:00:00Z",
+                   "user": {"displayName": "Amadeus"}}],
+    )
+    assert "**Amadeus**" in prompt
+    assert "You queried staging." in prompt
+
+
+def test_the_global_prompt_forbids_guessing_the_reader():
+    """Names in repo docs are colleagues, not the person reading the report."""
+    # Collapse whitespace: these are prose assertions and a line wrap should
+    # not decide whether the concept is present.
+    text = " ".join((PROMPTS / "global.example.md").read_text().lower().split())
+    assert "who you are talking to" in text
+    for concept in ("do not know who will read", "colleagues mentioned in documentation"):
+        assert concept in text, f"global prompt does not cover {concept!r}"

@@ -26,6 +26,25 @@ mid-run.
 4. Stokowski writes the Linear comment from your `.stokowski/report.json`.
    Do not post summary comments on the issue yourself.
 
+## Who you are talking to
+
+You do not know who will read your report, and you should not guess.
+
+Names appear all over a codebase — in docs, in `git log`, in a known-mistakes
+file, in a code comment crediting whoever found a bug. Those are colleagues
+mentioned in documentation. **None of them is evidence about who filed this
+ticket or who will review it**, and picking one up and addressing your reader
+by it is unsettling to whoever actually reads it.
+
+Linear comments are attributed: each one says who wrote it. Use those names when
+you refer to what someone specifically said — "the reproduction steps Josh
+added", not "as you mentioned". Anything not attributed to a named person, you
+do not know the author of.
+
+Write for a reader you have not met. Address them as "you", refer to whoever
+filed the ticket as "the reporter", and if it matters who said something and you
+cannot tell, say that instead of assuming.
+
 ## Grounding — read this before you trust your own conclusions
 
 The most expensive failure in this workflow is not a crash. It is a fluent,

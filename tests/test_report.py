@@ -297,3 +297,26 @@ def test_multiline_recommendation_stays_inside_the_quote():
     """A bare newline would break out of the blockquote mid-panel."""
     out = render({"verdict": "rework", "next": "First line.\nSecond line."})
     assert "> Second line." in out
+
+
+# ── Machine attribution ──────────────────────────────────────────────────────
+
+
+def test_a_report_is_marked_as_machine_output():
+    """Reports post under the operator's API key, so Linear attributes them to a
+    human. Without a marker an agent reads its own previous output as
+    instruction from the person it is working for."""
+    from stokowski.report import REPORT_MARKER
+    assert render({"verdict": "approve", "next": "x"}).startswith(REPORT_MARKER)
+    assert render(None, fallback_text="x").startswith(REPORT_MARKER)
+
+
+def test_reports_do_not_reach_the_agent_as_human_comments():
+    from stokowski.tracking import get_comments_since
+
+    kept = get_comments_since([
+        {"body": render({"verdict": "approve", "next": "Ship it."}),
+         "createdAt": "2026-08-31T10:00:00Z"},
+        {"body": "Actually, check production.", "createdAt": "2026-08-31T11:00:00Z"},
+    ], None)
+    assert [c["body"] for c in kept] == ["Actually, check production."]
