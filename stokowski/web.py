@@ -1634,7 +1634,8 @@ STUDIO_HTML = DASHBOARD_HTML.split("<body>")[0] + """<body>
         const s = d.states.find(x => x.name === name);
         if (!s) return '';
         const detail = s.type === 'agent'
-          ? [s.model, s.session, s.runner].filter(Boolean).join(' · ')
+          ? [s.model, s.effort, s.session,
+             s.max_budget_usd ? '$' + s.max_budget_usd : null].filter(Boolean).join(' · ')
           : (s.type === 'gate' ? 'human · rework → ' + esc(s.rework_to || '?') : 'end');
         const orphan = seen.has(name) ? '' : ' (unreachable)';
         return (i ? '<span class="arrow">→</span>' : '') +
@@ -1647,7 +1648,22 @@ STUDIO_HTML = DASHBOARD_HTML.split("<body>")[0] + """<body>
     const id = `${scope}:${state || ''}:${key}`;
     const label = key.split('.').pop().replace(/_/g, ' ');
     let control;
-    if (spec.choices) {
+    if (spec.type === 'model') {
+      // Grouped by provider, but backed by a datalist rather than a fixed
+      // select: the catalogue will always lag real model lineups, so an
+      // unlisted model has to remain typeable.
+      const listId = 'models-' + id.replace(/[^a-z0-9]/gi, '-');
+      const groups = (DATA && DATA.model_catalogue) || [];
+      const opts = groups.map(g =>
+        `<optgroup label="${esc(g.label)}">` +
+        g.models.map(m => `<option value="${esc(m)}"></option>`).join('') +
+        `</optgroup>`
+      ).join('');
+      control = `<input list="${esc(listId)}" data-id="${esc(id)}"
+                   value="${esc(value ?? '')}" placeholder="${esc(inherited ?? 'inherits default')}"
+                   autocomplete="off">
+                 <datalist id="${esc(listId)}">${opts}</datalist>`;
+    } else if (spec.choices) {
       control = `<select data-id="${esc(id)}">` +
         ['', ...spec.choices].map(c =>
           `<option value="${esc(c)}"${String(value ?? '') === c ? ' selected' : ''}>${esc(c || '—')}</option>`
@@ -1671,7 +1687,8 @@ STUDIO_HTML = DASHBOARD_HTML.split("<body>")[0] + """<body>
       const fields = applicable.map(([k, spec]) =>
         fieldHtml('state', s.name, k, s[k], spec,
                   k === 'model' ? d.root['claude.model']
-                  : k === 'max_turns' ? d.root['claude.max_turns'] : null)
+                  : k === 'effort' ? (d.root['claude.effort'] || 'high (CLI default)')
+                  : k === 'max_budget_usd' ? d.root['claude.max_budget_usd'] : null)
       ).join('');
       const flow = Object.entries(s.transitions)
         .map(([t, target]) => `${esc(t)} → ${esc(target)}`).join('  ·  ');
