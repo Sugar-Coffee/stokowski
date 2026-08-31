@@ -56,10 +56,22 @@ class ClaudeConfig:
         default_factory=lambda: ["Bash", "Read", "Edit", "Write", "Glob", "Grep"]
     )
     model: str | None = None
+    # NOTE: max_turns applies to LEGACY multi-turn mode only. In state machine
+    # mode each dispatch is exactly one `claude -p` invocation, so this value is
+    # unused — the state machine controls continuation. It is not a runaway
+    # guard: the CLI has no --max-turns flag. Use max_budget_usd for that.
     max_turns: int = 20
     turn_timeout_ms: int = 3_600_000
     stall_timeout_ms: int = 300_000
     append_system_prompt: str | None = None
+    # Hard spend cap for one invocation (`--max-budget-usd`, requires -p, which
+    # Stokowski always uses). This is the real runaway guard.
+    max_budget_usd: float | None = None
+    # Reasoning effort (`--effort`): low | medium | high | xhigh | max.
+    effort: str | None = None
+    # Comma-separated models to fall back to when the primary is overloaded or
+    # unavailable (`--fallback-model`) — useful when a run hits a rate limit.
+    fallback_model: str | None = None
 
 
 @dataclass
@@ -107,6 +119,9 @@ class StateConfig:
     runner: str = "claude"
     model: str | None = None
     max_turns: int | None = None
+    max_budget_usd: float | None = None
+    effort: str | None = None
+    fallback_model: str | None = None
     turn_timeout_ms: int | None = None
     stall_timeout_ms: int | None = None
     session: str = "inherit"
@@ -304,6 +319,16 @@ def _resolve_env(val: str) -> str:
     return val
 
 
+def _coerce_float(val: Any) -> float | None:
+    """Parse an optional float, treating anything unparseable as unset."""
+    if val is None or val == "":
+        return None
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return None
+
+
 def _coerce_int(val: Any, default: int) -> int:
     if val is None:
         return default
@@ -348,6 +373,9 @@ def _parse_state_config(name: str, raw: dict[str, Any]) -> StateConfig:
         runner=str(raw.get("runner", "claude")),
         model=raw.get("model"),
         max_turns=raw.get("max_turns"),
+        max_budget_usd=raw.get("max_budget_usd"),
+        effort=raw.get("effort"),
+        fallback_model=raw.get("fallback_model"),
         turn_timeout_ms=raw.get("turn_timeout_ms"),
         stall_timeout_ms=raw.get("stall_timeout_ms"),
         session=str(raw.get("session", "inherit")),
@@ -370,6 +398,15 @@ def merge_state_config(
         allowed_tools=state.allowed_tools if state.allowed_tools is not None else root_claude.allowed_tools,
         model=state.model or root_claude.model,
         max_turns=state.max_turns if state.max_turns is not None else root_claude.max_turns,
+        max_budget_usd=(
+            state.max_budget_usd if state.max_budget_usd is not None
+            else root_claude.max_budget_usd
+        ),
+        effort=state.effort if state.effort is not None else root_claude.effort,
+        fallback_model=(
+            state.fallback_model if state.fallback_model is not None
+            else root_claude.fallback_model
+        ),
         turn_timeout_ms=state.turn_timeout_ms if state.turn_timeout_ms is not None else root_claude.turn_timeout_ms,
         stall_timeout_ms=state.stall_timeout_ms if state.stall_timeout_ms is not None else root_claude.stall_timeout_ms,
         append_system_prompt=root_claude.append_system_prompt,
@@ -412,6 +449,9 @@ def _parse_claude(raw: dict[str, Any]) -> ClaudeConfig:
         or ["Bash", "Read", "Edit", "Write", "Glob", "Grep"],
         model=raw.get("model"),
         max_turns=_coerce_int(raw.get("max_turns"), 20),
+        max_budget_usd=_coerce_float(raw.get("max_budget_usd")),
+        effort=raw.get("effort"),
+        fallback_model=raw.get("fallback_model"),
         turn_timeout_ms=_coerce_int(raw.get("turn_timeout_ms"), 3_600_000),
         stall_timeout_ms=_coerce_int(raw.get("stall_timeout_ms"), 300_000),
         append_system_prompt=raw.get("append_system_prompt"),

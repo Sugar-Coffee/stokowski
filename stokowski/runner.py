@@ -72,6 +72,21 @@ def build_claude_args(
     if claude_cfg.model:
         args.extend(["--model", claude_cfg.model])
 
+    # Fall back to another model when the primary is overloaded or unavailable.
+    # Worth setting when runs collide with a rate-limit window.
+    if claude_cfg.fallback_model:
+        args.extend(["--fallback-model", claude_cfg.fallback_model])
+
+    # Reasoning effort. Cheap stages (a merge) rarely need more than low;
+    # a grounding check earns high or above.
+    if claude_cfg.effort:
+        args.extend(["--effort", claude_cfg.effort])
+
+    # A hard dollar ceiling for this invocation. The CLI has no --max-turns, so
+    # this — not max_turns — is what actually stops a runaway agent.
+    if claude_cfg.max_budget_usd:
+        args.extend(["--max-budget-usd", str(claude_cfg.max_budget_usd)])
+
     # System prompt - always include headless context, plus any user additions
     if not session_id:
         extra = claude_cfg.append_system_prompt or ""
