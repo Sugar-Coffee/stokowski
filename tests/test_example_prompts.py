@@ -25,8 +25,11 @@ REPO = Path(__file__).resolve().parent.parent
 WORKFLOW = REPO / "workflow.example.yaml"
 PROMPTS = REPO / "prompts"
 
+# Global prompts frame a workflow; stage prompts drive one step of it. Only
+# the latter own the report contract, so they are what that test applies to.
+GLOBAL_PROMPTS = sorted(PROMPTS.glob("global*.example.md"))
 STAGE_PROMPTS = sorted(
-    p for p in PROMPTS.glob("*.example.md") if p.name != "global.example.md"
+    p for p in PROMPTS.glob("*.example.md") if not p.name.startswith("global")
 )
 ALL_PROMPTS = sorted(PROMPTS.glob("*.example.md"))
 
@@ -269,3 +272,38 @@ def test_workspace_setup_has_a_realistic_timeout(cfg):
         f"hooks.timeout_ms is {cfg.hooks.timeout_ms}ms — a cold monorepo "
         "install will exceed it and every workspace creation will fail"
     )
+
+
+# ── Workflows ────────────────────────────────────────────────────────────────
+
+
+def _workflow_configs():
+    from stokowski.config import _load_workflow_dir
+    return sorted(_load_workflow_dir(REPO).items())
+
+
+@pytest.mark.parametrize("name,wf", _workflow_configs(), ids=lambda v: v if isinstance(v, str) else "")
+def test_every_shipped_workflow_is_runnable(cfg, name, wf):
+    """Each pipeline must stand on its own: prompts present, states coherent."""
+    from stokowski.config import _validate_states
+
+    errors: list[str] = []
+    _validate_states(wf.states, cfg.projects[0], f"workflow '{name}'", errors,
+                     global_prompt=wf.global_prompt)
+    assert errors == [], errors
+
+
+@pytest.mark.parametrize("name,wf", _workflow_configs(), ids=lambda v: v if isinstance(v, str) else "")
+def test_every_workflow_names_a_global_prompt_that_exists(name, wf):
+    assert wf.global_prompt, f"workflow '{name}' has no global prompt to frame it"
+    assert (REPO / wf.global_prompt).is_file()
+
+
+@pytest.mark.parametrize("path", GLOBAL_PROMPTS, ids=lambda p: p.name)
+def test_global_prompts_do_not_branch_on_ticket_type(path):
+    """The whole point of per-workflow globals is that branching moves here —
+    into which file gets loaded — rather than living inside the prose."""
+    text = path.read_text().lower()
+    for phrase in ("if this is a bug", "if the issue is a bug",
+                   "if this is a feature", "for bug tickets"):
+        assert phrase not in text, f"{path.name} still branches on ticket type"

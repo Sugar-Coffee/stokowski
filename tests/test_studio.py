@@ -25,8 +25,14 @@ REPO = Path(__file__).resolve().parent.parent
 
 @pytest.fixture
 def workflow(tmp_path):
-    """A real copy of the shipped example, prompts and all."""
+    """A real copy of the shipped example — config, workflows and prompts.
+
+    All three are needed: the config's routing rules name workflows, and those
+    workflows name prompts. Copying only the config is rejected by validation,
+    which is the correct behaviour and worth preserving.
+    """
     shutil.copy(REPO / "workflow.example.yaml", tmp_path / "workflow.yaml")
+    shutil.copytree(REPO / "workflows", tmp_path / "workflows")
     shutil.copytree(REPO / "prompts", tmp_path / "prompts")
     return tmp_path / "workflow.yaml"
 
@@ -171,8 +177,9 @@ def test_model_fields_advertise_the_catalogue(studio):
 def test_a_model_in_use_but_not_in_the_catalogue_is_still_offered(studio, workflow):
     """An operator on a model newer than this release must not lose it."""
     studio.apply([{"scope": "state", "state": "implement",
-                   "field": "model", "value": "claude-opus-9-future"}])
-    groups = studio.describe()["model_catalogue"]
+                   "field": "model", "value": "claude-opus-9-future"}],
+                 workflow="feature")
+    groups = studio.describe("feature")["model_catalogue"]
     assert groups[0]["label"] == "In this workflow"
     assert "claude-opus-9-future" in groups[0]["models"]
 
@@ -255,3 +262,69 @@ def test_describe_advertises_what_is_editable(studio):
     assert d["state_fields"]["session"]["choices"] == ["inherit", "fresh"]
     assert d["root_fields"]["polling.interval_ms"]["type"] == "int"
     assert "tracker.api_key" not in d["root_fields"]
+
+
+# ── Multi-workflow editing ───────────────────────────────────────────────────
+
+
+def test_editing_one_workflow_leaves_the_others_untouched(studio, workflow):
+    """Workflow files are separate documents; an edit must not bleed across."""
+    others = {
+        name: (workflow.parent / "workflows" / f"{name}.example.yaml").read_text()
+        for name in ("bug-fix", "exploration")
+    }
+    studio.apply([{"scope": "state", "state": "implement",
+                   "field": "effort", "value": "low"}], workflow="feature")
+
+    for name, before in others.items():
+        after = (workflow.parent / "workflows" / f"{name}.example.yaml").read_text()
+        assert after == before, f"{name} changed while editing feature"
+    assert studio.describe("feature")["states"]
+
+
+def test_a_workflow_edit_preserves_that_file_s_comments(studio, workflow):
+    path = workflow.parent / "workflows" / "feature.example.yaml"
+    before = path.read_text()
+    studio.apply([{"scope": "state", "state": "implement",
+                   "field": "effort", "value": "low"}], workflow="feature")
+    after = path.read_text()
+    assert after.count("#") == before.count("#")
+    assert len(after.splitlines()) == len(before.splitlines())
+
+
+def test_an_edit_that_would_break_a_workflow_is_rejected_and_rolled_back(studio, workflow):
+    """The candidate is written in place to validate, so it must be restored."""
+    path = workflow.parent / "workflows" / "feature.example.yaml"
+    before = path.read_text()
+    with pytest.raises(StudioError):
+        studio.apply([{"scope": "state", "state": "implement",
+                       "field": "prompt", "value": "prompts/nope.md"}],
+                     workflow="feature")
+    assert path.read_text() == before
+
+
+def test_unknown_workflows_are_refused(studio):
+    with pytest.raises(StudioError, match="No such workflow"):
+        studio.apply([{"scope": "state", "state": "implement",
+                       "field": "effort", "value": "low"}], workflow="nope")
+    with pytest.raises(StudioError, match="No such workflow"):
+        studio.set_default_workflow("nope")
+
+
+def test_describe_lists_workflows_and_the_routing_table(studio):
+    d = studio.describe()
+    assert set(d["workflows"]) == {"bug-fix", "exploration", "feature"}
+    assert d["selected_workflow"] == d["routing"]["default"] == "feature"
+    assert {"label": "bug", "workflow": "bug-fix"} in d["routing"]["rules"]
+
+
+def test_describe_can_show_a_named_workflow(studio):
+    names = [s["name"] for s in studio.describe("bug-fix")["states"]]
+    assert names[0] == "reproduce"
+
+
+def test_setting_the_default_workflow(studio, workflow):
+    studio.set_default_workflow("bug-fix")
+    assert studio.describe()["routing"]["default"] == "bug-fix"
+    # Still a valid config afterwards.
+    assert "routing" in workflow.read_text()

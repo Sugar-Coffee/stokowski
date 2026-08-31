@@ -32,6 +32,7 @@ stokowski/
   linear.py        Linear GraphQL client (httpx async)
   model_catalogue.py  Known models by provider (data, for the studio dropdown)
   models.py        Domain models: Issue, RunAttempt, RetryEntry
+  # workflows/*.yaml alongside the config hold one pipeline each
   orchestrator.py  Main poll loop, dispatch, reconciliation, retry
   prompt.py        Three-layer prompt assembly + the agent reporting contract
   report.py        Structured run reports -> rendered Linear comments
@@ -60,6 +61,29 @@ Simpler operational story — single process, no BEAM runtime, no distributed co
 
 ### No persistent database
 All state lives in memory. The orchestrator recovers from restart by re-polling Linear and re-discovering active issues. Workspace directories on disk act as durable state.
+
+### Many workflows, one runtime
+A Linear label chooses which pipeline runs. `workflows/*.yaml` hold one state
+machine and one global prompt each; `workflow.yaml` keeps everything else —
+tracker, workspace, hooks, concurrency, server — because duplicating those per
+pipeline would mean three places to rotate an API key.
+
+Routing rules are evaluated in order, first match wins, with a `default` for
+unlabelled issues. The workflow is **pinned at first dispatch** and written into
+the tracking comment: relabelling a ticket mid-run must not move it onto a
+different state machine, and a restart recovers the pin from Linear rather than
+re-routing from labels that may have changed.
+
+This is what removes `if this is a bug…` branching from prompts. Each workflow's
+**global prompt** says once what kind of work this is, so a stage prompt shared
+by several workflows (`review.md`, `merge.md`) needs no conditional. Sharing is
+just two workflows naming the same path — there is no separate mechanism.
+
+`workflows/x.example.yaml` and `workflows/x.yaml` are both the workflow `x`; a
+real file shadows the shipped example, mirroring how prompts work.
+
+An inline `states:` block still works and is folded in as a workflow named
+`default`, so a single-pipeline config runs untouched.
 
 ### workflow.yaml as the operator contract
 The operator's `workflow.yaml` defines the runtime config and state machine. Stokowski re-parses it on every poll tick — config changes take effect without restart. Both `.yaml` and legacy `.md` (YAML front matter + Jinja2 body) formats are supported. Prompt templates are now separate `.md` files referenced by path from the config.
