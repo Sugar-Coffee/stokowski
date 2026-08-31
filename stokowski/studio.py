@@ -87,6 +87,13 @@ STATE_FIELDS: dict[str, tuple[str, list[str] | None]] = {
 }
 
 
+# The name config.py gives an inline `states:` block. It is a real workflow —
+# routing can target it and it usually IS the default — but it lives in the main
+# config file rather than in `workflows/`, so every path lookup has to special
+# case it or the studio cannot show the pipeline most operators are running.
+INLINE_WORKFLOW = "default"
+
+
 class StudioError(Exception):
     """A rejected edit. The message is shown to the user."""
 
@@ -176,23 +183,38 @@ class Studio:
     def _workflows_dir(self) -> Path:
         return self.root / "workflows"
 
+    def _has_inline_states(self) -> bool:
+        try:
+            return bool(self._load().get("states"))
+        except Exception:
+            return False
+
     def _list_workflows(self) -> list[str]:
-        """Names of every workflow file, real files shadowing examples."""
-        directory = self._workflows_dir()
-        if not directory.is_dir():
-            return []
+        """Every workflow, including the inline one.
+
+        Real files shadow examples. The inline `states:` block is listed under
+        its config name so the studio can show it — without this, a config whose
+        routing default is the inline block fails to render at all.
+        """
         names = set()
-        for path in directory.glob("*.y*ml"):
-            if path.name.startswith("."):
-                continue
-            stem = path.stem
-            names.add(stem[: -len(".example")] if stem.endswith(".example") else stem)
+        directory = self._workflows_dir()
+        if directory.is_dir():
+            for path in directory.glob("*.y*ml"):
+                if path.name.startswith("."):
+                    continue
+                stem = path.stem
+                names.add(stem[: -len(".example")] if stem.endswith(".example") else stem)
+        if self._has_inline_states():
+            names.add(INLINE_WORKFLOW)
         return sorted(names)
 
     def _workflow_path(self, name: str) -> Path:
-        """Resolve a workflow name to a file, preferring a real one."""
+        """Resolve a workflow name to the file that defines it."""
         if name not in self._list_workflows():
             raise StudioError(f"No such workflow: {name}")
+        # The inline workflow lives in the main config, not in workflows/.
+        if name == INLINE_WORKFLOW and not self._workflow_file_exists(name):
+            return self.workflow_path
         directory = self._workflows_dir()
         for candidate in (f"{name}.yaml", f"{name}.yml",
                           f"{name}.example.yaml", f"{name}.example.yml"):
@@ -200,6 +222,15 @@ class Studio:
             if path.is_file():
                 return path
         raise StudioError(f"No such workflow: {name}")
+
+    def _workflow_file_exists(self, name: str) -> bool:
+        """Whether a `workflows/<name>.yaml` exists (as opposed to the inline block)."""
+        directory = self._workflows_dir()
+        return any(
+            (directory / c).is_file()
+            for c in (f"{name}.yaml", f"{name}.yml",
+                      f"{name}.example.yaml", f"{name}.example.yml")
+        )
 
     def _workflow_doc(self, name: str) -> Any:
         return _yaml().load(self._workflow_path(name).read_text())
@@ -277,7 +308,8 @@ class Studio:
         # State edits belong to the workflow file that owns the state; root
         # edits always belong to the main config.
         target = self._workflow_path(workflow) if workflow else self.workflow_path
-        data = _yaml().load(target.read_text()) if workflow else self._load()
+        editing_main_config = target == self.workflow_path
+        data = self._load() if editing_main_config else _yaml().load(target.read_text())
         applied = []
 
         for update in updates:
@@ -311,7 +343,7 @@ class Studio:
                 raise StudioError(f"Unknown scope: {scope!r}")
 
         rendered = _render(data)
-        if workflow:
+        if workflow and not editing_main_config:
             # A workflow file is not a whole config, so validate by writing it
             # in place and re-parsing the real config around it.
             self._validate_workflow_or_raise(target, rendered)

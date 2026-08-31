@@ -313,7 +313,8 @@ def test_unknown_workflows_are_refused(studio):
 
 def test_describe_lists_workflows_and_the_routing_table(studio):
     d = studio.describe()
-    assert set(d["workflows"]) == {"bug-fix", "exploration", "feature"}
+    # `default` is the example's inline states block, which is a workflow too.
+    assert set(d["workflows"]) == {"bug-fix", "exploration", "feature", "default"}
     assert d["selected_workflow"] == d["routing"]["default"] == "feature"
     assert {"label": "bug", "workflow": "bug-fix"} in d["routing"]["rules"]
 
@@ -328,3 +329,69 @@ def test_setting_the_default_workflow(studio, workflow):
     assert studio.describe()["routing"]["default"] == "bug-fix"
     # Still a valid config afterwards.
     assert "routing" in workflow.read_text()
+
+
+# ── The inline workflow ──────────────────────────────────────────────────────
+#
+# An inline `states:` block is a real workflow named `default` — routing can
+# target it, and for an operator migrating from a single pipeline it usually IS
+# the default. But it lives in the main config rather than in `workflows/`, so
+# every path lookup has to account for it.
+#
+# Regression: the studio listed only `workflows/*.yaml`, so a config whose
+# routing default was the inline block raised "No such workflow: default" and
+# the page failed to render at all. The shipped example did not catch it because
+# its default points at a workflow *file*.
+
+
+@pytest.fixture
+def inline_default(workflow):
+    """A config whose routing default is its inline states block."""
+    text = workflow.read_text().replace("default: feature", "default: default")
+    workflow.write_text(text)
+    return Studio(workflow)
+
+
+def test_the_inline_workflow_is_listed(inline_default):
+    assert "default" in inline_default._list_workflows()
+
+
+def test_a_config_defaulting_to_its_inline_block_renders(inline_default):
+    d = inline_default.describe()
+    assert d["selected_workflow"] == "default"
+    assert d["states"], "the inline pipeline should be shown, not an empty list"
+
+
+def test_every_listed_workflow_can_be_shown(inline_default):
+    """Whatever the studio lists, it must be able to render."""
+    for name in inline_default._list_workflows():
+        assert inline_default.describe(name)["states"], name
+
+
+def test_editing_the_inline_workflow_writes_the_main_config(inline_default, workflow):
+    before = workflow.read_text()
+    inline_default.apply([{"scope": "state", "state": "implement",
+                           "field": "effort", "value": "low"}], workflow="default")
+
+    after = workflow.read_text()
+    assert after != before
+    assert after.count("#") == before.count("#")  # comments survive
+    assert inline_default.describe("default")
+
+
+def test_a_bad_edit_to_the_inline_workflow_is_still_rejected(inline_default, workflow):
+    """It is validated as a whole config, not as a standalone workflow file."""
+    before = workflow.read_text()
+    with pytest.raises(StudioError):
+        inline_default.apply([{"scope": "state", "state": "implement",
+                               "field": "prompt", "value": "prompts/nope.md"}],
+                             workflow="default")
+    assert workflow.read_text() == before
+
+
+def test_a_config_with_no_inline_states_does_not_invent_one(workflow):
+    """Only list `default` when there is actually an inline block."""
+    text = workflow.read_text()
+    start = text.index("\nstates:")
+    workflow.write_text(text[:start] + "\n")
+    assert "default" not in Studio(workflow)._list_workflows()
