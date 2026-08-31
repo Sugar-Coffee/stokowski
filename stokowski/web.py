@@ -410,6 +410,103 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     flex-shrink: 0;
   }
 
+  .agent-card { cursor: pointer; }
+
+  .agent-card.expanded { background: #131313; }
+
+  .agent-sub {
+    font-size: 0.7rem;
+    color: var(--dim);
+    font-weight: 300;
+    margin-top: 3px;
+  }
+
+  .agent-cost {
+    font-size: 0.7rem;
+    color: var(--muted);
+    font-weight: 300;
+  }
+
+  .agent-warn { color: var(--red); }
+
+  /* Timeline — the per-agent activity trail, revealed on click. */
+  .timeline {
+    grid-column: 1 / -1;
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+    max-height: 320px;
+    overflow-y: auto;
+  }
+
+  .tl-row {
+    display: grid;
+    grid-template-columns: 62px 118px minmax(0, 1fr);
+    gap: 12px;
+    padding: 3px 0;
+    font-size: 0.72rem;
+    line-height: 1.5;
+    border-left: 2px solid transparent;
+    padding-left: 10px;
+  }
+
+  .tl-row.tool        { border-left-color: var(--blue); }
+  .tl-row.tool_result { border-left-color: var(--red); }
+  .tl-row.text        { border-left-color: var(--amber-dim); }
+  .tl-row.thinking    { border-left-color: var(--border-hi); }
+  .tl-row.result      { border-left-color: var(--green); }
+  .tl-row.rate_limit,
+  .tl-row.warning     { border-left-color: var(--red); }
+
+  .tl-time  { color: var(--dim); }
+  .tl-label {
+    color: var(--text);
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tl-row.thinking .tl-label { color: var(--dim); font-weight: 300; font-style: italic; }
+  .tl-detail {
+    color: var(--muted);
+    font-weight: 300;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tl-row.tool_result .tl-detail,
+  .tl-row.warning .tl-detail { color: var(--red); }
+
+  .tl-empty { color: var(--dim); font-size: 0.72rem; font-weight: 300; }
+
+  .tl-tools {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+
+  .tl-chip {
+    font-size: 0.62rem;
+    color: var(--muted);
+    border: 1px solid var(--border-hi);
+    border-radius: 2px;
+    padding: 1px 6px;
+    font-weight: 300;
+  }
+
+  .rl-chip {
+    font-size: 0.62rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: 2px;
+    border: 1px solid var(--border-hi);
+    color: var(--dim);
+    font-weight: 400;
+  }
+  .rl-chip.warn { color: var(--red); border-color: rgba(217,95,82,.4); }
+
   .agent-meta {
     text-align: right;
     white-space: nowrap;
@@ -834,6 +931,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <span class="logo-tag">Claude Code Orchestrator</span>
     </div>
     <div class="header-right">
+      <span id="rate-limit" class="rl-chip" style="display:none">—</span>
       <div id="status-dot" class="status-dot idle"></div>
       <span id="ts" class="timestamp">—</span>
     </div>
@@ -900,6 +998,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <div class="stat-item">
       <span class="stat-label">Out</span>
       <span class="stat-value" id="s-out">—</span>
+    </div>
+    <div class="stat-divider"></div>
+    <div class="stat-item">
+      <span class="stat-label">Cache r/w</span>
+      <span class="stat-value" id="s-cache">—</span>
     </div>
     <div class="stat-divider"></div>
     <div id="progress-container" style="display:none; flex:1; align-items:center; gap:12px;">
@@ -1070,6 +1173,42 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       }).join('') + `</div>`;
   }
 
+  // Which agent cards are expanded. Kept outside the render so a card stays
+  // open across the 3s poll.
+  const expandedAgents = new Set();
+
+  window.__toggleAgent = function (key) {
+    if (expandedAgents.has(key)) expandedAgents.delete(key);
+    else expandedAgents.add(key);
+    if (window.__lastData) renderAgents(window.__lastData);
+  };
+
+  function renderTimeline(r) {
+    const acts = r.activity || [];
+    const counts = r.tool_counts || {};
+    const chips = Object.keys(counts)
+      .sort((a, b) => counts[b] - counts[a])
+      .map(k => `<span class="tl-chip">${esc(k)} ${counts[k]}</span>`)
+      .join('');
+
+    if (!acts.length) {
+      return `<div class="timeline">${chips ? `<div class="tl-tools">${chips}</div>` : ''}<div class="tl-empty">No activity recorded yet</div></div>`;
+    }
+
+    // Newest last, matching the order the agent did the work.
+    const rows = acts.map(a => {
+      const t = a.at ? new Date(a.at).toLocaleTimeString('en-GB', { hour12: false }) : '';
+      const mark = a.status === 'error' ? '\u2717 ' : (a.status === 'warn' ? '\u26a0 ' : '');
+      return `<div class="tl-row ${esc(a.kind)}">
+        <span class="tl-time">${esc(t)}</span>
+        <span class="tl-label" title="${esc(a.label)}">${mark}${esc(a.label)}</span>
+        <span class="tl-detail" title="${esc(a.detail || '')}">${esc(a.detail || '')}</span>
+      </div>`;
+    }).join('');
+
+    return `<div class="timeline">${chips ? `<div class="tl-tools">${chips}</div>` : ''}${rows}</div>`;
+  }
+
   function renderAgents(data) {
     const all = [
       ...(data.running || []),
@@ -1108,8 +1247,21 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     const rows = all.map(r => {
       const stateInfo = r.state_name ? `<span style="color:var(--muted);font-size:11px;margin-left:8px">${esc(r.state_name)}</span>` : '';
       const projTag = r.project_name ? `<div class="agent-project">${esc(r.project_name)}</div>` : '';
+      const key = (r.project_name || '') + '/' + r.issue_identifier;
+      const open = expandedAgents.has(key);
+
+      // Tool count and error count give an at-a-glance sense of whether the
+      // agent is making progress or thrashing.
+      const toolBits = [];
+      if (r.tool_call_count) toolBits.push(`${r.tool_call_count} tools`);
+      if (r.tool_error_count) toolBits.push(`<span class="agent-warn">${r.tool_error_count} err</span>`);
+      if (r.compaction_count) toolBits.push(`${r.compaction_count}\u00d7 compact`);
+      if (r.artifact_count) toolBits.push(`${r.artifact_count} artifacts`);
+      const sub = toolBits.length ? `<div class="agent-sub">${toolBits.join(' \u00b7 ')}</div>` : '';
+      const cost = r.cost_usd ? `<div class="agent-cost">$${r.cost_usd.toFixed(2)}</div>` : '';
+
       return `
-      <div class="agent-card">
+      <div class="agent-card ${open ? 'expanded' : ''}" onclick="window.__toggleAgent('${esc(key)}')">
         <div>
           <div class="agent-id">${esc(r.issue_identifier)}</div>
           ${projTag}
@@ -1119,14 +1271,17 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             ${statusPill(r.status)}${stateInfo}
           </div>
           <div class="agent-activity">
-            <span class="agent-msg">${esc(r.last_message || '—')}</span>
+            <span class="agent-msg">${esc(r.last_message || '\u2014')}</span>
             ${r.last_event_at ? `<span class="agent-elapsed">${fmtElapsed(r.last_event_at)}</span>` : ''}
           </div>
+          ${sub}
         </div>
         <div class="agent-meta">
           <div class="agent-tokens">${fmt(r.tokens?.total_tokens || 0)} tok</div>
           <div class="agent-turns">turn ${r.turn_count || 0}</div>
+          ${cost}
         </div>
+        ${open ? renderTimeline(r) : ''}
       </div>`;
     }).join('');
 
@@ -1138,6 +1293,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     try {
       const res = await fetch('/api/v1/state');
       const data = await res.json();
+      window.__lastData = data;
 
       const running  = data.counts?.running  || 0;
       const retrying = data.counts?.retrying || 0;
@@ -1150,12 +1306,44 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       document.getElementById('v-tokens').textContent   = fmt(data.totals?.total_tokens || 0);
       document.getElementById('v-runtime').textContent  = fmtSecs(data.totals?.seconds_running || 0);
 
+      // Cost is the number that actually tells you what a run was worth, so it
+      // rides alongside the token count rather than being buried.
+      const cost = data.totals?.cost_usd || 0;
+      const toolCalls = data.totals?.tool_calls || 0;
+      document.getElementById('v-tokens-sub').textContent =
+        '$' + cost.toFixed(2) + (toolCalls ? ' \u00b7 ' + fmt(toolCalls) + ' tool calls' : '');
+
       document.getElementById('m-running').className  = 'metric' + (active ? ' active' : '');
       document.getElementById('m-tokens').className   = 'metric' + (data.totals?.total_tokens > 0 ? ' active' : '');
 
-      // Stats bar
+      // Stats bar. Cache reads are shown separately because they typically
+      // dwarf fresh input and are billed at a tenth of the rate — collapsing
+      // them into one figure hides where the spend actually goes.
       document.getElementById('s-in').textContent  = fmt(data.totals?.input_tokens  || 0);
       document.getElementById('s-out').textContent = fmt(data.totals?.output_tokens || 0);
+      const sCache = document.getElementById('s-cache');
+      if (sCache) {
+        const cw = data.totals?.cache_creation_tokens || 0;
+        const cr = data.totals?.cache_read_tokens || 0;
+        sCache.textContent = fmt(cr) + ' / ' + fmt(cw);
+      }
+
+      // Rate-limit window
+      const rl = data.rate_limit;
+      const rlEl = document.getElementById('rate-limit');
+      if (rl && rl.status) {
+        const ok = rl.status === 'allowed';
+        let label = (rl.type || 'limit').replace('_', '-') + ' ' + rl.status;
+        if (rl.resets_at) {
+          const mins = Math.max(0, Math.round((rl.resets_at * 1000 - Date.now()) / 60000));
+          label += mins > 90 ? ' \u00b7 ' + Math.round(mins / 60) + 'h' : ' \u00b7 ' + mins + 'm';
+        }
+        rlEl.textContent = label;
+        rlEl.className = 'rl-chip' + (ok ? '' : ' warn');
+        rlEl.style.display = '';
+      } else {
+        rlEl.style.display = 'none';
+      }
 
       // Progress bar
       const pc = document.getElementById('progress-container');

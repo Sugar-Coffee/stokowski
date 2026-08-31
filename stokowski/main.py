@@ -302,7 +302,15 @@ def _make_footer(orch: MultiOrchestrator) -> Text:
         paused_meta = f"  [red]⏸ {','.join(paused)}[/red]" if paused else ""
         queue_meta = f"  [dim]queued={queued}[/dim]" if queued else ""
         token_meta = f"  [dim]tokens={tokens:,}[/dim]" if tokens else ""
-        meta = paused_meta + queue_meta + token_meta
+        cost = snap["totals"].get("cost_usd", 0)
+        cost_meta = f"  [dim]${cost:,.2f}[/dim]" if cost else ""
+        # A throttled or exhausted window is the single most useful thing to
+        # know at a glance, so it gets colour rather than dim text.
+        rl = snap.get("rate_limit") or {}
+        rl_meta = ""
+        if rl.get("status") and rl["status"] != "allowed":
+            rl_meta = f"  [red]⚠ {rl.get('type', 'rate')} {rl['status']}[/red]"
+        meta = paused_meta + queue_meta + token_meta + cost_meta + rl_meta
     except Exception:
         status = "[dim]● idle[/dim]"
         meta = ""
