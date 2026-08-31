@@ -141,6 +141,10 @@ gh pr create \
 
 Tell the user: "Release PR opened: <PR URL>"
 
-> **⚠️ Important: Squash-merge only**
+> **Merging**
 >
-> You must squash-merge this PR (not a regular merge). The GitHub Action detects releases by reading the merge commit message, which must be exactly `Release vX.Y.Z`. GitHub sets this automatically from the PR title when squash-merging.
+> Squash-merge is preferred — GitHub takes the commit subject from the PR title, giving a clean `Release vX.Y.Z` on main.
+>
+> A regular merge also works: the Action recognises `Merge pull request #N from <owner>/release/vX.Y.Z` too. It did not always. v1.0.0 was merged normally, the Action found no match, reported success, and shipped nothing — the tag and release had to be created by hand.
+>
+> Whichever you use, the branch must be named `release/vX.Y.Z` and the version must match `pyproject.toml`, or the Action fails loudly rather than skipping in silence.
