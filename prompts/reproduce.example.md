@@ -57,8 +57,12 @@ Write `.stokowski/report.json`.
   what you ruled out and how.
 - `verification`: the exact commands, with their real output
 - `data_sources`: branch, commit, and environment, with how you confirmed each
-- `next`: `reproduced` — with the trigger — or `not reproducible`, with what
-  would help
+- `verdict`: `reproduced` or `not-reproducible`
+- `next`: one short paragraph — the trigger if you reproduced it, or what you
+  ruled out and what would help if you did not. Rendered at the top of the
+  Linear comment; the next stage reads it first.
+- `next_steps`: on `reproduced`, what the diagnosis stage should look at first.
+  On `not-reproducible`, what information or access would let someone retry.
 
 ## Do NOT
 

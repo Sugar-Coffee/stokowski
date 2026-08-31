@@ -43,6 +43,23 @@ CLASSIFICATIONS: dict[str, tuple[str, str]] = {
 
 CONFIDENCE_MARK = {"high": "●●●", "medium": "●●○", "low": "●○○"}
 
+# A stage's own verdict on its work, rendered as the first thing a human sees.
+# Deliberately a small shared vocabulary rather than per-stage wording: the
+# person at a gate is answering the same question every time — ship it, send it
+# back, or it is stuck — and should not have to learn a new dialect per stage.
+VERDICTS: dict[str, tuple[str, str]] = {
+    "approve":         ("✅", "Approve"),
+    "stands-up":       ("✅", "Stands up"),
+    "complete":        ("✅", "Complete"),
+    "reproduced":      ("✅", "Reproduced"),
+    "rework":          ("🔄", "Needs rework"),
+    "needs-rework":    ("🔄", "Needs rework"),
+    "request-changes": ("🔄", "Request changes"),
+    "blocked":         ("⛔", "Blocked"),
+    "cannot-verify":   ("⛔", "Cannot verify"),
+    "not-reproducible":("⛔", "Not reproducible"),
+}
+
 # The agent's own confidence, applied as a label so a board can be filtered by
 # it. Only worth anything once you can compare it against how the work was
 # actually judged — see `stokowski --stats`.
@@ -120,6 +137,65 @@ def labels_for(report: dict[str, Any] | None) -> list[tuple[str, str]]:
 
 
 # ── Rendering ────────────────────────────────────────────────────────────────
+
+
+
+def _render_recommendation(report: dict[str, Any]) -> list[str]:
+    """The verdict, the reasoning, and what to do — before anything else.
+
+    A gate reviewer is deciding one thing: approve, send back, or unblock. That
+    decision was previously reachable only by reading past several tables to a
+    `**Next:**` line at the bottom, which is exactly backwards — the conclusion
+    should be readable without the evidence, and the evidence should be there
+    for when the conclusion is surprising.
+
+    Rendered as a blockquote so it reads as a distinct panel in Linear rather
+    than as more prose.
+    """
+    verdict_raw = _text(report.get("verdict")).lower().replace("_", "-")
+    icon, label = VERDICTS.get(verdict_raw, ("▶", verdict_raw.replace("-", " ").title()))
+    recommendation = _text(report.get("next"))
+    steps = [_text(s) for s in _as_list(report.get("next_steps")) if _text(s)]
+
+    if not (verdict_raw or recommendation or steps):
+        return []
+
+    lines = ["> ## " + (f"{icon} {label}" if verdict_raw else "▶ Recommendation"), ">"]
+    if recommendation:
+        lines.append("> " + recommendation.replace("\n", "\n> "))
+        lines.append(">")
+    if steps:
+        lines.append("> **Next steps**")
+        lines.append(">")
+        lines += [f"> {i}. {step}" for i, step in enumerate(steps, 1)]
+        lines.append(">")
+
+    # A trust signal beside the recommendation: how sure the agent is, and how
+    # much of what it said it actually sourced. Both bear on whether to accept
+    # the verdict without reading further.
+    signals = []
+    classification = _text(report.get("classification"))
+    if classification:
+        signals.append(f"`{classification}`")
+    confidence = _text(report.get("confidence")).lower()
+    if confidence:
+        signals.append(f"confidence {CONFIDENCE_MARK.get(confidence, '')} {confidence}")
+
+    claims = [c for c in _as_list(report.get("claims")) if isinstance(c, dict)]
+    unsourced = sum(
+        1 for c in claims
+        if not (_text(c.get("evidence")) and _text(c.get("source")))
+    )
+    if claims:
+        noun = "claim" if len(claims) == 1 else "claims"
+        signals.append(
+            f"⚠️ {unsourced} of {len(claims)} {noun} unsourced" if unsourced
+            else f"{len(claims)} {noun}, all sourced"
+        )
+    if signals:
+        lines.append("> <sub>" + " · ".join(signals) + "</sub>")
+
+    return [ln.rstrip() for ln in lines] + [""]
 
 
 def _render_claims(claims: list) -> list[str]:
@@ -237,14 +313,19 @@ def render(
     out.append(title)
     out.append("")
 
-    tags = []
-    if classification:
-        tags.append(f"`{classification}`")
-    if confidence:
-        tags.append(f"confidence {CONFIDENCE_MARK.get(confidence, '')} {confidence}")
-    if tags:
-        out.append(" · ".join(tags))
-        out.append("")
+    # The recommendation carries classification and confidence, so they are not
+    # repeated as a separate tag line.
+    recommendation = _render_recommendation(report)
+    out.extend(recommendation)
+    if not recommendation:
+        tags = []
+        if classification:
+            tags.append(f"`{classification}`")
+        if confidence:
+            tags.append(f"confidence {CONFIDENCE_MARK.get(confidence, '')} {confidence}")
+        if tags:
+            out.append(" · ".join(tags))
+            out.append("")
 
     summary = _text(report.get("summary"))
     if summary:
@@ -308,11 +389,6 @@ def render(
     preview = _text(report.get("preview_url"))
     if preview:
         out.append(f"**Preview:** {preview}")
-        out.append("")
-
-    next_step = _text(report.get("next"))
-    if next_step:
-        out.append(f"**Next:** {next_step}")
         out.append("")
 
     out.extend(_render_footer(state, run, usage, uploaded))

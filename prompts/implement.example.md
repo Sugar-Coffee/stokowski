@@ -42,7 +42,10 @@ Implement the solution, create a PR, and ensure it passes all quality checks.
 10. Link the PR to the Linear issue.
 11. Write `.stokowski/report.json`: what changed and why, the exact
     verification commands and their real results, assumptions, and known
-    limitations. Stokowski posts it to Linear.
+    limitations. Set `verdict` to `complete` or `blocked`, put the reviewer's
+    summary in `next`, and anything they must check in `next_steps` — those
+    render at the top of the Linear comment and are what the gate reads
+    first. Stokowski posts it.
 
 ## Rework run
 

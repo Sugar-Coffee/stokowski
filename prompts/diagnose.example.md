@@ -40,7 +40,12 @@ Write `.stokowski/report.json`.
 - `data_sources`: which branch and commit you read
 - `risks`: what the proposed fix could break
 - `open_questions`: anything your explanation does not account for
-- `next`: the proposed fix, in a sentence or two
+- `verdict`: `complete` when you have a cause that explains the boundary
+  condition, `blocked` when you do not
+- `next`: the proposed fix in a sentence or two, and why it addresses the
+  cause rather than the symptom. Rendered at the top of the comment.
+- `next_steps`: ordered actions for the implementation stage — the file to
+  change, the test to write first, anything to check before starting
 
 If you found sibling occurrences, list them as claims even though they are out
 of scope. Someone should know.

@@ -237,7 +237,9 @@ REPORT_SCHEMA = """{
   "assumptions": ["decisions you made without being told, and why"],
   "risks": ["what could go wrong with this work"],
   "open_questions": ["what you could not resolve"],
-  "next": "what should happen next"
+  "verdict": "approve | stands-up | complete | reproduced | rework | request-changes | blocked | cannot-verify | not-reproducible",
+  "next": "one short paragraph: the recommendation and why",
+  "next_steps": ["ordered, concrete actions someone could start on immediately"]
 }"""
 
 
@@ -319,6 +321,15 @@ def build_reporting_contract() -> list[str]:
     lines.append(
         "5. **Lower your confidence when you are guessing.** `low` on a real "
         "finding is more useful than `high` on a shaky one."
+    )
+    lines.append(
+        "6. **Lead with the recommendation.** `verdict`, `next` and `next_steps` "
+        "are rendered at the very top of the Linear comment, above everything "
+        "else. Someone deciding at a gate reads only that, so it has to carry "
+        "the decision on its own — what should happen, why, and what to do "
+        "first — without them scrolling into the tables. Write `next_steps` as "
+        "actions, ordered, each specific enough to start on: \"re-run the "
+        "orphan join against the production replica\", not \"verify the data\"."
     )
     lines.append("")
 

@@ -64,7 +64,13 @@ the implementer missed — not to rubber-stamp the PR.
    - `claims` — one per issue found, severity in the claim text, each with
      the file:line that demonstrates it
    - `verification` — the quality commands you re-ran and their real results
-   - `next` — approve, request changes, or flag concerns, and why
+   - `verdict` — exactly one of `approve`, `request-changes`, or `blocked`
+   - `next` — one short paragraph carrying the decision and its single most
+     important reason. Rendered at the top of the Linear comment and often the
+     only thing read at the gate, so it must stand alone.
+   - `next_steps` — ordered, concrete actions. On `request-changes` each step
+     is a specific fix with the `file:line` it applies to; on `approve`, either
+     what to watch after merge or an explicit "nothing outstanding".
 
 ## Rework run
 
