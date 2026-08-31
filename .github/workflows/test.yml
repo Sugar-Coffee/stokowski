@@ -1,0 +1,39 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor from pyproject's requires-python, plus current stable.
+        python-version: ["3.11", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: pip install -e ".[web]" pytest
+
+      - name: Run tests
+        run: python -m pytest tests/ -q
+
+      - name: Validate the shipped example workflow
+        # The examples are what operators copy and, in our own case, run
+        # directly — so a broken example is a broken deployment. This parses
+        # the config and walks the state machine.
+        #
+        # With no LINEAR_API_KEY the candidate fetch logs a 401 and the command
+        # still exits 0. That is expected: config validation is what is being
+        # checked here, not API access.
+        run: python -m stokowski workflow.example.yaml --dry-run
