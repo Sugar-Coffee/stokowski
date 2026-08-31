@@ -8,6 +8,43 @@ All notable changes to Stokowski are documented here.
 
 ---
 
+## [1.1.0] - 2026-08-31
+
+Runs are now measurable, and the workflow is visible without opening a file.
+
+### Added
+
+- feat: run ledger — an append-only record of every stage and every gate
+  decision, plus `stokowski --stats` for approval rate by classification and by
+  the agent's own stated confidence (7c1f1b7)
+- feat: workflow studio at `/studio` — the pipeline at a glance and editing for
+  the obvious knobs, with comment-preserving YAML round-trips and validation
+  before any write (7c1f1b7)
+- feat: the agent's stated confidence applied as a Linear label alongside the
+  work type, so a board can be filtered by it (7c1f1b7)
+- feat: `pnpm start` / `studio` / `check` / `stats` / `test` aliases wrapping a
+  launcher that finds the CLI and the workflow file itself (7c1f1b7)
+- feat: prompts now require before/after measurement for any measurable claim,
+  carry deployment preview URLs, name paired screenshots so they render as a
+  pair, and check open PRs before touching shared code (7c1f1b7)
+
+### Fixed
+
+- fix: prompt files referenced by a state are now checked for existence. A
+  typo'd path previously passed startup and every dry run, then failed when the
+  agent launched (7c1f1b7)
+- fix: literal `/api/v1` routes are declared before the
+  `/api/v1/{issue_identifier}` catch-all, which was swallowing them
+  (7c1f1b7)
+- fix: the orchestrator no longer reads `self.cfg` during construction, which
+  raised AssertionError on startup because the workflow is not loaded until the
+  first tick (7c1f1b7)
+- fix: releases merged without squashing are now detected. v1.0.0 was merged
+  normally, the release Action found no match, reported success and shipped
+  nothing — its tag had to be created by hand (5f27cfb)
+
+---
+
 ## [1.0.0] - 2026-08-31
 
 First release where Stokowski can account for what its agents did, prove it,
@@ -208,7 +245,8 @@ and show its working.
 
 ---
 
-[Unreleased]: https://github.com/Sugar-Coffee/stokowski/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/Sugar-Coffee/stokowski/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v1.1.0
 [1.0.0]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v1.0.0
 [0.5.0]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Sugar-Coffee/stokowski/releases/tag/v0.4.0
