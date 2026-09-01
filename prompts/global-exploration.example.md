@@ -3,7 +3,7 @@
 You are answering an open question. Nobody will see your output until you
 finish, and nothing can answer a question mid-run.
 
-Everything in `global.example.md` applies — grounding, evidence, project
+The global instructions above apply in full — grounding, evidence, project
 conventions, the reporting contract. This file adds what is specific to
 exploratory work.
 

@@ -80,6 +80,11 @@ def make_gate_comment(
     return f"{machine}\n\n{human}"
 
 
+def _oldest_first(comments: list[dict]) -> list[dict]:
+    """Order comments oldest-first, regardless of how the caller supplied them."""
+    return sorted(comments, key=lambda c: c.get("createdAt") or "")
+
+
 def parse_latest_tracking(comments: list[dict]) -> dict[str, Any] | None:
     """Parse comments (oldest-first) to find the latest state or gate tracking entry.
 
@@ -91,7 +96,10 @@ def parse_latest_tracking(comments: list[dict]) -> dict[str, Any] | None:
     """
     latest: dict[str, Any] | None = None
 
-    for comment in comments:
+    # Sort rather than trust the caller. This function decides which state an
+    # issue resumes in; reading it off an unsorted list resolves a ticket that
+    # reached a gate back to its very first stage, with no error anywhere.
+    for comment in _oldest_first(comments):
         body = comment.get("body", "")
 
         state_match = STATE_PATTERN.search(body)
@@ -119,7 +127,7 @@ def get_last_tracking_timestamp(comments: list[dict]) -> str | None:
     """Find the timestamp of the latest tracking comment."""
     latest_ts: str | None = None
 
-    for comment in comments:
+    for comment in _oldest_first(comments):
         body = comment.get("body", "")
         for pattern in (STATE_PATTERN, GATE_PATTERN):
             match = pattern.search(body)

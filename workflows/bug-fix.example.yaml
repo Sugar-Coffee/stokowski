@@ -14,7 +14,11 @@
 description: "Defect reports. Reproduction gates diagnosis; a fix without a failing test is not a fix."
 
 prompts:
-  global_prompt: prompts/global-bug-fix.example.md
+  # Loaded in order: the shared ground rules, then what is specific to
+  # this kind of work. The specialised file supplements the base one.
+  global_prompt:
+    - prompts/global.example.md
+    - prompts/global-bug-fix.example.md
 
 states:
 

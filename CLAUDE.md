@@ -92,7 +92,12 @@ The operator's `workflow.yaml` defines the runtime config and state machine. Sto
 Each workflow defines a set of internal states that map to Linear states. States have types: `agent` (runs Claude Code), `gate` (waits for human review), or `terminal` (issue complete). Transitions between states are declared explicitly in config.
 
 **Three-layer prompt assembly:** Every agent turn's prompt is built from three layers concatenated together:
-1. **Global prompt** — shared context loaded from a `.md` file (referenced by `prompts.global_prompt`)
+1. **Global prompt** — shared context loaded from a `.md` file (referenced by `prompts.global_prompt`).
+   `global_prompt` also takes a **list** of paths, loaded in order, so a specialised
+   global supplements the shared one instead of replacing it. `global-bug-fix.md` used to
+   say "everything in `global.md` applies" in prose — a file nothing loaded, so every
+   bug-fix run shipped without the grounding and evidence rules it claimed to inherit.
+   `config.global_prompt_paths()` normalises either shape.
 2. **Stage prompt** — state-specific instructions loaded from the state's `prompt` path
 3. **Lifecycle injection** — auto-generated section with issue metadata, transitions, rework context, and recent comments
 
@@ -133,7 +138,7 @@ Parses `workflow.yaml` (or legacy `.md` with front matter) into typed dataclasse
 - `AgentConfig` — concurrency limits (global + per-state)
 - `ServerConfig` — optional web dashboard port
 - `LinearStatesConfig` — maps logical state names (`todo`, `active`, `review`, `gate_approved`, `rework`, `terminal`) to actual Linear state names. Issues in the `todo` state are picked up and automatically moved to `active` on dispatch.
-- `PromptsConfig` — global prompt file reference
+- `PromptsConfig` — global prompt file reference (a path, or a list of paths loaded in order)
 - `StateConfig` — a single state in the state machine: type, prompt path, linear_state key, runner, session mode, transitions, per-state overrides (model, max_turns, timeouts, hooks), gate-specific fields (rework_to, max_rework)
 
 `ServiceConfig` provides helper methods: `entry_state` (first agent state), `active_linear_states()`, `gate_linear_states()`, `terminal_linear_states()`.
@@ -340,7 +345,7 @@ Three-layer prompt assembly for state machine workflows. Main entry point is `as
 
 **`build_lifecycle_section()`** generates the auto-injected lifecycle section appended to every prompt. Includes issue metadata, rework context with review comments, recent activity, available transitions, and completion instructions. Clearly demarcated with HTML comments.
 
-**`assemble_prompt()`** orchestrates the three layers: loads and renders global prompt, loads and renders stage prompt, generates lifecycle section, joins with double newlines.
+**`assemble_prompt()`** orchestrates the three layers: loads and renders every global prompt named by the workflow (in order), loads and renders stage prompt, generates lifecycle section, joins with double newlines.
 
 ### tracking.py
 State machine tracking via structured Linear comments:

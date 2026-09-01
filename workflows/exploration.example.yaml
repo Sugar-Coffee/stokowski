@@ -14,7 +14,11 @@
 description: "Open questions and spikes. The deliverable is a decision, not a merge."
 
 prompts:
-  global_prompt: prompts/global-exploration.example.md
+  # Loaded in order: the shared ground rules, then what is specific to
+  # this kind of work. The specialised file supplements the base one.
+  global_prompt:
+    - prompts/global.example.md
+    - prompts/global-exploration.example.md
 
 states:
 

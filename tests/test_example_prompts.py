@@ -73,8 +73,12 @@ def test_every_state_prompt_file_exists(cfg):
 
 
 def test_global_prompt_file_exists(cfg):
-    assert cfg.prompts.global_prompt
-    assert (WORKFLOW.parent / cfg.prompts.global_prompt).is_file()
+    from stokowski.config import global_prompt_paths
+
+    paths = global_prompt_paths(cfg.prompts.global_prompt)
+    assert paths
+    for gp in paths:
+        assert (WORKFLOW.parent / gp).is_file(), gp
 
 
 def test_workflow_reaches_a_terminal_state(cfg):
@@ -312,8 +316,12 @@ def test_every_shipped_workflow_is_runnable(cfg, name, wf):
 
 @pytest.mark.parametrize("name,wf", _workflow_configs(), ids=lambda v: v if isinstance(v, str) else "")
 def test_every_workflow_names_a_global_prompt_that_exists(name, wf):
-    assert wf.global_prompt, f"workflow '{name}' has no global prompt to frame it"
-    assert (REPO / wf.global_prompt).is_file()
+    from stokowski.config import global_prompt_paths
+
+    paths = global_prompt_paths(wf.global_prompt)
+    assert paths, f"workflow '{name}' has no global prompt to frame it"
+    for gp in paths:
+        assert (REPO / gp).is_file(), f"workflow '{name}' names a missing global: {gp}"
 
 
 @pytest.mark.parametrize("path", GLOBAL_PROMPTS, ids=lambda p: p.name)

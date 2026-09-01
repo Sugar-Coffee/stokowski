@@ -362,11 +362,21 @@ class LinearClient:
             return False
 
     async def fetch_comments(self, issue_id: str) -> list[dict]:
-        """Fetch all comments on a Linear issue. Returns list of {id, body, createdAt}."""
+        """Fetch all comments on a Linear issue, OLDEST FIRST.
+
+        `orderBy: createdAt` sorts *descending* in Linear's API — newest first.
+        Every consumer here (`parse_latest_tracking`, `get_last_tracking_timestamp`,
+        the prompt's review-comment section) is written against oldest-first and
+        keeps the last match it sees, so the raw order silently yields the
+        *first* tracking entry an issue ever had instead of its current one.
+        That made gate approve/rework a no-op after any restart. Sort here so
+        the contract holds for every caller.
+        """
         try:
             data = await self._graphql(COMMENTS_QUERY, {"issueId": issue_id})
             issue = data.get("issue", {})
-            return issue.get("comments", {}).get("nodes", [])
+            nodes = issue.get("comments", {}).get("nodes", [])
+            return sorted(nodes, key=lambda c: c.get("createdAt") or "")
         except Exception as e:
             logger.error(f"Failed to fetch comments for {issue_id}: {e}")
             return []

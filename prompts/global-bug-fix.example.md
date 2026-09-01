@@ -3,10 +3,10 @@
 You are fixing a reported defect. Nobody will see your output until you finish,
 and nothing can answer a question mid-run.
 
-Everything in `global.example.md` applies — grounding, evidence, project
-conventions, collision awareness, the reporting contract. This file adds what
-is specific to defect work, so no stage prompt needs to ask what kind of ticket
-this is.
+The global instructions above apply in full — grounding, evidence, project
+conventions, branching, collision awareness, the reporting contract. This file
+adds what is specific to defect work, so no stage prompt needs to ask what kind
+of ticket this is.
 
 ## Reproduction gates everything
 

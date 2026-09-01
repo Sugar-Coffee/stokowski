@@ -92,7 +92,7 @@ class WorkflowSpec:
 
     name: str
     states: dict[str, StateConfig] = field(default_factory=dict)
-    global_prompt: str | None = None
+    global_prompt: str | list[str] | None = None
     description: str = ""
 
 
@@ -156,7 +156,7 @@ class LinearStatesConfig:
 @dataclass
 class PromptsConfig:
     """Prompt file references."""
-    global_prompt: str | None = None
+    global_prompt: str | list[str] | None = None
 
 
 @dataclass
@@ -421,6 +421,22 @@ def _coerce_list(val: Any) -> list[str]:
     if isinstance(val, str):
         return [s.strip() for s in val.split(",") if s.strip()]
     return []
+
+
+def global_prompt_paths(val: str | list[str] | None) -> list[str]:
+    """Normalise `prompts.global_prompt` to an ordered list of paths.
+
+    A workflow may name one global prompt or several. Several exist because a
+    specialised global (`global-bug-fix.md`) is a *supplement* to the base one,
+    not a replacement: saying "everything in global.md applies" in prose is a
+    file the agent never loads, so the shared ground rules simply went missing
+    from every bug-fix run. Listing both loads both, in order.
+    """
+    if val is None:
+        return []
+    if isinstance(val, str):
+        return [val] if val.strip() else []
+    return [str(v) for v in val if str(v).strip()]
 
 
 def _parse_hooks(raw: dict[str, Any] | None) -> HooksConfig | None:
@@ -846,9 +862,9 @@ def _validate_project(project: ProjectConfig, errors: list[str]) -> None:
     if not project.tracker.project_slug:
         errors.append(f"{prefix}: missing tracker.project_slug")
 
-    global_prompt = getattr(project.prompts, "global_prompt", None)
-    if global_prompt and not _prompt_exists(project.workflow_dir, global_prompt):
-        errors.append(f"{prefix}: global prompt not found: {global_prompt}")
+    for gp in global_prompt_paths(getattr(project.prompts, "global_prompt", None)):
+        if not _prompt_exists(project.workflow_dir, gp):
+            errors.append(f"{prefix}: global prompt not found: {gp}")
 
     # Routing sanity: every rule and the default must name a real workflow.
     for rule in project.routing.rules:
@@ -896,7 +912,7 @@ def _validate_states(
     project: ProjectConfig,
     prefix: str,
     errors: list[str],
-    global_prompt: str | None = None,
+    global_prompt: str | list[str] | None = None,
 ) -> None:
     """Validate one state machine.
 
@@ -904,8 +920,9 @@ def _validate_states(
     target only has to exist inside its own pipeline, and two workflows may
     legitimately share a state name.
     """
-    if global_prompt and not _prompt_exists(project.workflow_dir, global_prompt):
-        errors.append(f"{prefix}: global prompt not found: {global_prompt}")
+    for gp in global_prompt_paths(global_prompt):
+        if not _prompt_exists(project.workflow_dir, gp):
+            errors.append(f"{prefix}: global prompt not found: {gp}")
 
     valid_linear_keys = {"active", "awaiting_ci", "review", "gate_approved", "rework", "terminal"}
     has_agent = False
