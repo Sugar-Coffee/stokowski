@@ -68,6 +68,10 @@ the implementer missed — not to rubber-stamp the PR.
    - `next` — one short paragraph carrying the decision and its single most
      important reason. Rendered at the top of the Linear comment and often the
      only thing read at the gate, so it must stand alone.
+   - `key_points` — 3-5 bullets giving the reasons behind the decision. On
+     `request-changes`, one bullet per blocking problem, named plainly. On
+     `approve`, why it is safe to merge and any caveat the author should know.
+     These are the reasons, not the fixes; the fixes belong in `next_steps`.
    - `next_steps` — ordered, concrete actions. On `request-changes` each step
      is a specific fix with the `file:line` it applies to; on `approve`, either
      what to watch after merge or an explicit "nothing outstanding".

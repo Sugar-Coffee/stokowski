@@ -53,6 +53,9 @@ Write `.stokowski/report.json`.
 - `next`: the recommendation and what it depends on. This is the deliverable —
   it is rendered at the top of the comment and is what the reader acts on, so
   it must carry the answer without them reading the findings table.
+- `key_points`: 3-5 bullets giving the findings the recommendation rests on,
+  and what would change it. Where the answer is uncertain, say where the
+  uncertainty sits rather than smoothing it over.
 - `next_steps`: what should happen as a result, ordered. If the answer implies
   work, describe its shape here rather than doing it.
 

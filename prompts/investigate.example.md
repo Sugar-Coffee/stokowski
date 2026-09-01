@@ -38,9 +38,11 @@ an investigation summary posted as a Linear comment — not code changes.
    - `risks`, `open_questions`, `assumptions`
    - `verdict` — `complete` when the approach is clear, `blocked` when it is not
    - `next` — the proposed approach in one or two sentences
+   - `key_points` — 3-5 bullets giving the reasons behind that approach, and
+     any caveat that would change it
    - `next_steps` — ordered actions for whoever implements it
 
-   Those last three render at the very top of the Linear comment and are what
+   Those last four render at the very top of the Linear comment and are what
    the human at the gate reads first, so they must carry the recommendation on
    their own — someone who reads nothing else should know what to do and why.
    Stokowski posts this to Linear for you.

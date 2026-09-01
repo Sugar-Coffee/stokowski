@@ -108,6 +108,12 @@ class Orchestrator:
         # the pipeline under a working agent.
         self._issue_workflow: dict[str, str] = {}   # issue_id -> internal state name
         self._issue_state_runs: dict[str, int] = {}       # issue_id -> run number for current state
+        # (issue_id, state, run) already announced in Linear. Two call sites
+        # post the entering-a-state comment — the transition, and the worker
+        # that picks the state up ~1s later — and a continuation can re-enter
+        # the worker path with the same run. COG-368 got three identical
+        # "Entering state: implement" comments in 1.7 seconds.
+        self._announced_states: set[tuple[str, str, int]] = set()
         self._pending_gates: dict[str, str] = {}           # issue_id -> gate state name
 
         # Eligible-but-not-dispatched (queue panel data, refreshed each tick)
@@ -584,6 +590,7 @@ class Orchestrator:
             # Clean up tracking state
             self._issue_current_state.pop(issue.id, None)
             self._issue_state_runs.pop(issue.id, None)
+            self._announced_states = {k for k in self._announced_states if k[0] != issue.id}
             self._pending_gates.pop(issue.id, None)
             self._last_session_ids.pop(issue.id, None)
             self.claimed.discard(issue.id)
@@ -596,20 +603,30 @@ class Orchestrator:
         else:
             # Agent state — post state comment, ensure active Linear state, schedule retry
             self._issue_current_state[issue.id] = target_name
-            client = self._ensure_linear_client()
-            comment = make_state_comment(
-                state=target_name,
-                run=run,
-            )
-            await client.post_comment(issue.id, comment)
+            await self._announce_state(issue, target_name, run)
 
             # Ensure issue is in active Linear state
+            client = self._ensure_linear_client()
             active_state = self.cfg.linear_states.active
             moved = await client.update_issue_state(issue.id, active_state)
             if not moved:
                 logger.warning(f"Failed to move {issue.identifier} to active state '{active_state}'", extra={"linked_to": issue.identifier})
 
             self._schedule_retry(issue, attempt_num=0, delay_ms=1000)
+
+    async def _announce_state(self, issue, state: str, run: int) -> None:
+        """Post the entering-a-state comment, at most once per (state, run)."""
+        key = (issue.id, state, run)
+        if key in self._announced_states:
+            return
+        self._announced_states.add(key)
+        client = self._ensure_linear_client()
+        comment = make_state_comment(
+            state=state,
+            run=run,
+            workflow=self._workflow_name_for(issue),
+        )
+        await client.post_comment(issue.id, comment)
 
     async def _handle_gate_responses(self):
         """Check for gate-approved and rework issues, handle transitions."""
@@ -780,6 +797,7 @@ class Orchestrator:
                 gate_state = self._pending_gates.pop(issue_id, None)
                 self._issue_current_state.pop(issue_id, None)
                 self._issue_state_runs.pop(issue_id, None)
+                self._announced_states = {k for k in self._announced_states if k[0] != issue_id}
                 self._last_session_ids.pop(issue_id, None)
                 self.claimed.discard(issue_id)
                 ident = self._last_issues.get(
@@ -1127,14 +1145,8 @@ class Orchestrator:
             # Post state tracking comment (only for first dispatch of a state)
             if state_name:
                 run = self._issue_state_runs.get(issue.id, 1)
-                if run == 1 and (attempt.attempt is None or attempt.attempt == 0):
-                    client = self._ensure_linear_client()
-                    comment = make_state_comment(
-                        state=state_name,
-                        run=run,
-                        workflow=self._workflow_name_for(issue),
-                    )
-                    await client.post_comment(issue.id, comment)
+                if attempt.attempt is None or attempt.attempt == 0:
+                    await self._announce_state(issue, state_name, run)
 
             # Run on_stage_enter hook if defined
             if state_cfg and state_cfg.hooks and state_cfg.hooks.on_stage_enter:
@@ -1748,6 +1760,7 @@ class Orchestrator:
                 # Clean up state caches so stale entries don't accumulate
                 self._issue_current_state.pop(issue_id, None)
                 self._issue_state_runs.pop(issue_id, None)
+                self._announced_states = {k for k in self._announced_states if k[0] != issue_id}
                 self._pending_gates.pop(issue_id, None)
                 self._last_session_ids.pop(issue_id, None)
 

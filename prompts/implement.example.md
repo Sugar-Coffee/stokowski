@@ -43,9 +43,12 @@ Implement the solution, create a PR, and ensure it passes all quality checks.
 11. Write `.stokowski/report.json`: what changed and why, the exact
     verification commands and their real results, assumptions, and known
     limitations. Set `verdict` to `complete` or `blocked`, put the reviewer's
-    summary in `next`, and anything they must check in `next_steps` — those
-    render at the top of the Linear comment and are what the gate reads
-    first. Stokowski posts it.
+    summary in `next`, and anything they must check in `next_steps`. Add 3-5
+    bullets to `key_points`: what changed, what you actually verified, and
+    anything the reviewer should be suspicious of. Those four fields render at
+    the top of the Linear comment and are what the gate reads first — someone
+    who reads only them should know whether this is safe to merge. Stokowski
+    posts it.
 
 ## Rework run
 
