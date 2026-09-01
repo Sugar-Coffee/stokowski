@@ -615,6 +615,11 @@ agent:
 
 prompts:
   global_prompt: prompts/global.md     # loaded for every agent turn (optional)
+  # ...or a list, loaded in order, when a specialised global supplements the
+  # shared one rather than replacing it:
+  #   global_prompt:
+  #     - prompts/global.md
+  #     - prompts/global-bug-fix.md
 
 states:                                # the state machine pipeline
   investigate:
@@ -706,7 +711,8 @@ Each state can override these fields from the root `claude` / `hooks` defaults. 
 
 Agent prompts are assembled from three layers, each rendered as a [Jinja2](https://jinja.palletsprojects.com/) template:
 
-1. **Global prompt** (`prompts.global_prompt`) — shared context loaded for every agent turn
+1. **Global prompt** (`prompts.global_prompt`) — shared context loaded for every agent turn.
+   Accepts one path or a list of paths, concatenated in the order given
 2. **Stage prompt** (`states.<name>.prompt`) — stage-specific instructions (e.g. `prompts/investigate.md`)
 3. **Lifecycle injection** — auto-generated section with issue context, state transitions, rework comments, and recent activity
 

@@ -15,7 +15,12 @@ from typing import Any
 
 from jinja2 import BaseLoader, Environment, Undefined
 
-from .config import LinearStatesConfig, ServiceConfig, StateConfig
+from .config import (
+    LinearStatesConfig,
+    ServiceConfig,
+    StateConfig,
+    global_prompt_paths,
+)
 from .models import Issue
 from .tracking import get_comments_since, get_last_tracking_timestamp
 
@@ -390,12 +395,12 @@ def assemble_prompt(
     attempt: int = 1,
     last_run_at: str | None = None,
     comments: list[dict[str, Any]] | None = None,
-    global_prompt: str | None = None,
+    global_prompt: str | list[str] | None = None,
 ) -> str:
     """Orchestrate three-layer prompt assembly.
 
     Combines:
-    1. Global prompt (from config's prompts.global_prompt path)
+    1. Global prompt(s) (from config's prompts.global_prompt path or paths)
     2. Stage prompt (from state_cfg.prompt path)
     3. Lifecycle injection (auto-generated)
 
@@ -426,12 +431,18 @@ def assemble_prompt(
 
     parts: list[str] = []
 
-    # Layer 1: Global prompt
+    # Layer 1: Global prompt(s)
     # A workflow's own global prompt wins. This is the layer that removes
     # `if this is a bug…` branching from stage prompts: it states what kind of
     # work this is once, so a shared review prompt needs no conditional.
-    global_prompt_path = global_prompt or cfg.prompts.global_prompt
-    if global_prompt_path:
+    #
+    # A workflow may name several, loaded in order. A specialised global is a
+    # supplement to the base one, and prose saying "everything in global.md
+    # applies" is not — it names a file nothing loads, so those rules were
+    # silently absent from the runs that cited them.
+    for global_prompt_path in global_prompt_paths(
+        global_prompt or cfg.prompts.global_prompt
+    ):
         try:
             raw = load_prompt_file(global_prompt_path, workflow_dir)
             rendered = render_template(raw, context)

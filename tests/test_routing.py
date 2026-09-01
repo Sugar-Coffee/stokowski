@@ -183,9 +183,30 @@ def test_workflows_share_prompts_where_the_job_is_the_same(shipped):
 
 def test_each_workflow_frames_itself_with_its_own_global_prompt(shipped):
     """This is what removes `if this is a bug` branching from stage prompts."""
-    globals_ = {n: wf.global_prompt for n, wf in shipped.workflows.items()
+    from stokowski.config import global_prompt_paths
+
+    globals_ = {n: tuple(global_prompt_paths(wf.global_prompt))
+                for n, wf in shipped.workflows.items()
                 if n in ("bug-fix", "feature", "exploration")}
     assert len(set(globals_.values())) == 3, globals_
+
+
+def test_specialised_globals_stack_on_the_shared_one(shipped):
+    """A specialised global supplements the base one, it does not replace it.
+
+    `global-bug-fix.md` used to say "everything in global.md applies" in prose.
+    Nothing loaded that file, so every bug-fix run went out missing the shared
+    grounding, evidence and branching rules it claimed to inherit.
+    """
+    from stokowski.config import global_prompt_paths
+
+    for name in ("bug-fix", "exploration"):
+        paths = global_prompt_paths(shipped.workflows[name].global_prompt)
+        assert len(paths) == 2, f"{name} does not stack its global prompts: {paths}"
+        # An operator file may shadow the shipped example, so match the stem.
+        assert Path(paths[0]).name.startswith("global.") , (
+            f"{name} must load the shared global first, got {paths}"
+        )
 
 
 # ── Validation ───────────────────────────────────────────────────────────────
