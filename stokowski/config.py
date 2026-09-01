@@ -95,6 +95,20 @@ class WorkflowSpec:
     global_prompt: str | list[str] | None = None
     description: str = ""
 
+    @property
+    def entry_state(self) -> str | None:
+        """The first agent state of THIS pipeline.
+
+        Project-level `entry_state` reads the inline `states:` block, which is
+        one workflow among several. Routing an issue to `bug-fix` and then
+        starting it in `default`'s entry state drops it into a state its own
+        machine does not contain, and it can never transition out.
+        """
+        for name, sc in self.states.items():
+            if sc.type == "agent":
+                return name
+        return None
+
 
 @dataclass
 class RoutingRule:
