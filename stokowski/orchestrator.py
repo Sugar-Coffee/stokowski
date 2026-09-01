@@ -690,6 +690,13 @@ class Orchestrator:
                 )
                 await self._transition(issue, "approve")
                 logger.info(f"Gate approved issue={issue.identifier} gate={gate_state}", extra={"linked_to": issue.identifier})
+            else:
+                logger.warning(
+                    f"Issue {issue.identifier} is in "
+                    f"'{self.cfg.linear_states.gate_approved}' but no gate could be "
+                    f"resolved from its tracking comments — it will not advance",
+                    extra={"linked_to": issue.identifier},
+                )
 
         # Fetch rework issues
         try:
@@ -765,6 +772,16 @@ class Orchestrator:
                 logger.info(
                     f"Rework issue={issue.identifier} gate={gate_state} "
                     f"rework_to={rework_to} run={new_run}",
+                    extra={"linked_to": issue.identifier},
+                )
+            else:
+                # A ticket parked in Rework with no resolvable gate goes nowhere
+                # and nothing says so. Silence here is what let the comment
+                # ordering bug sit unnoticed across every gate.
+                logger.warning(
+                    f"Issue {issue.identifier} is in '{self.cfg.linear_states.rework}' "
+                    f"but no gate could be resolved from its tracking comments — "
+                    f"it will not advance",
                     extra={"linked_to": issue.identifier},
                 )
 
