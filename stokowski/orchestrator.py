@@ -235,6 +235,22 @@ class Orchestrator:
         name = self._workflow_name_for(issue)
         return self.cfg.workflows.get(name) if name else None
 
+    def _entry_state_for(self, issue: Issue) -> str | None:
+        """The entry state of the pipeline THIS issue runs under.
+
+        `cfg.entry_state` answers a different question — the first agent state
+        of the inline `states:` block. Every workflow but `bug-fix` happens to
+        start with `investigate`, so using it looked correct until a
+        bug-labelled ticket arrived and was started in a state `bug-fix` does
+        not have.
+        """
+        workflow = self._workflow_for(issue)
+        if workflow is not None:
+            entry = workflow.entry_state
+            if entry:
+                return entry
+        return self.cfg.entry_state
+
     def _states_for(self, issue: Issue) -> dict:
         """The state machine an issue runs under.
 
@@ -390,7 +406,7 @@ class Orchestrator:
         # state — a state name only means something inside its own workflow.
         self._adopt_workflow_from_tracking(issue, tracking)
 
-        entry = self.cfg.entry_state
+        entry = self._entry_state_for(issue)
         if entry is None:
             raise RuntimeError("No entry state defined in config")
 
@@ -407,7 +423,15 @@ class Orchestrator:
                 self._issue_current_state[issue.id] = state_name
                 self._issue_state_runs[issue.id] = run
                 return state_name, run
-            # Unknown state → fallback to entry
+            # Unknown state → restart at this workflow's entry. Loud, because
+            # a state that is not in the issue's own machine means the issue
+            # was started on the wrong pipeline and has been going nowhere.
+            logger.warning(
+                f"Issue {issue.identifier} records state '{state_name}', which is "
+                f"not in workflow '{self._workflow_name_for(issue)}' — restarting "
+                f"at '{entry}'",
+                extra={"linked_to": issue.identifier},
+            )
             self._issue_current_state[issue.id] = entry
             self._issue_state_runs[issue.id] = 1
             return entry, 1
@@ -1055,7 +1079,7 @@ class Orchestrator:
 
         state_name = self._issue_current_state.get(issue.id)
         if not state_name:
-            state_name = self.cfg.entry_state
+            state_name = self._entry_state_for(issue)
 
         # If at a gate, enter it instead of dispatching a worker.
         # Release the slot we reserved — the gate path doesn't run an agent.
