@@ -1065,8 +1065,19 @@ class Orchestrator:
         if issue.id in self.claimed:
             return False
 
-        # Blocker check for Todo
-        if state_lower == "todo":
+        # Blockers gate ENTRY to the pipeline, not work already under way: a
+        # blocker appearing mid-run should not kill a live agent.
+        #
+        # This compares against the configured todo state, not the literal
+        # "todo". It used to compare against the literal, which matches only
+        # because Stokowski's own default happens to be named "Todo" — so the
+        # check silently stopped running for any team that named its todo state
+        # anything else ("Assigned, Not Started", "Ready", "Up Next"), and
+        # blocked issues dispatched anyway. Nothing failed; the guard was just
+        # absent. Multi-project makes that the normal case rather than the
+        # exception, since two teams rarely share a state vocabulary.
+        todo_state = self.cfg.linear_states.todo.strip().lower()
+        if todo_state and state_lower == todo_state:
             for blocker in issue.blocked_by:
                 if blocker.state and blocker.state.strip().lower() not in terminal_lower:
                     return False
